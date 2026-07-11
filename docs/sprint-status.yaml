@@ -1,0 +1,232 @@
+version: "6.0.0"
+project_name: "UNICA"
+project_level: 3
+current_sprint: 6
+sprint_plan_path: "docs/sprint-plan-unica-2026-03-04.md"
+
+sprints:
+  - sprint_number: 1
+    goal: "Deploy all infrastructure and establish gateway message pipeline"
+    capacity_points: 30
+    committed_points: 22
+    completed_points: 22
+    status: "completed"
+    stories:
+      - story_id: "STORY-001"
+        title: "K3s + PostgreSQL + Redis Setup"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-001.md"
+      - story_id: "STORY-002"
+        title: "Go Monorepo Scaffolding"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-002.md"
+      - story_id: "STORY-003"
+        title: "Deploy Chatwoot"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-003.md"
+      - story_id: "STORY-004"
+        title: "Deploy Dify"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-004.md"
+      - story_id: "STORY-006"
+        title: "Standard Message Format + Adapter Interface"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-006.md"
+      - story_id: "STORY-005"
+        title: "Gateway Core - Redis Streams"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-005.md"
+
+  - sprint_number: 2
+    goal: "Complete WeChat end-to-end flow with intelligent routing"
+    capacity_points: 30
+    committed_points: 24
+    completed_points: 24
+    status: "completed"
+    stories:
+      - story_id: "STORY-007"
+        title: "WeChat Adapter"
+        points: 8
+        status: "completed"
+        doc: "docs/stories/STORY-007.md"
+      - story_id: "STORY-010"
+        title: "Token Auto-Management"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-010.md"
+      - story_id: "STORY-009"
+        title: "Message Dedup + Dead-Letter"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-009.md"
+      - story_id: "STORY-015"
+        title: "Conversation State Machine + DB"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-015.md"
+      - story_id: "STORY-016"
+        title: "Intelligent Routing"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-016.md"
+
+  - sprint_number: 3
+    goal: "AI response pipeline and Chatwoot human handoff"
+    capacity_points: 30
+    committed_points: 29
+    completed_points: 29
+    status: "completed"
+    stories:
+      - story_id: "STORY-019"
+        title: "Dify Multi-Workspace Setup"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-019.md"
+      - story_id: "STORY-020"
+        title: "RAG Knowledge Base Pipeline"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-020.md"
+      - story_id: "STORY-021"
+        title: "Router-Dify Integration"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-021.md"
+      - story_id: "STORY-022"
+        title: "Confidence Scoring + Auto-Handoff"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-022.md"
+      - story_id: "STORY-017"
+        title: "AI-Human Handoff with Context"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-017.md"
+      - story_id: "STORY-024"
+        title: "Chatwoot Custom Channel Integration"
+        points: 8
+        status: "completed"
+        doc: "docs/stories/STORY-024.md"
+
+  - sprint_number: 4
+    goal: "Douyin/XHS channels + workspace polish"
+    capacity_points: 30
+    committed_points: 26
+    completed_points: 26
+    status: "completed"
+    stories:
+      - story_id: "STORY-008"
+        title: "Douyin Adapter"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-008.md"
+      - story_id: "STORY-012"
+        title: "Xiaohongshu Adapter"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-012.md"
+      - story_id: "STORY-018"
+        title: "Agent Scheduling + Distribution"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-018.md"
+      - story_id: "STORY-025"
+        title: "History Sync + Context Display"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-025.md"
+      - story_id: "STORY-026"
+        title: "Quick Reply Templates"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-026.md"
+      - story_id: "STORY-027"
+        title: "Satisfaction Survey"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-027.md"
+
+  - sprint_number: 5
+    goal: "Full 5-channel coverage + admin/permissions"
+    capacity_points: 30
+    committed_points: 26
+    completed_points: 26
+    status: "completed"
+    stories:
+      - story_id: "STORY-013"
+        title: "Taobao Adapter"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-013.md"
+      - story_id: "STORY-014"
+        title: "Kuaishou Adapter"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-014.md"
+      - story_id: "STORY-011"
+        title: "Rate Limiting + Anti-Abuse"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-011.md"
+      - story_id: "STORY-031"
+        title: "RBAC Permission System"
+        points: 8
+        status: "completed"
+        doc: "docs/stories/STORY-031.md"
+      - story_id: "STORY-032"
+        title: "Channel Configuration CRUD"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-032.md"
+
+  - sprint_number: 6
+    goal: "Monitoring, reports, AI config, production-ready"
+    capacity_points: 30
+    committed_points: 28
+    completed_points: 28
+    status: "completed"
+    stories:
+      - story_id: "STORY-028"
+        title: "Prometheus + Grafana Dashboards"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-028.md"
+      - story_id: "STORY-029"
+        title: "AI Effectiveness + Agent Reports"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-029.md"
+      - story_id: "STORY-030"
+        title: "Alert Rules + Notifications"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-030.md"
+      - story_id: "STORY-033"
+        title: "AI Agent Configuration UI"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-033.md"
+      - story_id: "STORY-023"
+        title: "Proactive Marketing Logic"
+        points: 5
+        status: "completed"
+        doc: "docs/stories/STORY-023.md"
+      - story_id: "STORY-034"
+        title: "Audit Logging"
+        points: 3
+        status: "completed"
+        doc: "docs/stories/STORY-034.md"
+
+velocity:
+  rolling_average: 26.0
+
+team:
+  size: 1
+  sprint_length_weeks: 2
+  capacity_per_sprint: 30

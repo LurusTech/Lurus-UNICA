@@ -1,0 +1,776 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>产品线管理 - UNICA 统一管理门户</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --text: #1a1d24;
+    --text-muted: #6b7280;
+    --border: #e2e5ea;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --ok: #16a34a;
+    --bad: #dc2626;
+    --warn: #d97706;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+      --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+      --row-hover: #1e222b;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+    --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+    --row-hover: #1e222b;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f8; --surface: #ffffff; --text: #1a1d24; --text-muted: #6b7280;
+    --border: #e2e5ea; --primary: #2563eb; --primary-hover: #1d4ed8;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1200px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 90px; }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; }
+
+  /* Login screen */
+  #login-view {
+    max-width: 380px; margin: 10vh auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; box-shadow: var(--shadow);
+  }
+  #login-view h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  #login-view p.sub { color: var(--text-muted); margin: 0 0 22px; font-size: 0.88rem; }
+  #login-error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
+  }
+
+  /* App view */
+  .flow-hint {
+    background: color-mix(in srgb, var(--primary) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+    border-radius: 12px; padding: 12px 16px; font-size: 0.85rem; margin-bottom: 20px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text);
+  }
+  .flow-hint a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .flow-hint a:hover { text-decoration: underline; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 20px; }
+  .toolbar .spacer { flex: 1; }
+
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    overflow-x: auto; box-shadow: var(--shadow);
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 880px; }
+  th, td { text-align: left; padding: 12px 16px; font-size: 0.88rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row-actions button { padding: 5px 10px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; }
+  .empty-state { padding: 48px 16px; text-align: center; color: var(--text-muted); }
+  .empty-state a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .empty-state a:hover { text-decoration: underline; }
+
+  /* Spinner for pending actions */
+  .spinner {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+    border-top-color: var(--primary);
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(10, 12, 16, 0.45); display: none;
+    align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
+    max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 26px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  }
+  .modal h3 { margin: 0 0 4px; font-size: 1.1rem; }
+  .modal .modal-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 18px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+  .loading-inline { color: var(--text-muted); font-size: 0.85rem; padding: 8px 0; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  .toast.warn { border-left-color: var(--warn); }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" href="./index.html">← 返回首页</a>
+    <h1>产品线管理</h1>
+  </div>
+  <div id="user-info" hidden>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <!-- Login view -->
+  <section id="login-view">
+    <h2>登录</h2>
+    <p class="sub">请使用管理账号登录以管理产品线</p>
+    <div id="login-error"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
+    </form>
+  </section>
+
+  <!-- App view -->
+  <section id="app-view" hidden>
+    <div class="flow-hint">
+      <span>1 建产品线 → 2 初始化知识库 → 3 去渠道接入挂渠道</span>
+      <a href="./channels.html">前往渠道接入 →</a>
+    </div>
+
+    <div class="toolbar">
+      <div class="spacer"></div>
+      <button class="primary" id="create-btn">＋ 新建产品线</button>
+      <button id="refresh-btn">刷新</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>显示名</th>
+            <th>AI/知识库绑定状态</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="pl-tbody">
+          <tr><td colspan="5" class="loading-text">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- Create/Edit product line modal -->
+<div class="modal-backdrop" id="pl-modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pl-modal-title">
+    <h3 id="pl-modal-title">新建产品线</h3>
+    <form id="pl-form">
+      <div class="field">
+        <label for="f-name">名称 (name)</label>
+        <input id="f-name" required />
+        <div class="hint">用于系统内部标识，建议使用英文/拼音，不含空格</div>
+      </div>
+      <div class="field">
+        <label for="f-display-name">显示名 (display_name)</label>
+        <input id="f-display-name" required />
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="pl-modal-cancel">取消</button>
+        <button type="submit" class="primary" id="pl-modal-submit">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- AI 参数 modal -->
+<div class="modal-backdrop" id="ai-modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
+    <h3 id="ai-modal-title">AI 参数</h3>
+    <p class="modal-sub" id="ai-modal-sub">加载中…</p>
+    <div id="ai-modal-loading" class="loading-inline">正在加载配置…</div>
+    <form id="ai-form" hidden>
+      <div class="field">
+        <label for="f-threshold">置信度阈值 (0 ~ 1)</label>
+        <input id="f-threshold" type="number" min="0" max="1" step="0.01" required />
+      </div>
+      <div class="field">
+        <label for="f-handoff">转人工关键词</label>
+        <input id="f-handoff" placeholder="以英文逗号分隔，如：转人工,人工客服" />
+      </div>
+      <div class="field">
+        <label for="f-blocked">屏蔽话题（可选）</label>
+        <input id="f-blocked" placeholder="以英文逗号分隔" />
+      </div>
+      <div class="field">
+        <label for="f-prompt">系统提示词</label>
+        <textarea id="f-prompt"></textarea>
+        <div class="hint" id="prompt-hint"></div>
+      </div>
+      <div class="hint" id="ai-updated-hint"></div>
+      <div class="modal-actions">
+        <button type="button" id="ai-modal-cancel">取消</button>
+        <button type="submit" class="primary" id="ai-modal-submit">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN_KEY = "unica_access_token";
+  var DIFY_CONSOLE_BASE = "http://100.122.83.20:3402";
+
+  var state = { productLines: [], editingId: null, provisioningIds: {}, aiConfigPL: null };
+
+  var els = {
+    loginView: document.getElementById("login-view"),
+    appView: document.getElementById("app-view"),
+    loginForm: document.getElementById("login-form"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
+    userInfo: document.getElementById("user-info"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    createBtn: document.getElementById("create-btn"),
+    refreshBtn: document.getElementById("refresh-btn"),
+    tbody: document.getElementById("pl-tbody"),
+
+    plModalBackdrop: document.getElementById("pl-modal-backdrop"),
+    plModalTitle: document.getElementById("pl-modal-title"),
+    plForm: document.getElementById("pl-form"),
+    plModalCancel: document.getElementById("pl-modal-cancel"),
+    fName: document.getElementById("f-name"),
+    fDisplayName: document.getElementById("f-display-name"),
+
+    aiModalBackdrop: document.getElementById("ai-modal-backdrop"),
+    aiModalTitle: document.getElementById("ai-modal-title"),
+    aiModalSub: document.getElementById("ai-modal-sub"),
+    aiModalLoading: document.getElementById("ai-modal-loading"),
+    aiForm: document.getElementById("ai-form"),
+    aiModalCancel: document.getElementById("ai-modal-cancel"),
+    fThreshold: document.getElementById("f-threshold"),
+    fHandoff: document.getElementById("f-handoff"),
+    fBlocked: document.getElementById("f-blocked"),
+    fPrompt: document.getElementById("f-prompt"),
+    promptHint: document.getElementById("prompt-hint"),
+    aiUpdatedHint: document.getElementById("ai-updated-hint"),
+
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, 3200);
+  }
+
+  // ---------- Auth / API ----------
+  function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
+  function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
+
+  function showLogin(message) {
+    clearToken();
+    els.appView.hidden = true;
+    els.userInfo.hidden = true;
+    els.loginView.hidden = false;
+    if (message) {
+      els.loginError.textContent = message;
+      els.loginError.style.display = "block";
+    }
+  }
+
+  function showApp() {
+    els.loginView.hidden = true;
+    els.appView.hidden = false;
+    els.userInfo.hidden = false;
+  }
+
+  // Wraps fetch with Authorization header, JSON parsing, and 401 handling.
+  function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    var token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+    return fetch(path, Object.assign({}, options, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          showLogin("登录已过期，请重新登录");
+          throw new Error("unauthorized");
+        }
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
+          }
+          if (!res.ok) {
+            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
+            var err = new Error(msg);
+            err.status = res.status;
+            throw err;
+          }
+          return data;
+        });
+      });
+  }
+
+  // ---------- Login ----------
+  els.loginForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    els.loginError.style.display = "none";
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "登录中…";
+
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+
+    fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email, password: password })
+    })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          var data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (e) {}
+          if (!res.ok) {
+            var msg = (data && data.error) || "邮箱或密码错误";
+            throw new Error(msg);
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        if (!data || !data.access_token) throw new Error("登录响应异常");
+        setToken(data.access_token);
+        els.userEmail.textContent = email;
+        showApp();
+        bootstrap();
+      })
+      .catch(function (err) {
+        els.loginError.textContent = err.message || "登录失败，请检查网络";
+        els.loginError.style.display = "block";
+      })
+      .finally(function () {
+        els.loginSubmit.disabled = false;
+        els.loginSubmit.textContent = "登 录";
+      });
+  });
+
+  els.logoutBtn.addEventListener("click", function () {
+    showLogin();
+  });
+
+  // ---------- Bootstrap after login ----------
+  function bootstrap() {
+    loadProductLines();
+  }
+
+  els.refreshBtn.addEventListener("click", loadProductLines);
+
+  // ---------- Product line list ----------
+  function loadProductLines() {
+    els.tbody.innerHTML = '<tr><td colspan="5" class="loading-text">加载中…</td></tr>';
+    return api("/api/v1/product-lines")
+      .then(function (data) {
+        state.productLines = Array.isArray(data) ? data : [];
+        renderProductLines();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">加载失败: ' + escapeHtml(err.message) + "</td></tr>";
+        toast("加载产品线失败: " + err.message, "error");
+      });
+  }
+
+  function renderProductLines() {
+    if (state.productLines.length === 0) {
+      els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无产品线，点击“新建产品线”开始</td></tr>';
+      return;
+    }
+    els.tbody.innerHTML = state.productLines.map(rowHtml).join("");
+
+    state.productLines.forEach(function (pl) {
+      var editBtn = document.getElementById("edit-" + pl.id);
+      var delBtn = document.getElementById("del-" + pl.id);
+      var provisionBtn = document.getElementById("provision-" + pl.id);
+      var openKbBtn = document.getElementById("openkb-" + pl.id);
+      var aiConfigBtn = document.getElementById("aicfg-" + pl.id);
+      if (editBtn) editBtn.addEventListener("click", function () { openEditModal(pl); });
+      if (delBtn) delBtn.addEventListener("click", function () { deleteProductLine(pl); });
+      if (provisionBtn) provisionBtn.addEventListener("click", function () { provisionDify(pl, provisionBtn); });
+      if (openKbBtn) openKbBtn.addEventListener("click", function () { openKnowledgeBase(pl); });
+      if (aiConfigBtn) aiConfigBtn.addEventListener("click", function () { openAIConfigModal(pl); });
+    });
+  }
+
+  function isBound(pl) {
+    return !!(pl.has_dify_binding || pl.dify_dataset_id || pl.dify_agent_id);
+  }
+
+  function rowHtml(pl) {
+    var bound = isBound(pl);
+    var bindPill = bound
+      ? '<span class="pill ok">已挂载</span>'
+      : '<span class="pill muted">未挂载</span>';
+    var pending = !!state.provisioningIds[pl.id];
+    var provisionBtnHtml = '<button id="provision-' + pl.id + '"' + (pending ? " disabled" : "") + '>' +
+      (pending ? '<span class="spinner"></span>初始化中…' : "初始化 AI 与知识库") + "</button>";
+    var openKbBtnHtml = pl.dify_dataset_id
+      ? '<button id="openkb-' + pl.id + '">打开知识库</button>'
+      : "";
+    return (
+      "<tr>" +
+      "<td>" + escapeHtml(pl.name) + "</td>" +
+      "<td>" + escapeHtml(pl.display_name) + "</td>" +
+      "<td>" + bindPill + "</td>" +
+      "<td>" + formatDate(pl.created_at) + "</td>" +
+      '<td><div class="row-actions">' +
+      '<button id="edit-' + pl.id + '">编辑</button>' +
+      '<button id="aicfg-' + pl.id + '">AI 参数</button>' +
+      provisionBtnHtml +
+      openKbBtnHtml +
+      '<button class="danger" id="del-' + pl.id + '">删除</button>' +
+      "</div></td>" +
+      "</tr>"
+    );
+  }
+
+  function formatDate(iso) {
+    if (!iso) return "—";
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString("zh-CN", { hour12: false });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  // ---------- Delete ----------
+  function deleteProductLine(pl) {
+    if (!confirm('确认删除产品线 "' + pl.display_name + '" 吗？此操作不可撤销。')) return;
+    api("/api/v1/product-lines/" + pl.id, { method: "DELETE" })
+      .then(function () {
+        toast("产品线已删除", "success");
+        loadProductLines();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("删除失败: " + err.message, "error");
+      });
+  }
+
+  // ---------- Provision Dify (AI + knowledge base) ----------
+  function provisionDify(pl, btn) {
+    state.provisioningIds[pl.id] = true;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>初始化中…';
+
+    api("/api/v1/product-lines/" + pl.id + "/provision-dify", { method: "POST" })
+      .then(function (data) {
+        if (data && data.provisioned === false) {
+          toast("该产品线已存在绑定", "warn");
+        } else {
+          toast("AI 与知识库初始化成功", "success");
+        }
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("初始化失败: " + err.message, "error");
+      })
+      .finally(function () {
+        delete state.provisioningIds[pl.id];
+        loadProductLines();
+      });
+  }
+
+  // ---------- Open knowledge base ----------
+  function openKnowledgeBase(pl) {
+    if (!pl.dify_dataset_id) return;
+    var url = DIFY_CONSOLE_BASE + "/datasets/" + encodeURIComponent(pl.dify_dataset_id) + "/documents";
+    window.open(url, "_blank", "noopener");
+  }
+
+  // ---------- Create / Edit product line modal ----------
+  els.createBtn.addEventListener("click", openCreateModal);
+  els.plModalCancel.addEventListener("click", closePLModal);
+  els.plModalBackdrop.addEventListener("click", function (e) {
+    if (e.target === els.plModalBackdrop) closePLModal();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (els.plModalBackdrop.classList.contains("open")) closePLModal();
+    if (els.aiModalBackdrop.classList.contains("open")) closeAIModal();
+  });
+
+  function openCreateModal() {
+    state.editingId = null;
+    els.plModalTitle.textContent = "新建产品线";
+    els.plForm.reset();
+    els.plModalBackdrop.classList.add("open");
+    els.fName.focus();
+  }
+
+  function openEditModal(pl) {
+    state.editingId = pl.id;
+    els.plModalTitle.textContent = "编辑产品线";
+    els.fName.value = pl.name;
+    els.fDisplayName.value = pl.display_name;
+    els.plModalBackdrop.classList.add("open");
+    els.fName.focus();
+  }
+
+  function closePLModal() {
+    els.plModalBackdrop.classList.remove("open");
+    els.plForm.reset();
+  }
+
+  els.plForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var submitBtn = document.getElementById("pl-modal-submit");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "保存中…";
+
+    var payload = {
+      name: els.fName.value.trim(),
+      display_name: els.fDisplayName.value.trim()
+    };
+
+    var request = state.editingId
+      ? api("/api/v1/product-lines/" + state.editingId, { method: "PUT", body: JSON.stringify(payload) })
+      : api("/api/v1/product-lines", { method: "POST", body: JSON.stringify(payload) });
+
+    request
+      .then(function () {
+        toast(state.editingId ? "产品线已更新" : "产品线已创建", "success");
+        closePLModal();
+        loadProductLines();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("保存失败: " + err.message, "error");
+      })
+      .finally(function () {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "保存";
+      });
+  });
+
+  // ---------- AI 参数 modal ----------
+  els.aiModalCancel.addEventListener("click", closeAIModal);
+  els.aiModalBackdrop.addEventListener("click", function (e) {
+    if (e.target === els.aiModalBackdrop) closeAIModal();
+  });
+
+  function openAIConfigModal(pl) {
+    state.aiConfigPL = pl;
+    els.aiModalTitle.textContent = "AI 参数 - " + (pl.display_name || pl.name);
+    els.aiModalSub.textContent = "";
+    els.aiForm.hidden = true;
+    els.aiModalLoading.hidden = false;
+    els.aiModalLoading.textContent = "正在加载配置…";
+    els.aiModalBackdrop.classList.add("open");
+
+    api("/api/v1/ai-config/" + pl.id)
+      .then(function (cfg) {
+        els.aiModalSub.textContent = cfg.product_line_name || "";
+        els.fThreshold.value = cfg.confidence_threshold != null ? cfg.confidence_threshold : 0.7;
+        els.fHandoff.value = (cfg.handoff_keywords || []).join(",");
+        els.fBlocked.value = (cfg.blocked_topics || []).join(",");
+        els.fPrompt.value = cfg.system_prompt || "";
+
+        var hasAgent = !!pl.dify_agent_id;
+        els.fPrompt.disabled = !hasAgent;
+        els.promptHint.textContent = hasAgent
+          ? "保存后将直接更新 Dify 中的系统提示词"
+          : "未配置 Dify 应用，暂无法编辑系统提示词";
+
+        var updatedHint = [];
+        if (cfg.updated_at) updatedHint.push("最近更新: " + formatDate(cfg.updated_at));
+        if (cfg.updated_by) updatedHint.push("更新人: " + cfg.updated_by);
+        els.aiUpdatedHint.textContent = updatedHint.join(" · ");
+
+        els.aiModalLoading.hidden = true;
+        els.aiForm.hidden = false;
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        if (err.status === 404) {
+          els.aiModalLoading.hidden = true;
+          els.aiModalSub.textContent = "尚无 AI 配置记录，保存后将创建默认配置";
+          els.fThreshold.value = 0.7;
+          els.fHandoff.value = "转人工,人工客服";
+          els.fBlocked.value = "";
+          els.fPrompt.value = "";
+          els.fPrompt.disabled = !pl.dify_agent_id;
+          els.promptHint.textContent = pl.dify_agent_id
+            ? "保存后将直接更新 Dify 中的系统提示词"
+            : "未配置 Dify 应用，暂无法编辑系统提示词";
+          els.aiUpdatedHint.textContent = "";
+          els.aiForm.hidden = false;
+          return;
+        }
+        els.aiModalLoading.textContent = "加载失败: " + err.message;
+        toast("加载 AI 配置失败: " + err.message, "error");
+      });
+  }
+
+  function closeAIModal() {
+    els.aiModalBackdrop.classList.remove("open");
+    state.aiConfigPL = null;
+    els.aiForm.reset();
+  }
+
+  els.aiForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var pl = state.aiConfigPL;
+    if (!pl) return;
+
+    var threshold = parseFloat(els.fThreshold.value);
+    if (isNaN(threshold) || threshold < 0 || threshold > 1) {
+      toast("置信度阈值须为 0 至 1 之间的数字", "error");
+      return;
+    }
+    var handoffKeywords = splitCsv(els.fHandoff.value);
+    var blockedTopics = splitCsv(els.fBlocked.value);
+    var promptChanged = !els.fPrompt.disabled;
+
+    var submitBtn = document.getElementById("ai-modal-submit");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "保存中…";
+
+    var rulesRequest = api("/api/v1/ai-config/" + pl.id + "/handoff-rules", {
+      method: "PUT",
+      body: JSON.stringify({
+        handoff_keywords: handoffKeywords,
+        blocked_topics: blockedTopics,
+        threshold: threshold
+      })
+    });
+
+    rulesRequest
+      .then(function () {
+        if (promptChanged) {
+          return api("/api/v1/ai-config/" + pl.id + "/prompt", {
+            method: "PUT",
+            body: JSON.stringify({ prompt: els.fPrompt.value })
+          });
+        }
+      })
+      .then(function () {
+        toast("AI 参数已保存", "success");
+        closeAIModal();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("保存失败: " + err.message, "error");
+      })
+      .finally(function () {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "保存";
+      });
+  });
+
+  function splitCsv(str) {
+    return String(str || "")
+      .split(",")
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
+  }
+
+  // ---------- Utils ----------
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---------- Init ----------
+  if (getToken()) {
+    showApp();
+    bootstrap();
+  } else {
+    showLogin();
+  }
+})();
+</script>

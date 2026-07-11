@@ -1,0 +1,15 @@
+# PersistentVolumeClaim for Chatwoot file storage (attachments, uploads).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chatwoot-storage
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/name: chatwoot
+    app.kubernetes.io/part-of: unica
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

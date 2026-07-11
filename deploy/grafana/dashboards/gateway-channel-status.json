@@ -1,0 +1,246 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Gateway per-channel status: inbound/outbound per channel, dedup hits, dead-letter count",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Inbound Messages Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(gateway_inbound_total[5m])",
+          "legendFormat": "Inbound Total"
+        }
+      ]
+    },
+    {
+      "title": "Outbound Messages Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(gateway_outbound_total[5m])",
+          "legendFormat": "Outbound Total"
+        }
+      ]
+    },
+    {
+      "title": "Dedup Hit Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(gateway_dedup_hits_total[5m]) / (rate(gateway_dedup_hits_total[5m]) + rate(gateway_dedup_misses_total[5m]))",
+          "legendFormat": "Dedup Hit Rate"
+        }
+      ]
+    },
+    {
+      "title": "Dedup Hits / Misses / Errors",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(gateway_dedup_hits_total[5m])",
+          "legendFormat": "Hits"
+        },
+        {
+          "expr": "rate(gateway_dedup_misses_total[5m])",
+          "legendFormat": "Misses"
+        },
+        {
+          "expr": "rate(gateway_dedup_errors_total[5m])",
+          "legendFormat": "Errors"
+        }
+      ]
+    },
+    {
+      "title": "Dead-Letter Queue Count",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "gateway_dead_letter_total",
+          "legendFormat": "Dead Letters"
+        }
+      ]
+    },
+    {
+      "title": "Dead-Letter Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(gateway_dead_letter_total[5m])",
+          "legendFormat": "Dead-Letter Rate"
+        }
+      ]
+    },
+    {
+      "title": "Stream Queue Depth",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "gateway_stream_depth",
+          "legendFormat": "{{stream}}"
+        }
+      ]
+    },
+    {
+      "title": "Chatwoot Webhook Events",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(chatwoot_webhook_received_total[5m])) by (event_type)",
+          "legendFormat": "Received: {{event_type}}"
+        },
+        {
+          "expr": "sum(rate(chatwoot_agent_replies_total[5m])) by (product_line)",
+          "legendFormat": "Agent Replies: {{product_line}}"
+        },
+        {
+          "expr": "sum(rate(chatwoot_webhook_errors_total[5m])) by (error_type)",
+          "legendFormat": "Errors: {{error_type}}"
+        }
+      ]
+    },
+    {
+      "title": "Gateway Inbound Processing Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(gateway_inbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_inbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(gateway_inbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P99"
+        }
+      ]
+    },
+    {
+      "title": "Gateway Outbound Dispatch Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(gateway_outbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_outbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(gateway_outbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P99"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["unica", "gateway"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UNICA Gateway Channel Status",
+  "uid": "unica-gateway-channels",
+  "version": 1
+}

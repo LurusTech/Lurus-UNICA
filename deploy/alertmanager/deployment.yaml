@@ -1,0 +1,123 @@
+# Webhook adapter deployment for K3s.
+# Receives AlertManager webhook POSTs and forwards formatted messages to
+# DingTalk, WeCom, and Feishu.
+#
+# Apply: kubectl apply -f deployment.yaml -n unica
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webhook-adapter-config
+  namespace: unica
+data:
+  config.yaml: |
+    server:
+      port: 8080
+    targets:
+      default:
+        - platform: dingtalk
+          url: "${DINGTALK_WEBHOOK_URL}"
+          secret: "${DINGTALK_SECRET}"
+      critical:
+        - platform: dingtalk
+          url: "${DINGTALK_WEBHOOK_URL}"
+          secret: "${DINGTALK_SECRET}"
+        - platform: wecom
+          url: "${WECOM_WEBHOOK_URL}"
+        - platform: feishu
+          url: "${FEISHU_WEBHOOK_URL}"
+          secret: "${FEISHU_SECRET}"
+      warning:
+        - platform: dingtalk
+          url: "${DINGTALK_WEBHOOK_URL}"
+          secret: "${DINGTALK_SECRET}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: webhook-adapter-secrets
+  namespace: unica
+type: Opaque
+stringData:
+  # Replace with actual webhook URLs before deploying
+  DINGTALK_WEBHOOK_URL: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+  DINGTALK_SECRET: ""
+  WECOM_WEBHOOK_URL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+  FEISHU_WEBHOOK_URL: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_TOKEN"
+  FEISHU_SECRET: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-adapter
+  namespace: unica
+  labels:
+    app: webhook-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-adapter
+  template:
+    metadata:
+      labels:
+        app: webhook-adapter
+    spec:
+      containers:
+        - name: webhook-adapter
+          image: unica/webhook-adapter:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          args:
+            - "-config"
+            - "/etc/webhook-adapter/config.yaml"
+          envFrom:
+            - secretRef:
+                name: webhook-adapter-secrets
+          volumeMounts:
+            - name: config
+              mountPath: /etc/webhook-adapter
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: webhook-adapter-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-adapter
+  namespace: unica
+  labels:
+    app: webhook-adapter
+spec:
+  type: ClusterIP
+  selector:
+    app: webhook-adapter
+  ports:
+    - port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http

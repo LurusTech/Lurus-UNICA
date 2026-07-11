@@ -1,0 +1,247 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Router AI Pipeline: Dify latency, confidence distribution, retrieval hit/miss, token usage, guardrail decisions",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Dify API Call Latency (P50 / P95 / P99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(router_dify_call_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Dify P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(router_dify_call_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Dify P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(router_dify_call_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Dify P99"
+        }
+      ]
+    },
+    {
+      "title": "Dify Error Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_dify_errors_total[5m])) by (error_type)",
+          "legendFormat": "{{error_type}}"
+        }
+      ]
+    },
+    {
+      "title": "Confidence Score Distribution",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 60 }
+        }
+      },
+      "options": {
+        "bucketOffset": 0,
+        "combine": false,
+        "fillOpacity": 60
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(router_dify_confidence_score_bucket[1h])) by (le)",
+          "legendFormat": "{{le}}",
+          "format": "heatmap"
+        }
+      ]
+    },
+    {
+      "title": "Confidence Score Over Time (Avg)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(router_dify_confidence_score_sum[5m]) / rate(router_dify_confidence_score_count[5m])",
+          "legendFormat": "Avg Confidence"
+        }
+      ]
+    },
+    {
+      "title": "Retrieval Hit Rate",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.8 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(router_dify_retrieval_hit_total[5m]) / (rate(router_dify_retrieval_hit_total[5m]) + rate(router_dify_retrieval_miss_total[5m]))",
+          "legendFormat": "Hit Rate"
+        }
+      ]
+    },
+    {
+      "title": "Retrieval Hits vs Misses",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 18, "x": 6, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(router_dify_retrieval_hit_total[5m])",
+          "legendFormat": "Hits"
+        },
+        {
+          "expr": "rate(router_dify_retrieval_miss_total[5m])",
+          "legendFormat": "Misses"
+        }
+      ]
+    },
+    {
+      "title": "Token Consumption Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_dify_tokens_total[5m])) by (type)",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "title": "Guardrail Decision Breakdown",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_guardrail_decisions_total[5m])) by (decision, reason)",
+          "legendFormat": "{{decision}}: {{reason}}"
+        }
+      ]
+    },
+    {
+      "title": "Handoff Rate by Product Line",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(router_handoff_events_processed_total[5m])",
+          "legendFormat": "Handoff Events"
+        }
+      ]
+    },
+    {
+      "title": "Handoff Processing Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(router_handoff_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Handoff P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(router_handoff_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Handoff P95"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(router_handoff_summary_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Summary P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(router_handoff_summary_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Summary P95"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["unica", "router", "ai"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UNICA Router AI Pipeline",
+  "uid": "unica-router-ai-pipeline",
+  "version": 1
+}

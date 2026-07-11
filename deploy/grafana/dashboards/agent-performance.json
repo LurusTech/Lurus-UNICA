@@ -1,0 +1,235 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "UNICA Agent Performance - response time, conversation volume, satisfaction scores per agent",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Average Agent Response Time",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 300 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(AVG(EXTRACT(EPOCH FROM first_agent_reply_at - handoff_at)) FILTER (WHERE first_agent_reply_at IS NOT NULL AND handoff_at IS NOT NULL), 0) AS avg_response_seconds FROM conversations WHERE assigned_agent_id IS NOT NULL AND created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line')",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Total Agent Conversations",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS total FROM conversations WHERE assigned_agent_id IS NOT NULL AND created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line')",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Average Satisfaction Score",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "min": 1,
+          "max": 5,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "green", "value": 4 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(AVG(satisfaction_score) FILTER (WHERE satisfaction_score IS NOT NULL), 0) AS avg_satisfaction FROM conversations WHERE assigned_agent_id IS NOT NULL AND created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line')",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Active Agent Load",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT assigned_agent_id::text, COALESCE(a.name, assigned_agent_id::text) AS agent, COUNT(*) AS active_count FROM conversations c LEFT JOIN agents a ON a.id = c.assigned_agent_id WHERE c.state = 'human_processing' AND c.assigned_agent_id IS NOT NULL GROUP BY c.assigned_agent_id, a.name ORDER BY active_count DESC LIMIT 10",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Agent Performance Table",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 6 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "avg_response_seconds" }, "properties": [{ "id": "unit", "value": "s" }, { "id": "custom.width", "value": 150 }] },
+          { "matcher": { "id": "byName", "options": "avg_satisfaction" }, "properties": [{ "id": "custom.width", "value": 120 }] },
+          { "matcher": { "id": "byName", "options": "conversation_count" }, "properties": [{ "id": "custom.width", "value": 130 }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(a.name, c.assigned_agent_id::text) AS agent_name, COUNT(*) AS conversation_count, ROUND(COALESCE(AVG(EXTRACT(EPOCH FROM c.first_agent_reply_at - c.handoff_at)) FILTER (WHERE c.first_agent_reply_at IS NOT NULL AND c.handoff_at IS NOT NULL), 0)::numeric, 1) AS avg_response_seconds, ROUND(COALESCE(AVG(c.satisfaction_score) FILTER (WHERE c.satisfaction_score IS NOT NULL), 0)::numeric, 2) AS avg_satisfaction FROM conversations c LEFT JOIN agents a ON a.id = c.assigned_agent_id WHERE c.assigned_agent_id IS NOT NULL AND c.created_at >= $__timeFrom() AND c.created_at < $__timeTo() AND ($product_line = '' OR c.product_line_id::text = '$product_line') GROUP BY c.assigned_agent_id, a.name ORDER BY conversation_count DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Agent Response Time - Daily Trend",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, COALESCE(AVG(EXTRACT(EPOCH FROM first_agent_reply_at - handoff_at)) FILTER (WHERE first_agent_reply_at IS NOT NULL AND handoff_at IS NOT NULL), 0) AS avg_response_seconds FROM conversations WHERE assigned_agent_id IS NOT NULL AND created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line') GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Agent Conversation Volume - Daily",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 30, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('day', c.created_at) AS time, COALESCE(a.name, c.assigned_agent_id::text) AS agent, COUNT(*) AS conversations FROM conversations c LEFT JOIN agents a ON a.id = c.assigned_agent_id WHERE c.assigned_agent_id IS NOT NULL AND c.created_at >= $__timeFrom() AND c.created_at < $__timeTo() AND ($product_line = '' OR c.product_line_id::text = '$product_line') GROUP BY 1, 2 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Satisfaction Score Distribution",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 80 }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT satisfaction_score::text AS score, COUNT(*) AS count FROM conversations WHERE satisfaction_score IS NOT NULL AND created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line') GROUP BY satisfaction_score ORDER BY satisfaction_score",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Agent Satisfaction - Weekly Trend",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('week', created_at) AS time, COALESCE(AVG(satisfaction_score) FILTER (WHERE satisfaction_score IS NOT NULL), 0) AS avg_satisfaction FROM conversations WHERE created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line') GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["unica", "agents", "performance"],
+  "templating": {
+    "list": [
+      {
+        "name": "product_line",
+        "label": "Product Line",
+        "type": "query",
+        "datasource": "PostgreSQL",
+        "query": "SELECT id::text AS __value, name AS __text FROM product_lines ORDER BY name",
+        "includeAll": true,
+        "allValue": "",
+        "current": { "text": "All", "value": "" },
+        "refresh": 1
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UNICA - Agent Performance",
+  "uid": "unica-agent-performance",
+  "version": 1
+}

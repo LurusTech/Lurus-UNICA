@@ -1,0 +1,109 @@
+# Deployment + Service: Chatwoot web server (Rails + Puma).
+# Serves the web UI and REST/WebSocket API.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatwoot-web
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/name: chatwoot
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: unica
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chatwoot
+      app.kubernetes.io/component: web
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatwoot
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+        - name: chatwoot-web
+          image: chatwoot/chatwoot:v3.15.0
+          command:
+            - /bin/sh
+            - -c
+            - bundle exec rails s -p 3000 -b 0.0.0.0
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: chatwoot-env
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: REDIS_URL
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: SECRET_KEY_BASE
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /auth/sign_in
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /auth/sign_in
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: storage
+              mountPath: /app/storage
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: chatwoot-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatwoot
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/name: chatwoot
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: unica
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: chatwoot
+    app.kubernetes.io/component: web

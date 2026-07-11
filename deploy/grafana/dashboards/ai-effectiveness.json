@@ -1,0 +1,271 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "UNICA AI Effectiveness - auto-resolution rate, handoff rate, knowledge hit rate, top questions",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "AI Auto-Resolution Rate (%)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.7 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(COUNT(*) FILTER (WHERE state = 'closed' AND handoff_count = 0)::numeric / NULLIF(COUNT(*), 0), 4) AS resolution_rate FROM conversations WHERE created_at >= NOW() - INTERVAL '$__interval' AND ($product_line = '' OR product_line_id::text = '$product_line')",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Handoff Rate (%)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.2 },
+              { "color": "red", "value": 0.4 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(COUNT(*) FILTER (WHERE handoff_count > 0)::numeric / NULLIF(COUNT(*), 0), 4) AS handoff_rate FROM conversations WHERE created_at >= NOW() - INTERVAL '$__interval' AND ($product_line = '' OR product_line_id::text = '$product_line')",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Total Conversations",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS total FROM conversations WHERE created_at >= NOW() - INTERVAL '$__interval' AND ($product_line = '' OR product_line_id::text = '$product_line')",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Knowledge Base Hit Rate (%)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.7 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(COUNT(*) FILTER (WHERE (metadata->>'dify_retrieval_hit')::boolean = true)::numeric / NULLIF(COUNT(*) FILTER (WHERE state IN ('ai_processing', 'closed') AND handoff_count = 0), 0), 4) AS hit_rate FROM conversations WHERE created_at >= NOW() - INTERVAL '$__interval' AND ($product_line = '' OR product_line_id::text = '$product_line')",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "AI Resolution Rate - Daily Trend",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, ROUND(COUNT(*) FILTER (WHERE state = 'closed' AND handoff_count = 0)::numeric / NULLIF(COUNT(*), 0), 4) AS resolution_rate FROM conversations WHERE created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line') GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Handoff Rate - Daily Trend",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, ROUND(COUNT(*) FILTER (WHERE handoff_count > 0)::numeric / NULLIF(COUNT(*), 0), 4) AS handoff_rate FROM conversations WHERE created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line') GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Resolution Rate by Product Line",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "fillOpacity": 80 }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(pl.name, c.product_line_id::text) AS product_line, ROUND(COUNT(*) FILTER (WHERE c.state = 'closed' AND c.handoff_count = 0)::numeric / NULLIF(COUNT(*), 0), 4) AS resolution_rate FROM conversations c LEFT JOIN product_lines pl ON pl.id = c.product_line_id WHERE c.created_at >= $__timeFrom() AND c.created_at < $__timeTo() GROUP BY 1 ORDER BY resolution_rate DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top 20 Customer Questions",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 14 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "count" }, "properties": [{ "id": "custom.width", "value": 80 }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawSql": "WITH first_msgs AS (SELECT DISTINCT ON (m.conversation_id) COALESCE(c.intent_summary, m.content_json->>'text', LEFT(m.content_json::text, 200)) AS question FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.direction = 'inbound' AND m.sender_type = 'customer' AND m.created_at >= $__timeFrom() AND m.created_at < $__timeTo() AND ($product_line = '' OR c.product_line_id::text = '$product_line') ORDER BY m.conversation_id, m.created_at ASC) SELECT question, COUNT(*) AS count FROM first_msgs WHERE question IS NOT NULL AND question != '' GROUP BY question ORDER BY count DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Conversation Volume - Daily",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, COUNT(*) FILTER (WHERE state = 'closed' AND handoff_count = 0) AS ai_resolved, COUNT(*) FILTER (WHERE handoff_count > 0) AS handoffs, COUNT(*) AS total FROM conversations WHERE created_at >= $__timeFrom() AND created_at < $__timeTo() AND ($product_line = '' OR product_line_id::text = '$product_line') GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Report API Latency (P95)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 32 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(reporter_report_generation_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{report_type}} P95"
+        }
+      ]
+    },
+    {
+      "title": "Reports Generated/min",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 32 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(reporter_reports_generated_total[5m])",
+          "legendFormat": "{{report_type}}"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["unica", "ai", "reports"],
+  "templating": {
+    "list": [
+      {
+        "name": "product_line",
+        "label": "Product Line",
+        "type": "query",
+        "datasource": "PostgreSQL",
+        "query": "SELECT id::text AS __value, name AS __text FROM product_lines ORDER BY name",
+        "includeAll": true,
+        "allValue": "",
+        "current": { "text": "All", "value": "" },
+        "refresh": 1
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UNICA - AI Effectiveness",
+  "uid": "unica-ai-effectiveness",
+  "version": 1
+}

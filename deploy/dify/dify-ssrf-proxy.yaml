@@ -1,0 +1,160 @@
+# Dify SSRF Proxy - Squid-based proxy to prevent SSRF attacks
+# Filters outbound requests from sandbox and tool executions
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dify-ssrf-proxy
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/part-of: unica
+    app.kubernetes.io/component: dify
+    app.kubernetes.io/name: dify-ssrf-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dify-ssrf-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: unica
+        app.kubernetes.io/component: dify
+        app.kubernetes.io/name: dify-ssrf-proxy
+    spec:
+      containers:
+        - name: ssrf-proxy
+          image: ubuntu/squid:latest
+          ports:
+            - containerPort: 3128
+              name: http
+              protocol: TCP
+          env:
+            - name: HTTP_PORT
+              value: "3128"
+            - name: COREDUMP_DIR
+              value: "/var/spool/squid"
+            - name: REVERSE_PROXY_PORT
+              value: "8194"
+            - name: SANDBOX_HOST
+              value: "dify-sandbox"
+            - name: SANDBOX_PORT
+              value: "8194"
+
+          volumeMounts:
+            - name: squid-config
+              mountPath: /etc/squid/squid.conf
+              subPath: squid.conf
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+          readinessProbe:
+            tcpSocket:
+              port: 3128
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          livenessProbe:
+            tcpSocket:
+              port: 3128
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+
+      volumes:
+        - name: squid-config
+          configMap:
+            name: dify-ssrf-proxy-config
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dify-ssrf-proxy-config
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/part-of: unica
+    app.kubernetes.io/component: dify
+    app.kubernetes.io/name: dify-ssrf-proxy
+data:
+  squid.conf: |
+    # Squid configuration for Dify SSRF proxy
+    acl localnet src 0.0.0.1-0.255.255.255
+    acl localnet src 10.0.0.0/8
+    acl localnet src 100.64.0.0/10
+    acl localnet src 169.254.0.0/16
+    acl localnet src 172.16.0.0/12
+    acl localnet src 192.168.0.0/16
+
+    acl SSL_ports port 443
+    acl Safe_ports port 80
+    acl Safe_ports port 21
+    acl Safe_ports port 443
+    acl Safe_ports port 70
+    acl Safe_ports port 210
+    acl Safe_ports port 1025-65535
+    acl Safe_ports port 280
+    acl Safe_ports port 488
+    acl Safe_ports port 591
+    acl Safe_ports port 777
+
+    # Deny requests to unsafe ports
+    http_access deny !Safe_ports
+    http_access deny CONNECT !SSL_ports
+
+    # Deny access to internal K8s cluster network (prevent SSRF)
+    acl k8s_internal dst 10.0.0.0/8
+    acl k8s_internal dst 172.16.0.0/12
+    acl k8s_internal dst 192.168.0.0/16
+    acl k8s_internal dst 169.254.0.0/16
+    acl k8s_internal dst 127.0.0.0/8
+
+    # Allow connections from Dify services within the cluster
+    http_access allow localnet
+    http_access allow localhost
+
+    # Block internal network access from proxied requests
+    # (This prevents SSRF attacks targeting internal services)
+    http_access deny k8s_internal
+
+    # Allow external access
+    http_access allow all
+
+    # Squid listener
+    http_port 3128
+
+    # Cache settings
+    coredump_dir /var/spool/squid
+    cache_mem 64 MB
+    maximum_object_size 4 MB
+
+    # Log settings
+    access_log stdio:/dev/stdout
+    cache_log stdio:/dev/stderr
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dify-ssrf-proxy
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/part-of: unica
+    app.kubernetes.io/component: dify
+    app.kubernetes.io/name: dify-ssrf-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dify-ssrf-proxy
+  ports:
+    - name: http
+      port: 3128
+      targetPort: 3128
+      protocol: TCP

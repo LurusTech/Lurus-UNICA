@@ -1,0 +1,272 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Agent Workspace: agent pool availability, assignment success rate, survey scores",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Agent Pool Availability",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "agent_pool_available",
+          "legendFormat": "Available: {{product_line}}"
+        }
+      ]
+    },
+    {
+      "title": "Agent Assignment Success Rate",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "green", "value": 0.9 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(agent_assignments_total{result=\"success\"}[5m])) / sum(rate(agent_assignments_total[5m]))",
+          "legendFormat": "Success Rate"
+        }
+      ]
+    },
+    {
+      "title": "Assignment Attempts by Result",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(agent_assignments_total[5m])) by (result)",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "title": "Assignments by Product Line",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(agent_assignments_total[5m])) by (product_line)",
+          "legendFormat": "{{product_line}}"
+        }
+      ]
+    },
+    {
+      "title": "Agent Load Distribution",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, agent_load_current)",
+          "legendFormat": "Agent {{agent_id}}"
+        }
+      ]
+    },
+    {
+      "title": "Survey Sent Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(survey_sent_total[5m])) by (product_line)",
+          "legendFormat": "Sent: {{product_line}}"
+        }
+      ]
+    },
+    {
+      "title": "Survey Completion Rate",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "green", "value": 0.6 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(survey_completed_total[5m])) / sum(rate(survey_sent_total[5m]))",
+          "legendFormat": "Completion Rate"
+        }
+      ]
+    },
+    {
+      "title": "Survey Timeout Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(survey_timeout_total[5m])) by (product_line)",
+          "legendFormat": "Timeout: {{product_line}}"
+        }
+      ]
+    },
+    {
+      "title": "Survey Score Distribution",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(survey_completed_total[5m])) by (score)",
+          "legendFormat": "Score: {{score}}"
+        }
+      ]
+    },
+    {
+      "title": "Handoff Event Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(router_handoff_events_processed_total[5m])",
+          "legendFormat": "Handoff Events"
+        },
+        {
+          "expr": "sum(rate(router_handoff_errors_total[5m])) by (error_type)",
+          "legendFormat": "Handoff Error: {{error_type}}"
+        }
+      ]
+    },
+    {
+      "title": "History Sync Activity",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(history_sync_messages_total[5m])) by (product_line)",
+          "legendFormat": "Sync: {{product_line}}"
+        },
+        {
+          "expr": "sum(rate(history_sync_errors_total[5m])) by (error_type)",
+          "legendFormat": "Error: {{error_type}}"
+        }
+      ]
+    },
+    {
+      "title": "History Sync Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(history_sync_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(history_sync_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P95"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["unica", "agent", "workspace"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UNICA Agent Workspace",
+  "uid": "unica-agent-workspace",
+  "version": 1
+}

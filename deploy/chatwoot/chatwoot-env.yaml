@@ -1,0 +1,51 @@
+# ConfigMap: Non-sensitive Chatwoot environment variables.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chatwoot-env
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/name: chatwoot
+    app.kubernetes.io/part-of: unica
+data:
+  # Rails environment
+  RAILS_ENV: "production"
+  RAILS_LOG_TO_STDOUT: "true"
+  LOG_LEVEL: "info"
+  LOG_SIZE: "500"
+
+  # Application URL (used for links in emails, etc.)
+  FRONTEND_URL: "http://chatwoot.unica-dev.svc.cluster.local:3000"
+
+  # Default locale
+  DEFAULT_LOCALE: "zh_CN"
+
+  # Disable telemetry for private deployment
+  ENABLE_ACCOUNT_SIGNUP: "false"
+  DISABLE_TELEMETRY: "true"
+
+  # Storage config (local for dev, switch to S3 for prod)
+  ACTIVE_STORAGE_SERVICE: "local"
+
+  # Mailer (disabled for dev, enable when SMTP is configured)
+  MAILER_SENDER_EMAIL: "noreply@unica.local"
+  SMTP_DOMAIN: ""
+  SMTP_ADDRESS: ""
+  SMTP_PORT: ""
+  SMTP_USERNAME: ""
+  SMTP_PASSWORD: ""
+  SMTP_AUTHENTICATION: ""
+  SMTP_ENABLE_STARTTLS_AUTO: "false"
+
+  # Chatwoot web server config
+  WEB_CONCURRENCY: "2"
+  RAILS_MAX_THREADS: "5"
+
+  # Sidekiq (background job processing)
+  SIDEKIQ_CONCURRENCY: "10"
+
+  # Node environment for frontend asset compilation
+  NODE_ENV: "production"
+
+  # Force SSL (disabled for dev K3s)
+  FORCE_SSL: "false"

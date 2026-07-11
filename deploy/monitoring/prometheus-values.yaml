@@ -1,0 +1,179 @@
+# Helm values for kube-prometheus-stack
+# Install: helm install monitoring prometheus-community/kube-prometheus-stack -n monitoring -f prometheus-values.yaml
+#
+# Prerequisites:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   kubectl create namespace monitoring
+
+prometheus:
+  prometheusSpec:
+    # Scrape interval for all targets
+    scrapeInterval: "15s"
+    evaluationInterval: "15s"
+
+    # Data retention: 15 days for metrics
+    retention: 15d
+
+    # Storage configuration
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+    # Auto-discover ServiceMonitors in all namespaces
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    serviceMonitorSelector: {}
+
+    # Resource limits
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+
+  # Disable default service monitors for K3s components we don't need
+  kubeApiServer:
+    enabled: true
+  kubelet:
+    enabled: true
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+
+# Grafana configuration (bundled with kube-prometheus-stack)
+grafana:
+  enabled: true
+
+  adminUser: admin
+  adminPassword: unica-grafana-admin
+
+  persistence:
+    enabled: true
+    size: 5Gi
+
+  # Ingress for Grafana UI
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: traefik
+    hosts:
+      - grafana.unica.local
+    path: /
+
+  # Auto-provision datasources
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://monitoring-kube-prometheus-prometheus:9090
+          access: proxy
+          isDefault: true
+          editable: false
+        - name: Loki
+          type: loki
+          url: http://loki-stack:3100
+          access: proxy
+          editable: false
+          jsonData:
+            derivedFields:
+              - datasourceUid: prometheus
+                matcherRegex: "correlation_id=([a-f0-9-]+)"
+                name: CorrelationID
+                url: "$${__value.raw}"
+
+  # Auto-provision dashboards from ConfigMap
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: unica
+          orgId: 1
+          folder: UNICA
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/unica
+
+  dashboardsConfigMaps:
+    unica: unica-grafana-dashboards
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Alertmanager configuration
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    retention: 120h
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+  # AlertManager routing and receiver configuration
+  config:
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: "webhook-adapter"
+      group_by: ["alertname", "severity"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - match:
+            severity: critical
+          receiver: "webhook-adapter"
+          repeat_interval: 1h
+        - match:
+            severity: warning
+          receiver: "webhook-adapter"
+          repeat_interval: 4h
+
+    receivers:
+      - name: "webhook-adapter"
+        webhook_configs:
+          - url: "http://webhook-adapter.unica.svc.cluster.local:8080/alert"
+            send_resolved: true
+            max_alerts: 10
+
+    # Inhibition rules to reduce noise
+    inhibit_rules:
+      - source_match:
+          severity: "critical"
+        target_match:
+          severity: "warning"
+        equal: ["alertname"]
+
+# Node exporter for host-level metrics
+nodeExporter:
+  enabled: true
+
+# Kube-state-metrics for K8s object metrics
+kubeStateMetrics:
+  enabled: true

@@ -1,0 +1,119 @@
+# Helm values for grafana/loki-stack
+# Install: helm install loki-stack grafana/loki-stack -n monitoring -f loki-values.yaml
+#
+# Prerequisites:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+
+loki:
+  enabled: true
+
+  config:
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+
+    ingester:
+      lifecycler:
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+      chunk_idle_period: 5m
+      chunk_retain_period: 30s
+
+    schema_config:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    storage_config:
+      tsdb_shipper:
+        active_index_directory: /data/loki/tsdb-index
+        cache_location: /data/loki/tsdb-cache
+      filesystem:
+        directory: /data/loki/chunks
+
+    limits_config:
+      enforce_metric_name: false
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h  # 7 days
+      max_query_length: 721h
+      retention_period: 168h  # 7 days for log retention
+
+    compactor:
+      working_directory: /data/loki/compactor
+      retention_enabled: true
+      retention_delete_delay: 2h
+      compaction_interval: 10m
+
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 168h  # 7 days
+
+  persistence:
+    enabled: true
+    size: 10Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+promtail:
+  enabled: true
+
+  config:
+    clients:
+      - url: http://loki-stack:3100/loki/api/v1/push
+
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_container_name]
+            target_label: container
+        pipeline_stages:
+          # Extract correlation_id from log lines for cross-service tracing
+          - regex:
+              expression: 'correlation_id=(?P<correlation_id>[a-f0-9-]+)'
+          - labels:
+              correlation_id:
+          # Extract log level
+          - regex:
+              expression: '\[(?P<level>INFO|WARN|ERROR|DEBUG|FATAL)\]'
+          - labels:
+              level:
+          # Extract service name from log prefix
+          - regex:
+              expression: '\[(?P<service>gateway|router|admin|reporter)\]'
+          - labels:
+              service:
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# We manage Grafana via kube-prometheus-stack, disable here
+grafana:
+  enabled: false

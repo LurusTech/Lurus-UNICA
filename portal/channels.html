@@ -1,0 +1,720 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>渠道接入 - UNICA 统一管理门户</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --text: #1a1d24;
+    --text-muted: #6b7280;
+    --border: #e2e5ea;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --ok: #16a34a;
+    --bad: #dc2626;
+    --warn: #d97706;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+      --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+      --row-hover: #1e222b;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+    --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+    --row-hover: #1e222b;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f8; --surface: #ffffff; --text: #1a1d24; --text-muted: #6b7280;
+    --border: #e2e5ea; --primary: #2563eb; --primary-hover: #1d4ed8;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1200px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; }
+
+  /* Login screen */
+  #login-view {
+    max-width: 380px; margin: 10vh auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; box-shadow: var(--shadow);
+  }
+  #login-view h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  #login-view p.sub { color: var(--text-muted); margin: 0 0 22px; font-size: 0.88rem; }
+  #login-error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
+  }
+
+  /* App view */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 20px; }
+  .toolbar .field { margin-bottom: 0; min-width: 220px; }
+  .toolbar .spacer { flex: 1; }
+
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    overflow-x: auto; box-shadow: var(--shadow);
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 780px; }
+  th, td { text-align: left; padding: 12px 16px; font-size: 0.88rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row-actions button { padding: 5px 10px; font-size: 0.78rem; }
+  .empty-state { padding: 48px 16px; text-align: center; color: var(--text-muted); }
+  .empty-state a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .empty-state a:hover { text-decoration: underline; }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(10, 12, 16, 0.45); display: none;
+    align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
+    max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 26px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  }
+  .modal h3 { margin: 0 0 18px; font-size: 1.1rem; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+  .switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .switch-row label { margin-bottom: 0; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" href="./index.html">← 返回首页</a>
+    <h1>渠道接入配置</h1>
+  </div>
+  <div id="user-info" hidden>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <!-- Login view -->
+  <section id="login-view">
+    <h2>登录</h2>
+    <p class="sub">请使用管理账号登录以管理渠道配置</p>
+    <div id="login-error"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
+    </form>
+  </section>
+
+  <!-- App view -->
+  <section id="app-view" hidden>
+    <div class="toolbar">
+      <div class="field">
+        <label for="pl-select">产品线</label>
+        <select id="pl-select"><option value="">全部产品线</option></select>
+      </div>
+      <div class="spacer"></div>
+      <button class="primary" id="create-btn">＋ 新增渠道</button>
+      <button id="refresh-btn">刷新</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>平台</th>
+            <th>显示名称</th>
+            <th>状态</th>
+            <th>已验证</th>
+            <th>最近测试</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="channel-tbody">
+          <tr><td colspan="6" class="loading-text">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- Create/Edit modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h3 id="modal-title">新增渠道</h3>
+    <form id="channel-form">
+      <div class="field">
+        <label for="f-product-line">产品线</label>
+        <select id="f-product-line" required></select>
+      </div>
+      <div class="field">
+        <label for="f-platform">平台</label>
+        <select id="f-platform" required>
+          <option value="xiaohongshu">小红书</option>
+          <option value="douyin">抖音</option>
+          <option value="wechat">微信</option>
+          <option value="taobao">淘宝</option>
+          <option value="kuaishou">快手</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-display-name">显示名称</label>
+        <input id="f-display-name" required />
+      </div>
+      <div class="field">
+        <label for="f-app-id">AppID / AppKey</label>
+        <input id="f-app-id" required />
+      </div>
+      <div class="field">
+        <label for="f-app-secret">AppSecret</label>
+        <input id="f-app-secret" type="password" autocomplete="new-password" />
+        <div class="hint" id="secret-hint">编辑时留空表示不修改</div>
+      </div>
+      <div class="field">
+        <label for="f-webhook-token">回调密钥 (webhook_token)</label>
+        <input id="f-webhook-token" />
+      </div>
+      <div class="switch-row" id="enabled-row" hidden>
+        <input type="checkbox" id="f-enabled" style="width:auto" />
+        <label for="f-enabled">启用该渠道</label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="modal-cancel">取消</button>
+        <button type="submit" class="primary" id="modal-submit">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN_KEY = "unica_access_token";
+  var PLATFORM_LABELS = {
+    xiaohongshu: "小红书", douyin: "抖音", wechat: "微信", taobao: "淘宝", kuaishou: "快手"
+  };
+
+  var state = { channels: [], productLines: [], currentPL: "", editingId: null };
+
+  var els = {
+    loginView: document.getElementById("login-view"),
+    appView: document.getElementById("app-view"),
+    loginForm: document.getElementById("login-form"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
+    userInfo: document.getElementById("user-info"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    plSelect: document.getElementById("pl-select"),
+    createBtn: document.getElementById("create-btn"),
+    refreshBtn: document.getElementById("refresh-btn"),
+    tbody: document.getElementById("channel-tbody"),
+    modalBackdrop: document.getElementById("modal-backdrop"),
+    modalTitle: document.getElementById("modal-title"),
+    channelForm: document.getElementById("channel-form"),
+    modalCancel: document.getElementById("modal-cancel"),
+    fProductLine: document.getElementById("f-product-line"),
+    fPlatform: document.getElementById("f-platform"),
+    fDisplayName: document.getElementById("f-display-name"),
+    fAppId: document.getElementById("f-app-id"),
+    fAppSecret: document.getElementById("f-app-secret"),
+    fWebhookToken: document.getElementById("f-webhook-token"),
+    fEnabled: document.getElementById("f-enabled"),
+    enabledRow: document.getElementById("enabled-row"),
+    secretHint: document.getElementById("secret-hint"),
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, 3200);
+  }
+
+  // ---------- Auth / API ----------
+  function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
+  function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
+
+  function showLogin(message) {
+    clearToken();
+    els.appView.hidden = true;
+    els.userInfo.hidden = true;
+    els.loginView.hidden = false;
+    if (message) {
+      els.loginError.textContent = message;
+      els.loginError.style.display = "block";
+    }
+  }
+
+  function showApp() {
+    els.loginView.hidden = true;
+    els.appView.hidden = false;
+    els.userInfo.hidden = false;
+  }
+
+  // Wraps fetch with Authorization header, JSON parsing, and 401 handling.
+  function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    var token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+    return fetch(path, Object.assign({}, options, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          showLogin("登录已过期，请重新登录");
+          throw new Error("unauthorized");
+        }
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
+          }
+          if (!res.ok) {
+            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
+            throw new Error(msg);
+          }
+          return data;
+        });
+      });
+  }
+
+  // ---------- Login ----------
+  els.loginForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    els.loginError.style.display = "none";
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "登录中…";
+
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+
+    fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email, password: password })
+    })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          var data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (e) {}
+          if (!res.ok) {
+            var msg = (data && data.error) || "邮箱或密码错误";
+            throw new Error(msg);
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        if (!data || !data.access_token) throw new Error("登录响应异常");
+        setToken(data.access_token);
+        els.userEmail.textContent = email;
+        showApp();
+        bootstrap();
+      })
+      .catch(function (err) {
+        els.loginError.textContent = err.message || "登录失败，请检查网络";
+        els.loginError.style.display = "block";
+      })
+      .finally(function () {
+        els.loginSubmit.disabled = false;
+        els.loginSubmit.textContent = "登 录";
+      });
+  });
+
+  els.logoutBtn.addEventListener("click", function () {
+    showLogin();
+  });
+
+  // ---------- Bootstrap after login ----------
+  function bootstrap() {
+    loadProductLines().then(loadChannels);
+  }
+
+  function loadProductLines() {
+    return api("/api/v1/product-lines")
+      .then(function (data) {
+        state.productLines = Array.isArray(data) ? data : [];
+        renderProductLineOptions();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("加载产品线失败: " + err.message, "error");
+      });
+  }
+
+  function maybeShowNoProductLineHint() {
+    if (state.productLines.length > 0) return;
+    els.tbody.innerHTML =
+      '<tr><td colspan="6" class="empty-state">还没有产品线，先去<a href="./product-lines.html">创建 →</a></td></tr>';
+  }
+
+  function renderProductLineOptions() {
+    var opts = ['<option value="">全部产品线</option>'];
+    state.productLines.forEach(function (pl) {
+      opts.push('<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>");
+    });
+    els.plSelect.innerHTML = opts.join("");
+
+    var formOpts = state.productLines.map(function (pl) {
+      return '<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
+    });
+    els.fProductLine.innerHTML = formOpts.join("") || '<option value="">暂无产品线</option>';
+  }
+
+  els.plSelect.addEventListener("change", function () {
+    state.currentPL = els.plSelect.value;
+    loadChannels();
+  });
+
+  els.refreshBtn.addEventListener("click", loadChannels);
+
+  // ---------- Channel list ----------
+  function loadChannels() {
+    els.tbody.innerHTML = '<tr><td colspan="6" class="loading-text">加载中…</td></tr>';
+    var qs = state.currentPL ? ("?product_line_id=" + encodeURIComponent(state.currentPL)) : "";
+    return api("/api/v1/channels" + qs)
+      .then(function (data) {
+        state.channels = Array.isArray(data) ? data : [];
+        renderChannels();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.tbody.innerHTML = '<tr><td colspan="6" class="empty-state">加载失败: ' + escapeHtml(err.message) + "</td></tr>";
+        toast("加载渠道列表失败: " + err.message, "error");
+      });
+  }
+
+  function renderChannels() {
+    if (state.channels.length === 0) {
+      if (state.productLines.length === 0) {
+        maybeShowNoProductLineHint();
+        return;
+      }
+      els.tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无渠道配置，点击“新增渠道”开始接入</td></tr>';
+      return;
+    }
+    els.tbody.innerHTML = state.channels.map(rowHtml).join("");
+
+    state.channels.forEach(function (ch) {
+      var editBtn = document.getElementById("edit-" + ch.id);
+      var delBtn = document.getElementById("del-" + ch.id);
+      var testBtn = document.getElementById("test-" + ch.id);
+      var copyBtn = document.getElementById("copy-" + ch.id);
+      if (editBtn) editBtn.addEventListener("click", function () { openEditModal(ch); });
+      if (delBtn) delBtn.addEventListener("click", function () { deleteChannel(ch); });
+      if (testBtn) testBtn.addEventListener("click", function () { testChannel(ch, testBtn); });
+      if (copyBtn) copyBtn.addEventListener("click", function () { copyWebhookUrl(ch); });
+    });
+  }
+
+  function rowHtml(ch) {
+    var platformLabel = PLATFORM_LABELS[ch.platform] || ch.platform;
+    var enabledPill = ch.is_enabled
+      ? '<span class="pill ok">已启用</span>'
+      : '<span class="pill muted">已停用</span>';
+    var verifiedPill = ch.is_verified
+      ? '<span class="pill ok">已验证</span>'
+      : '<span class="pill muted">未验证</span>';
+    var lastTest = "—";
+    if (ch.last_test_at) {
+      var ok = ch.last_test_result && /success|成功|ok/i.test(ch.last_test_result);
+      lastTest = '<span title="' + escapeAttr(ch.last_test_result || "") + '">' +
+        formatDate(ch.last_test_at) + (ok ? " ✓" : "") + "</span>";
+    }
+    return (
+      "<tr>" +
+      "<td>" + escapeHtml(platformLabel) + "</td>" +
+      "<td>" + escapeHtml(ch.display_name) + "</td>" +
+      "<td>" + enabledPill + "</td>" +
+      "<td>" + verifiedPill + "</td>" +
+      "<td>" + lastTest + "</td>" +
+      '<td><div class="row-actions">' +
+      '<button id="edit-' + ch.id + '">编辑</button>' +
+      '<button id="test-' + ch.id + '">连接测试</button>' +
+      '<button id="copy-' + ch.id + '">复制Webhook地址</button>' +
+      '<button class="danger" id="del-' + ch.id + '">删除</button>' +
+      "</div></td>" +
+      "</tr>"
+    );
+  }
+
+  function formatDate(iso) {
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString("zh-CN", { hour12: false });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  // ---------- Delete ----------
+  function deleteChannel(ch) {
+    if (!confirm('确认删除渠道 "' + ch.display_name + '" 吗？此操作不可撤销。')) return;
+    api("/api/v1/channels/" + ch.id, { method: "DELETE" })
+      .then(function () {
+        toast("渠道已删除", "success");
+        loadChannels();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("删除失败: " + err.message, "error");
+      });
+  }
+
+  // ---------- Test connection ----------
+  function testChannel(ch, btn) {
+    btn.disabled = true;
+    var original = btn.textContent;
+    btn.textContent = "测试中…";
+    api("/api/v1/channels/" + ch.id + "/test", { method: "POST" })
+      .then(function (result) {
+        var ok = result && result.success;
+        toast((result && result.message) || (ok ? "连接测试成功" : "连接测试失败"), ok ? "success" : "error");
+        loadChannels();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("连接测试失败: " + err.message, "error");
+      })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = original;
+      });
+  }
+
+  // ---------- Webhook URL copy ----------
+  function copyWebhookUrl(ch) {
+    api("/api/v1/channels/" + ch.id + "/webhook-url")
+      .then(function (data) {
+        var url = data && data.webhook_url;
+        if (!url) throw new Error("未返回Webhook地址");
+        return copyToClipboard(url).then(function () {
+          toast("Webhook地址已复制到剪贴板", "success");
+        });
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("获取Webhook地址失败: " + err.message, "error");
+      });
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  // ---------- Create / Edit modal ----------
+  els.createBtn.addEventListener("click", function () { openCreateModal(); });
+  els.modalCancel.addEventListener("click", closeModal);
+  els.modalBackdrop.addEventListener("click", function (e) {
+    if (e.target === els.modalBackdrop) closeModal();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && els.modalBackdrop.classList.contains("open")) closeModal();
+  });
+
+  function openCreateModal() {
+    state.editingId = null;
+    els.modalTitle.textContent = "新增渠道";
+    els.channelForm.reset();
+    els.fAppSecret.required = true;
+    els.secretHint.hidden = true;
+    els.enabledRow.hidden = true;
+    if (state.currentPL) els.fProductLine.value = state.currentPL;
+    openModal();
+  }
+
+  function openEditModal(ch) {
+    state.editingId = ch.id;
+    els.modalTitle.textContent = "编辑渠道";
+    els.fProductLine.value = ch.product_line_id;
+    els.fPlatform.value = ch.platform;
+    els.fPlatform.disabled = true;
+    els.fDisplayName.value = ch.display_name;
+    els.fAppId.value = ch.app_id;
+    els.fAppSecret.value = "";
+    els.fAppSecret.required = false;
+    els.secretHint.hidden = false;
+    els.fWebhookToken.value = ch.webhook_token || "";
+    els.fEnabled.checked = !!ch.is_enabled;
+    els.enabledRow.hidden = false;
+    openModal();
+  }
+
+  function openModal() {
+    els.modalBackdrop.classList.add("open");
+    els.fProductLine.focus();
+  }
+
+  function closeModal() {
+    els.modalBackdrop.classList.remove("open");
+    els.fPlatform.disabled = false;
+    els.channelForm.reset();
+  }
+
+  els.channelForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var submitBtn = document.getElementById("modal-submit");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "保存中…";
+
+    var payload = {
+      display_name: els.fDisplayName.value.trim(),
+      app_id: els.fAppId.value.trim(),
+      app_secret: els.fAppSecret.value,
+      webhook_token: els.fWebhookToken.value.trim()
+    };
+
+    var request;
+    if (state.editingId) {
+      request = api("/api/v1/channels/" + state.editingId, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      }).then(function (updated) {
+        // Toggle enabled state separately if changed, matching the dedicated toggle endpoint.
+        var wantEnabled = els.fEnabled.checked;
+        if (updated && updated.is_enabled !== wantEnabled) {
+          return api("/api/v1/channels/" + state.editingId + "/toggle", {
+            method: "PUT",
+            body: JSON.stringify({ enabled: wantEnabled })
+          });
+        }
+        return updated;
+      });
+    } else {
+      payload.product_line_id = els.fProductLine.value;
+      payload.platform = els.fPlatform.value;
+      request = api("/api/v1/channels", { method: "POST", body: JSON.stringify(payload) });
+    }
+
+    request
+      .then(function () {
+        toast(state.editingId ? "渠道已更新" : "渠道已创建", "success");
+        closeModal();
+        loadChannels();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("保存失败: " + err.message, "error");
+      })
+      .finally(function () {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "保存";
+      });
+  });
+
+  // ---------- Utils ----------
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function escapeAttr(str) { return escapeHtml(str); }
+
+  // ---------- Init ----------
+  if (getToken()) {
+    showApp();
+    bootstrap();
+  } else {
+    showLogin();
+  }
+})();
+</script>

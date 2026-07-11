@@ -1,0 +1,63 @@
+# Test pod to verify connectivity to PostgreSQL and Redis
+# Usage: kubectl apply -f test-pod.yaml
+#        kubectl logs unica-connectivity-test -n unica-dev
+#        kubectl delete pod unica-connectivity-test -n unica-dev
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unica-connectivity-test
+  namespace: unica-dev
+  labels:
+    app: connectivity-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: bitnami/postgresql:16
+      command:
+        - /bin/bash
+        - -c
+        - |
+          echo "=== UNICA Infrastructure Connectivity Test ==="
+          echo ""
+
+          # Test PostgreSQL
+          echo "--- PostgreSQL Connectivity ---"
+          if PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgresql.unica-dev.svc.cluster.local -U postgres -d unica_core -c "SELECT 1 AS pg_ok;" 2>&1; then
+            echo "[PASS] PostgreSQL connection successful"
+          else
+            echo "[FAIL] PostgreSQL connection failed"
+          fi
+
+          echo ""
+          echo "--- pgvector Extension ---"
+          if PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgresql.unica-dev.svc.cluster.local -U postgres -d unica_core -c "CREATE EXTENSION IF NOT EXISTS vector; SELECT extversion FROM pg_extension WHERE extname='vector';" 2>&1; then
+            echo "[PASS] pgvector extension available"
+          else
+            echo "[FAIL] pgvector extension not available"
+          fi
+
+          echo ""
+
+          # Install redis-cli (available in redis image, but we use pg image here)
+          # Use a simple TCP check instead, or switch to a multi-tool image
+          echo "--- Redis Connectivity (TCP check) ---"
+          if timeout 5 bash -c "echo PING | nc redis-master.unica-dev.svc.cluster.local 6379" 2>&1; then
+            echo "[PASS] Redis TCP connection successful"
+          else
+            echo "[FAIL] Redis TCP connection failed"
+          fi
+
+          echo ""
+          echo "=== Test Complete ==="
+      env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: unica-db-credentials
+              key: POSTGRES_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: unica-db-credentials
+              key: REDIS_PASSWORD

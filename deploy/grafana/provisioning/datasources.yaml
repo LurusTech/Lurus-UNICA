@@ -1,0 +1,26 @@
+# Grafana datasource provisioning config.
+# This is also embedded in prometheus-values.yaml for Helm-based deployment.
+# This standalone file is for manual provisioning or Docker-based setups.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    url: http://monitoring-kube-prometheus-prometheus:9090
+    access: proxy
+    isDefault: true
+    editable: false
+    version: 1
+
+  - name: Loki
+    type: loki
+    url: http://loki-stack:3100
+    access: proxy
+    editable: false
+    version: 1
+    jsonData:
+      derivedFields:
+        - datasourceUid: prometheus
+          matcherRegex: "correlation_id=([a-f0-9-]+)"
+          name: CorrelationID
+          url: "${__value.raw}"

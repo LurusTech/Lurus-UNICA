@@ -1,0 +1,190 @@
+// Package metrics provides Prometheus metrics for the router service.
+package metrics
+
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	// MessagesRoutedTotal counts total messages routed by the router.
+	MessagesRoutedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_messages_routed_total",
+		Help: "Total messages routed by the router",
+	}, []string{"product_line", "route_type"})
+
+	// RoutingDuration tracks routing processing latency.
+	RoutingDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "router_routing_duration_seconds",
+		Help:    "Time spent routing a single message",
+		Buckets: prometheus.DefBuckets,
+	})
+
+	// DifyCallDuration tracks Dify API call latency.
+	DifyCallDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "router_dify_call_duration_seconds",
+		Help:    "Time spent calling Dify API",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	})
+
+	// ConversationsCreatedTotal counts total conversations created.
+	ConversationsCreatedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "router_conversations_created_total",
+		Help: "Total conversations created by the router",
+	})
+
+	// ActiveConversations tracks current active conversation count by state.
+	ActiveConversations = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "router_active_conversations",
+		Help: "Number of active conversations by state",
+	}, []string{"state"})
+
+	// ChatwootMessagesPushedTotal counts messages pushed to Chatwoot.
+	ChatwootMessagesPushedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chatwoot_messages_pushed_total",
+		Help: "Total messages pushed to Chatwoot",
+	}, []string{"product_line", "direction"})
+
+	// ChatwootPushDuration tracks Chatwoot push latency.
+	ChatwootPushDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "chatwoot_push_duration_seconds",
+		Help:    "Time spent pushing a message to Chatwoot",
+		Buckets: prometheus.DefBuckets,
+	})
+
+	// ChatwootPushErrorsTotal counts errors during Chatwoot push operations.
+	ChatwootPushErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chatwoot_push_errors_total",
+		Help: "Total errors during Chatwoot push operations",
+	}, []string{"error_type"})
+
+	// DifyTokensTotal counts total tokens consumed by Dify API calls.
+	DifyTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_dify_tokens_total",
+		Help: "Total tokens consumed by Dify API calls",
+	}, []string{"type"})
+
+	// DifyRetrievalHitTotal counts Dify responses that included retriever resources.
+	DifyRetrievalHitTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "router_dify_retrieval_hit_total",
+		Help: "Dify responses with retriever_resources > 0",
+	})
+
+	// DifyRetrievalMissTotal counts Dify responses with no retriever resources.
+	DifyRetrievalMissTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "router_dify_retrieval_miss_total",
+		Help: "Dify responses with no retriever_resources",
+	})
+
+	// DifyConfidenceScore tracks the distribution of confidence scores.
+	DifyConfidenceScore = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "router_dify_confidence_score",
+		Help:    "Distribution of AI confidence scores",
+		Buckets: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
+	})
+
+	// DifyErrorsTotal counts Dify API errors by error type.
+	DifyErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_dify_errors_total",
+		Help: "Total Dify API errors by error type",
+	}, []string{"error_type"})
+
+	// GuardrailDecisionsTotal counts guardrail evaluation decisions by decision type and reason.
+	GuardrailDecisionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_guardrail_decisions_total",
+		Help: "Total guardrail evaluation decisions",
+	}, []string{"decision", "reason"})
+
+	// HandoffEventsProcessed counts total handoff events processed.
+	HandoffEventsProcessed = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "router_handoff_events_processed_total",
+		Help: "Total handoff events processed",
+	})
+
+	// HandoffDuration tracks handoff processing latency.
+	HandoffDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "router_handoff_duration_seconds",
+		Help:    "Time spent processing a handoff event end-to-end",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 3, 5, 10},
+	})
+
+	// HandoffSummaryDuration tracks AI summary generation latency.
+	HandoffSummaryDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "router_handoff_summary_duration_seconds",
+		Help:    "Time spent generating AI intent summary via Dify",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	})
+
+	// HandoffErrorsTotal counts handoff processing errors by error type.
+	HandoffErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_handoff_errors_total",
+		Help: "Total handoff processing errors",
+	}, []string{"error_type"})
+
+	// AgentAssignmentsTotal counts agent assignment attempts by product line and result.
+	AgentAssignmentsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "agent_assignments_total",
+		Help: "Total agent assignment attempts",
+	}, []string{"product_line", "result"})
+
+	// AgentPoolAvailable tracks available agent count by product line.
+	AgentPoolAvailable = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "agent_pool_available",
+		Help: "Number of available agents per product line",
+	}, []string{"product_line"})
+
+	// AgentLoadCurrent tracks the current conversation load per agent.
+	AgentLoadCurrent = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "agent_load_current",
+		Help: "Current active conversation count per agent",
+	}, []string{"agent_id"})
+
+	// HistorySyncMessagesTotal counts total messages synced to Chatwoot during history sync.
+	HistorySyncMessagesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "history_sync_messages_total",
+		Help: "Total messages synced to Chatwoot during history sync",
+	}, []string{"product_line"})
+
+	// HistorySyncDuration tracks history sync processing latency.
+	HistorySyncDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "history_sync_duration_seconds",
+		Help:    "Time spent syncing conversation history to Chatwoot",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	})
+
+	// HistorySyncErrorsTotal counts history sync errors by error type.
+	HistorySyncErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "history_sync_errors_total",
+		Help: "Total history sync errors",
+	}, []string{"error_type"})
+
+	// SurveySentTotal counts total satisfaction surveys sent.
+	SurveySentTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "survey_sent_total",
+		Help: "Total satisfaction surveys sent",
+	}, []string{"product_line"})
+
+	// SurveyCompletedTotal counts total satisfaction surveys completed.
+	SurveyCompletedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "survey_completed_total",
+		Help: "Total satisfaction surveys completed",
+	}, []string{"product_line", "score"})
+
+	// SurveyTimeoutTotal counts total satisfaction surveys that timed out.
+	SurveyTimeoutTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "survey_timeout_total",
+		Help: "Total satisfaction surveys that timed out without response",
+	}, []string{"product_line"})
+
+	// MarketingIntentDetectedTotal counts detected intent signals by type and product line.
+	MarketingIntentDetectedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "marketing_intent_detected_total",
+		Help: "Total marketing intent signals detected",
+	}, []string{"intent_type", "product_line"})
+
+	// MarketingProactiveMessagesTotal counts proactive marketing messages sent.
+	MarketingProactiveMessagesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "marketing_proactive_messages_total",
+		Help: "Total proactive marketing messages sent",
+	}, []string{"product_line"})
+)

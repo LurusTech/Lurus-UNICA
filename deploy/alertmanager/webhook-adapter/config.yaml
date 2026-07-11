@@ -1,0 +1,36 @@
+# Webhook adapter configuration.
+# Targets are grouped by severity level. Alerts are routed to matching targets.
+# If no targets match the severity, the "default" group is used as fallback.
+#
+# Supported platforms: dingtalk, wecom, feishu
+#
+# Environment variables can override webhook URLs:
+#   DINGTALK_WEBHOOK_URL, WECOM_WEBHOOK_URL, FEISHU_WEBHOOK_URL
+#   DINGTALK_SECRET, FEISHU_SECRET
+
+server:
+  port: 8080
+
+targets:
+  # Default targets for all severities
+  default:
+    - platform: dingtalk
+      url: "${DINGTALK_WEBHOOK_URL}"
+      secret: "${DINGTALK_SECRET}"
+
+  # Critical alerts go to all platforms
+  critical:
+    - platform: dingtalk
+      url: "${DINGTALK_WEBHOOK_URL}"
+      secret: "${DINGTALK_SECRET}"
+    - platform: wecom
+      url: "${WECOM_WEBHOOK_URL}"
+    - platform: feishu
+      url: "${FEISHU_WEBHOOK_URL}"
+      secret: "${FEISHU_SECRET}"
+
+  # Warning alerts go to default platform only
+  warning:
+    - platform: dingtalk
+      url: "${DINGTALK_WEBHOOK_URL}"
+      secret: "${DINGTALK_SECRET}"

@@ -1,0 +1,106 @@
+# Prometheus alert rules for UNICA platform.
+# These rules are loaded via the additionalPrometheusRulesMap in prometheus-values.yaml.
+# Can also be applied standalone: kubectl apply -f alert-rules.yaml -n monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: unica-alert-rules
+  namespace: monitoring
+  labels:
+    release: monitoring
+    app: kube-prometheus-stack
+spec:
+  groups:
+    - name: unica-alerts
+      rules:
+        # AC-1: Channel error rate > 5% for 5 minutes (per channel)
+        - alert: ChannelHighErrorRate
+          expr: >
+            (rate(gateway_outbound_errors_total[5m]) / rate(gateway_outbound_total[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Channel {{ $labels.channel }} error rate > 5%"
+            description: >
+              Channel {{ $labels.channel }} has an error rate of
+              {{ printf "%.1f" (mul $value 100) }}% over the last 5 minutes.
+            dashboard: "http://grafana.unica.local/d/channel-traffic/channel-traffic"
+            runbook: "Check channel adapter logs for connection or API errors."
+
+        # AC-2: Redis stream queue depth > 1000 for 5 minutes
+        - alert: QueueBacklog
+          expr: gateway_stream_depth > 1000
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Redis stream queue depth > 1000"
+            description: >
+              Stream {{ $labels.stream }} has {{ $value }} pending messages.
+              Consumer group may be falling behind.
+            dashboard: "http://grafana.unica.local/d/queue-backlog/queue-backlog"
+            runbook: "Check router/consumer logs. Scale consumers if needed."
+
+        # AC-3: Dify API P95 latency > 3 seconds for 5 minutes
+        - alert: DifySlowResponse
+          expr: >
+            histogram_quantile(0.95, rate(router_dify_call_duration_seconds_bucket[5m])) > 3
+          for: 5m
+          labels:
+            severity: warning
+            team: ai
+          annotations:
+            summary: "Dify API P95 latency > 3s"
+            description: >
+              Dify API P95 response time is {{ printf "%.2f" $value }}s.
+              AI processing is degraded.
+            dashboard: "http://grafana.unica.local/d/router-ai-pipeline/router-ai-pipeline"
+            runbook: "Check Dify service health and resource utilization."
+
+        # AC-4: Service down (target missing for 1 minute)
+        - alert: ServiceDown
+          expr: up == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Service {{ $labels.job }} is down"
+            description: >
+              Target {{ $labels.instance }} in job {{ $labels.job }} has been
+              unreachable for more than 1 minute.
+            dashboard: "http://grafana.unica.local/d/system-overview/system-overview"
+            runbook: "Check pod status with kubectl. Restart if necessary."
+
+        # AC-5: Dead-letter queue growing (> 10 messages in 1 hour)
+        - alert: DeadLetterGrowing
+          expr: increase(gateway_dead_letter_total[1h]) > 10
+          for: 0m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Dead-letter queue received > 10 messages in last hour"
+            description: >
+              {{ $value }} messages added to dead-letter queue in the last hour.
+              These messages failed processing and need manual review.
+            dashboard: "http://grafana.unica.local/d/queue-backlog/queue-backlog"
+            runbook: "Inspect dead-letter stream entries. Check for malformed messages or upstream errors."
+
+        # AC-6: Agent pool empty for a product line (0 available agents for 5 minutes)
+        - alert: NoAvailableAgents
+          expr: agent_pool_available == 0
+          for: 5m
+          labels:
+            severity: warning
+            team: operations
+          annotations:
+            summary: "No available agents for product line {{ $labels.product_line }}"
+            description: >
+              Product line {{ $labels.product_line }} has had 0 available agents
+              for over 5 minutes. Customer conversations cannot be assigned.
+            dashboard: "http://grafana.unica.local/d/agent-workspace/agent-workspace"
+            runbook: "Check agent scheduling. Notify team leads to bring agents online."

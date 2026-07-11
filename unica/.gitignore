@@ -1,0 +1,34 @@
+# Go binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+gateway/gateway
+router/router
+admin/admin
+reporter/reporter
+
+# Test binary
+*.test
+
+# Go build cache
+*.out
+
+# Vendor directory
+vendor/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local

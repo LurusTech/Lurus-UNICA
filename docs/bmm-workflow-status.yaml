@@ -1,0 +1,65 @@
+# BMAD Method v6 - Workflow Status
+# Project: UNICA
+# Type: web-app
+# Level: 3
+# Initialized: 2026-03-04
+
+workflows:
+  # Phase 1: Analysis
+  product-brief:
+    phase: 1
+    status: "docs/project brief.md"
+    description: "Product brief and business analysis"
+
+  research:
+    phase: 1
+    status: "optional"
+    description: "Market research and technical research"
+
+  brainstorm:
+    phase: 1
+    status: "optional"
+    description: "Creative brainstorming session"
+
+  # Phase 2: Planning
+  prd:
+    phase: 2
+    status: "docs/prd-unica-2026-03-04.md"
+    description: "Product Requirements Document"
+
+  tech-spec:
+    phase: 2
+    status: "optional"
+    description: "Technical Specification"
+
+  # Phase 3: Solutioning
+  architecture:
+    phase: 3
+    status: "docs/architecture-unica-2026-03-04.md"
+    description: "System architecture design"
+
+  ux-design:
+    phase: 3
+    status: "optional"
+    description: "UX design and wireframes"
+
+  solutioning-gate-check:
+    phase: 3
+    status: "required"
+    description: "Gate check before implementation"
+
+  # Phase 4: Implementation
+  sprint-planning:
+    phase: 4
+    status: "docs/sprint-plan-unica-2026-03-04.md"
+    description: "Sprint planning and backlog creation"
+
+  create-story:
+    phase: 4
+    status: "required"
+    description: "Create user stories"
+
+  dev-story:
+    phase: 4
+    status: "required"
+    description: "Develop user stories"

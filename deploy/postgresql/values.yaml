@@ -1,0 +1,59 @@
+# Helm values for bitnami/postgresql
+# Chart: https://github.com/bitnami/charts/tree/main/bitnami/postgresql
+# Install: helm install postgresql bitnami/postgresql -n unica-dev -f values.yaml
+
+# image tag: uses chart default (latest stable PostgreSQL)
+# For PG 16 specifically, pin chart version: helm install ... --version 16.x.x
+
+auth:
+  existingSecret: unica-db-credentials
+  secretKeys:
+    adminPasswordKey: POSTGRES_PASSWORD
+  database: unica_core
+
+primary:
+  persistence:
+    enabled: true
+    size: 10Gi
+
+  # Install pgvector extension on init
+  initdb:
+    scripts:
+      01-init-pgvector.sql: |
+        CREATE EXTENSION IF NOT EXISTS vector;
+
+  # Resource limits for dev environment
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  # PostgreSQL configuration tuning for dev
+  configuration: |
+    max_connections = 200
+    shared_buffers = 256MB
+    effective_cache_size = 512MB
+    work_mem = 4MB
+    maintenance_work_mem = 64MB
+    log_statement = 'ddl'
+    log_min_duration_statement = 1000
+
+  # Readiness/liveness probes
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Disable replication for dev (single-node)
+architecture: standalone
+
+# Metrics exporter for Prometheus (Sprint 6)
+metrics:
+  enabled: false

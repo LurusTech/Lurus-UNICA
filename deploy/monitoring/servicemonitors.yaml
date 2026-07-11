@@ -1,0 +1,87 @@
+# ServiceMonitor resources for Prometheus auto-discovery of UNICA services.
+# These require the Prometheus Operator CRDs (installed by kube-prometheus-stack).
+# Apply: kubectl apply -f servicemonitors.yaml -n unica
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: gateway
+  namespace: unica
+  labels:
+    app: gateway
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: gateway
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - unica
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: router
+  namespace: unica
+  labels:
+    app: router
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: router
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - unica
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: admin
+  namespace: unica
+  labels:
+    app: admin
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: admin
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - unica
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: reporter
+  namespace: unica
+  labels:
+    app: reporter
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: reporter
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - unica

@@ -1,0 +1,17 @@
+# PersistentVolumeClaims for Dify storage
+# Dify uses local storage for uploaded files, logs, etc.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dify-storage
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/part-of: unica
+    app.kubernetes.io/component: dify
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

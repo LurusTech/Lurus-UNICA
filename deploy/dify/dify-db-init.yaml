@@ -1,0 +1,90 @@
+# Job to initialize Dify database with pgvector extension
+# Run this BEFORE deploying Dify services
+# Requires: PostgreSQL from STORY-001 to be running
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dify-db-init
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/part-of: unica
+    app.kubernetes.io/component: dify
+    app.kubernetes.io/name: dify-db-init
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dify-db-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: db-init
+          image: bitnami/postgresql:16
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "Waiting for PostgreSQL to be ready..."
+              until PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -c '\q' 2>/dev/null; do
+                echo "PostgreSQL not ready, waiting..."
+                sleep 3
+              done
+              echo "PostgreSQL is ready."
+
+              echo "Creating Dify database and user..."
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres <<-EOSQL
+                -- Create Dify user (idempotent)
+                DO \$\$
+                BEGIN
+                  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'dify') THEN
+                    CREATE ROLE dify WITH LOGIN PASSWORD '${DIFY_DB_PASSWORD}';
+                  END IF;
+                END
+                \$\$;
+
+                -- Create Dify database (idempotent)
+                SELECT 'CREATE DATABASE dify_db OWNER dify'
+                WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dify_db')\gexec
+
+                -- Grant privileges
+                GRANT ALL PRIVILEGES ON DATABASE dify_db TO dify;
+              EOSQL
+
+              echo "Enabling pgvector extension in dify_db..."
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$DB_HOST" -U postgres -d dify_db <<-EOSQL
+                CREATE EXTENSION IF NOT EXISTS vector;
+                CREATE EXTENSION IF NOT EXISTS uuid-ossp;
+
+                -- Grant schema access to dify user
+                GRANT ALL ON SCHEMA public TO dify;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO dify;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO dify;
+              EOSQL
+
+              echo "Dify database initialization complete."
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: DB_HOST
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: unica-db-credentials
+                  key: POSTGRES_PASSWORD
+            - name: DIFY_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: DB_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

@@ -1,0 +1,68 @@
+# Deployment: Chatwoot Sidekiq worker for background job processing.
+# Handles email sending, webhook callbacks, scheduled tasks, etc.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatwoot-sidekiq
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/name: chatwoot
+    app.kubernetes.io/component: sidekiq
+    app.kubernetes.io/part-of: unica
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chatwoot
+      app.kubernetes.io/component: sidekiq
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatwoot
+        app.kubernetes.io/component: sidekiq
+    spec:
+      containers:
+        - name: chatwoot-sidekiq
+          image: chatwoot/chatwoot:v3.15.0
+          command:
+            - /bin/sh
+            - -c
+            - bundle exec sidekiq -C config/sidekiq.yml
+          envFrom:
+            - configMapRef:
+                name: chatwoot-env
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: REDIS_URL
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: SECRET_KEY_BASE
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: storage
+              mountPath: /app/storage
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: chatwoot-storage

@@ -1,0 +1,253 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "UNICA System Overview - all services health, message throughput, error rates",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Service Health",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "up{job=~\"gateway|router|admin|reporter\"}",
+          "legendFormat": "{{job}} / {{instance}}"
+        }
+      ]
+    },
+    {
+      "title": "Total Messages/sec (Inbound + Outbound)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gateway_inbound_total[5m]))",
+          "legendFormat": "Inbound"
+        },
+        {
+          "expr": "sum(rate(gateway_outbound_total[5m]))",
+          "legendFormat": "Outbound"
+        }
+      ]
+    },
+    {
+      "title": "Error Rate %",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_dify_errors_total[5m])) / (sum(rate(router_messages_routed_total[5m])) > 0) or vector(0)",
+          "legendFormat": "Router Error Rate"
+        }
+      ]
+    },
+    {
+      "title": "P95 Latency",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_inbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Gateway P95"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(router_routing_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Router P95"
+        }
+      ]
+    },
+    {
+      "title": "Active Conversations",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(router_active_conversations) by (state)",
+          "legendFormat": "{{state}}"
+        }
+      ]
+    },
+    {
+      "title": "Gateway Inbound/Outbound Latency (P50 / P95 / P99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(gateway_inbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Inbound P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_inbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Inbound P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(gateway_inbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Inbound P99"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(gateway_outbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Outbound P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_outbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Outbound P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(gateway_outbound_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Outbound P99"
+        }
+      ]
+    },
+    {
+      "title": "Router Routing Latency (P50 / P95 / P99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(router_routing_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Routing P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(router_routing_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Routing P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(router_routing_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "Routing P99"
+        }
+      ]
+    },
+    {
+      "title": "Messages Routed by Product Line",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 30, "lineWidth": 1, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_messages_routed_total[5m])) by (product_line)",
+          "legendFormat": "{{product_line}}"
+        }
+      ]
+    },
+    {
+      "title": "Conversations Created Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(router_conversations_created_total[5m])",
+          "legendFormat": "Conversations Created"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["unica", "overview"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UNICA System Overview",
+  "uid": "unica-system-overview",
+  "version": 1
+}

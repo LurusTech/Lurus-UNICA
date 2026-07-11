@@ -1,0 +1,201 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Queue Backlog: Redis Streams depth for inbound, outbound, and handoff queues",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Stream Queue Depth (All Streams)",
+      "type": "timeseries",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "gateway_stream_depth",
+          "legendFormat": "{{stream}}"
+        }
+      ]
+    },
+    {
+      "title": "Inbound Stream Depth",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "gateway_stream_depth{stream=~\".*inbound.*\"}",
+          "legendFormat": "{{stream}}"
+        }
+      ]
+    },
+    {
+      "title": "Outbound Stream Depth",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "gateway_stream_depth{stream=~\".*outbound.*\"}",
+          "legendFormat": "{{stream}}"
+        }
+      ]
+    },
+    {
+      "title": "Handoff Stream Depth",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "gateway_stream_depth{stream=~\".*handoff.*\"}",
+          "legendFormat": "{{stream}}"
+        }
+      ]
+    },
+    {
+      "title": "Message Throughput (Inbound vs Outbound)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(gateway_inbound_total[5m])",
+          "legendFormat": "Inbound Rate"
+        },
+        {
+          "expr": "rate(gateway_outbound_total[5m])",
+          "legendFormat": "Outbound Rate"
+        }
+      ]
+    },
+    {
+      "title": "Dead-Letter Queue Growth",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "gateway_dead_letter_total",
+          "legendFormat": "Dead-Letter Count (cumulative)"
+        },
+        {
+          "expr": "rate(gateway_dead_letter_total[5m])",
+          "legendFormat": "Dead-Letter Rate (/s)"
+        }
+      ]
+    },
+    {
+      "title": "Backlog Health Summary",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 26 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(gateway_stream_depth)",
+          "legendFormat": "Total Queue Depth"
+        },
+        {
+          "expr": "max(gateway_stream_depth)",
+          "legendFormat": "Max Stream Depth"
+        },
+        {
+          "expr": "gateway_dead_letter_total",
+          "legendFormat": "Dead Letters"
+        }
+      ]
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["unica", "queue", "backlog"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UNICA Queue Backlog",
+  "uid": "unica-queue-backlog",
+  "version": 1
+}

@@ -1,0 +1,57 @@
+# Job: Run Chatwoot database migrations and seed the database.
+# Must run AFTER chatwoot-db-init and BEFORE chatwoot web/sidekiq.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chatwoot-migrate
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/name: chatwoot
+    app.kubernetes.io/component: migrate
+    app.kubernetes.io/part-of: unica
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatwoot
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: chatwoot/chatwoot:v3.15.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Running Chatwoot database migrations..."
+              bundle exec rails db:chatwoot_prepare
+              echo "Migrations completed successfully."
+          envFrom:
+            - configMapRef:
+                name: chatwoot-env
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: REDIS_URL
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: SECRET_KEY_BASE
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

@@ -1,0 +1,84 @@
+# Job: Initialize Chatwoot database in the shared PostgreSQL instance.
+# Creates the chatwoot_db database and chatwoot user.
+# Run BEFORE deploying Chatwoot services.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chatwoot-db-init
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/name: chatwoot
+    app.kubernetes.io/component: db-init
+    app.kubernetes.io/part-of: unica
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatwoot
+        app.kubernetes.io/component: db-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: db-init
+          image: bitnami/postgresql:16
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Waiting for PostgreSQL to be ready..."
+              until PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$PG_HOST" -U postgres -c '\q' 2>/dev/null; do
+                echo "PostgreSQL not ready yet, retrying in 3s..."
+                sleep 3
+              done
+
+              echo "Checking if database '$CHATWOOT_DB_NAME' exists..."
+              DB_EXISTS=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$PG_HOST" -U postgres -tAc \
+                "SELECT 1 FROM pg_database WHERE datname='$CHATWOOT_DB_NAME'")
+
+              if [ "$DB_EXISTS" = "1" ]; then
+                echo "Database '$CHATWOOT_DB_NAME' already exists. Skipping creation."
+              else
+                echo "Creating user '$CHATWOOT_DB_USER'..."
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$PG_HOST" -U postgres -c \
+                  "DO \$\$ BEGIN
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$CHATWOOT_DB_USER') THEN
+                      CREATE ROLE $CHATWOOT_DB_USER WITH LOGIN PASSWORD '$CHATWOOT_DB_PASSWORD';
+                    END IF;
+                  END \$\$;"
+
+                echo "Creating database '$CHATWOOT_DB_NAME'..."
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$PG_HOST" -U postgres -c \
+                  "CREATE DATABASE $CHATWOOT_DB_NAME OWNER $CHATWOOT_DB_USER;"
+
+                echo "Granting privileges..."
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$PG_HOST" -U postgres -c \
+                  "GRANT ALL PRIVILEGES ON DATABASE $CHATWOOT_DB_NAME TO $CHATWOOT_DB_USER;"
+
+                echo "Database '$CHATWOOT_DB_NAME' created successfully."
+              fi
+          env:
+            - name: PG_HOST
+              value: "postgresql.unica-dev.svc.cluster.local"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: unica-db-credentials
+                  key: POSTGRES_PASSWORD
+            - name: CHATWOOT_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: CHATWOOT_DB_USER
+            - name: CHATWOOT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: CHATWOOT_DB_PASSWORD
+            - name: CHATWOOT_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: chatwoot-secrets
+                  key: CHATWOOT_DB_NAME

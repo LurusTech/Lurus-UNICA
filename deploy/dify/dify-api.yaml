@@ -1,0 +1,230 @@
+# Dify API Server - Backend API for Dify platform
+# Handles REST API requests, web console backend, dataset management
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dify-api
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/part-of: unica
+    app.kubernetes.io/component: dify
+    app.kubernetes.io/name: dify-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dify-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: unica
+        app.kubernetes.io/component: dify
+        app.kubernetes.io/name: dify-api
+    spec:
+      containers:
+        - name: dify-api
+          image: langgenius/dify-api:0.15.3
+          ports:
+            - containerPort: 5001
+              name: http
+              protocol: TCP
+          env:
+            # Server mode
+            - name: MODE
+              value: "api"
+            # Console API URL (internal)
+            - name: CONSOLE_API_URL
+              value: ""
+            - name: CONSOLE_WEB_URL
+              value: ""
+            - name: SERVICE_API_URL
+              value: ""
+            - name: APP_WEB_URL
+              value: ""
+
+            # Database configuration
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: DB_PASSWORD
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: DB_PORT
+            - name: DB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: DB_DATABASE
+
+            # Redis configuration
+            - name: REDIS_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: REDIS_PORT
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: REDIS_PASSWORD
+            - name: REDIS_DB
+              value: "0"
+            - name: REDIS_USE_SSL
+              value: "false"
+
+            # Celery broker (Redis)
+            - name: CELERY_BROKER_URL
+              value: ""
+            - name: BROKER_USE_SSL
+              value: "false"
+
+            # Secret key
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: SECRET_KEY
+
+            # Vector store configuration - use pgvector
+            - name: VECTOR_STORE
+              value: "pgvector"
+            - name: PGVECTOR_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: PGVECTOR_HOST
+            - name: PGVECTOR_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: PGVECTOR_PORT
+            - name: PGVECTOR_USER
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: PGVECTOR_USER
+            - name: PGVECTOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: PGVECTOR_PASSWORD
+            - name: PGVECTOR_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: PGVECTOR_DATABASE
+
+            # Storage configuration - local filesystem
+            - name: STORAGE_TYPE
+              value: "local"
+            - name: STORAGE_LOCAL_PATH
+              value: "/app/api/storage"
+
+            # Sandbox configuration
+            - name: CODE_EXECUTION_ENDPOINT
+              value: "http://dify-sandbox:8194"
+            - name: CODE_EXECUTION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: SANDBOX_API_KEY
+
+            # SSRF proxy
+            - name: SSRF_PROXY_HTTP_URL
+              value: "http://dify-ssrf-proxy:3128"
+            - name: SSRF_PROXY_HTTPS_URL
+              value: "http://dify-ssrf-proxy:3128"
+
+            # Log level
+            - name: LOG_LEVEL
+              value: "INFO"
+
+            # Migration on startup
+            - name: MIGRATION_ENABLED
+              value: "true"
+
+            # Inner API key for worker communication
+            - name: INNER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dify-secrets
+                  key: INNER_API_KEY
+
+          volumeMounts:
+            - name: dify-storage
+              mountPath: /app/api/storage
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5001
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      volumes:
+        - name: dify-storage
+          persistentVolumeClaim:
+            claimName: dify-storage
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dify-api
+  namespace: unica-dev
+  labels:
+    app.kubernetes.io/part-of: unica
+    app.kubernetes.io/component: dify
+    app.kubernetes.io/name: dify-api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dify-api
+  ports:
+    - name: http
+      port: 5001
+      targetPort: 5001
+      protocol: TCP

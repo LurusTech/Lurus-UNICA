@@ -1,0 +1,54 @@
+# Helm values for bitnami/redis
+# Chart: https://github.com/bitnami/charts/tree/main/bitnami/redis
+# Install: helm install redis bitnami/redis -n unica-dev -f values.yaml
+
+# image tag: uses chart default (latest stable Redis 7.x)
+
+auth:
+  existingSecret: unica-db-credentials
+  existingSecretPasswordKey: REDIS_PASSWORD
+
+# Standalone for dev (no sentinel)
+architecture: standalone
+
+master:
+  persistence:
+    enabled: true
+    size: 5Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Redis configuration - Streams enabled by default in Redis 7
+  configuration: |
+    maxmemory 512mb
+    maxmemory-policy allkeys-lru
+    # Streams persistence via RDB + AOF
+    appendonly yes
+    appendfsync everysec
+    # Snapshot schedule
+    save 900 1
+    save 300 10
+    save 60 10000
+
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 20
+    periodSeconds: 5
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Disable replica for dev
+replica:
+  replicaCount: 0
+
+# Metrics exporter for Prometheus (Sprint 6)
+metrics:
+  enabled: false

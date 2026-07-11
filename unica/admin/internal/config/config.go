@@ -1,0 +1,51 @@
+package config
+
+import (
+	"os"
+	"time"
+)
+
+// Config holds all configuration for the admin service.
+type Config struct {
+	Port              string
+	DatabaseURL       string
+	RedisURL          string
+	JWTSecret         string
+	AccessTokenTTL    time.Duration
+	RefreshTokenTTL   time.Duration
+	BcryptCost        int
+	AESEncryptionKey  string
+	GatewayHost       string
+	DifyAdminURL      string // Dify console API base URL (e.g. "http://dify:5001/console/api")
+	DifyAdminToken    string // Dify console API authentication token
+	DifyAPIBaseURL    string // Dify service API base URL (e.g. "http://dify:5001/v1")
+	DifyAdminEmail    string // Dify console admin email, used to obtain a login token for provisioning
+	DifyAdminPassword string // Dify console admin password, used to obtain a login token for provisioning
+}
+
+// Load reads configuration from environment variables with sensible defaults.
+func Load() *Config {
+	return &Config{
+		Port:              envOrDefault("ADMIN_PORT", "8081"),
+		DatabaseURL:       envOrDefault("DATABASE_URL", "postgres://localhost:5432/unica?sslmode=disable"),
+		RedisURL:          envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
+		JWTSecret:         envOrDefault("JWT_SECRET", "change-me-in-production"),
+		AccessTokenTTL:    2 * time.Hour,
+		RefreshTokenTTL:   7 * 24 * time.Hour,
+		BcryptCost:        12,
+		AESEncryptionKey:  envOrDefault("AES_ENCRYPTION_KEY", ""),
+		GatewayHost:       envOrDefault("GATEWAY_HOST", "localhost:8080"),
+		DifyAdminURL:      envOrDefault("DIFY_ADMIN_URL", "http://dify:5001/console/api"),
+		DifyAdminToken:    envOrDefault("DIFY_ADMIN_TOKEN", ""),
+		DifyAPIBaseURL:    envOrDefault("DIFY_API_BASE_URL", "http://dify:5001/v1"),
+		DifyAdminEmail:    envOrDefault("DIFY_ADMIN_EMAIL", ""),
+		DifyAdminPassword: envOrDefault("DIFY_ADMIN_PASSWORD", ""),
+	}
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
