@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -19,7 +20,10 @@ func VerifySignature(token, timestamp, nonce, signature string) bool {
 	sort.Strings(params)
 	raw := strings.Join(params, "")
 	hash := sha1.Sum([]byte(raw))
-	return fmt.Sprintf("%x", hash) == signature
+	computed := fmt.Sprintf("%x", hash)
+	// Constant-time comparison to avoid a timing side channel that could let an
+	// attacker recover a valid signature byte-by-byte.
+	return subtle.ConstantTimeCompare([]byte(computed), []byte(signature)) == 1
 }
 
 // DecryptMessage decrypts a WeChat AES-256-CBC encrypted message.
@@ -65,8 +69,11 @@ func DecryptMessage(encodingAESKey, encrypted string) ([]byte, string, error) {
 	if len(plaintext) < 20 {
 		return nil, "", errors.New("plaintext too short")
 	}
-	msgLen := binary.BigEndian.Uint32(plaintext[16:20])
-	if uint32(len(plaintext)) < 20+msgLen {
+	// Convert to int before arithmetic: uint32 (attacker-controlled) with a
+	// literal offset can wrap around zero and bypass the bounds check, causing
+	// an out-of-range slice panic below.
+	msgLen := int(binary.BigEndian.Uint32(plaintext[16:20]))
+	if msgLen < 0 || 20+msgLen > len(plaintext) {
 		return nil, "", errors.New("message length exceeds plaintext")
 	}
 	msg := plaintext[20 : 20+msgLen]

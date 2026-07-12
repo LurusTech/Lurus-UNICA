@@ -226,7 +226,15 @@ func main() {
 	}))))
 
 	// Protected endpoints - Product Lines
-	mux.Handle("/api/v1/product-lines", authMW(http.HandlerFunc(plHandler.HandleProductLines)))
+	// GET (list) is scoped by the caller's claims and open to any authenticated
+	// user; POST (create) is a mutation and must require the manage permission.
+	mux.Handle("/api/v1/product-lines", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			plHandler.HandleProductLines(w, r)
+			return
+		}
+		requireManagePL(http.HandlerFunc(plHandler.HandleProductLines)).ServeHTTP(w, r)
+	})))
 	mux.Handle("/api/v1/product-lines/", authMW(requireManagePL(http.HandlerFunc(plHandler.HandleProductLine))))
 
 	// Protected endpoints - Channels (with audit middleware)

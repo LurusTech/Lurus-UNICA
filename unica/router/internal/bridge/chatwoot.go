@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -128,7 +129,9 @@ func NewChatwootClientWithHTTP(hc *http.Client) *ChatwootClient {
 // Returns the contact ID.
 func (c *ChatwootClient) FindOrCreateContact(ctx context.Context, cfg ChatwootConfig, identifier, name string, customAttr map[string]string) (int, error) {
 	// Search for existing contact by identifier
-	searchURL := fmt.Sprintf("%s/api/v1/accounts/%d/contacts/search?q=%s&include_contacts=true", cfg.BaseURL, cfg.AccountID, identifier)
+	// Escape the identifier: unescaped '&', '#', '%' or spaces would corrupt the
+	// query string and cause a mismatched search, creating a duplicate contact.
+	searchURL := fmt.Sprintf("%s/api/v1/accounts/%d/contacts/search?q=%s&include_contacts=true", cfg.BaseURL, cfg.AccountID, url.QueryEscape(identifier))
 	searchReq, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("create search request: %w", err)

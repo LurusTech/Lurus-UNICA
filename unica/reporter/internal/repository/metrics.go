@@ -234,7 +234,7 @@ func (r *Repository) GetKnowledgeHitRate(ctx context.Context, tr TimeRange, prod
 			c.product_line_id::text,
 			COALESCE(pl.name, c.product_line_id::text) AS product_name,
 			COUNT(*) FILTER (WHERE c.state IN ('ai_processing', 'closed') AND c.handoff_count = 0) AS total_ai_calls,
-			COUNT(*) FILTER (WHERE (c.metadata->>'dify_retrieval_hit')::boolean = true) AS hits
+			COUNT(*) FILTER (WHERE (c.metadata->>'dify_retrieval_hit')::boolean = true AND c.state IN ('ai_processing', 'closed') AND c.handoff_count = 0) AS hits
 		FROM conversations c
 		LEFT JOIN product_lines pl ON pl.id = c.product_line_id
 		WHERE c.created_at >= $1 AND c.created_at < $2

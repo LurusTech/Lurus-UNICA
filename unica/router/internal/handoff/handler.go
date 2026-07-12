@@ -176,6 +176,11 @@ func (h *HandoffHandler) Handle(ctx context.Context, event *HandoffEvent) error 
 		}
 	}
 
+	// Step 11: Record handoff metrics (handoff_count, handoff_at) for the reporter.
+	if err := h.stateManager.MarkHandoff(ctx, convID); err != nil {
+		log.Printf("[handoff] warning: failed to record handoff metrics for %s: %v", convID, err)
+	}
+
 	metrics.HandoffEventsProcessed.Inc()
 	log.Printf("[handoff] completed handoff for conversation %s -> Chatwoot conv %d (duration=%s)",
 		convID, cwConvID, time.Since(start))

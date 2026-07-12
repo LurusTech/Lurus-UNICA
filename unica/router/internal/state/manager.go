@@ -217,9 +217,11 @@ func (m *Manager) findOrCreateConversation(ctx context.Context, customerID, chan
 	if err == nil && conv != nil {
 		return conv.ID, nil
 	}
-	// If error is not "no rows", log it
+	// Only "no rows" means the customer genuinely has no active conversation.
+	// Any other error (timeout, connection drop) must abort rather than fall
+	// through to create a second, competing conversation for the same customer.
 	if err != nil && err.Error() != "get conversation by customer: "+sql.ErrNoRows.Error() {
-		log.Printf("[state] warning: error looking up conversation: %v", err)
+		return "", fmt.Errorf("look up conversation: %w", err)
 	}
 
 	// Create a new conversation
@@ -391,6 +393,22 @@ func (m *Manager) CountCustomerMessages(ctx context.Context, convID string) (int
 // UpdateConversationMetadata merges the given JSON into conversation metadata.
 func (m *Manager) UpdateConversationMetadata(ctx context.Context, convID string, metadataJSON json.RawMessage) error {
 	return m.repo.UpdateConversationMetadata(ctx, convID, metadataJSON)
+}
+
+// MarkHandoff records a handoff event (increments handoff_count, stamps handoff_at).
+func (m *Manager) MarkHandoff(ctx context.Context, convID string) error {
+	return m.repo.MarkHandoff(ctx, convID)
+}
+
+// SetFirstAgentReply stamps first_agent_reply_at once for a conversation.
+func (m *Manager) SetFirstAgentReply(ctx context.Context, convID string) error {
+	return m.repo.SetFirstAgentReply(ctx, convID)
+}
+
+// MergeIntents unions detected intents into conversation metadata, preserving
+// intents from earlier turns.
+func (m *Manager) MergeIntents(ctx context.Context, convID string, intents []string, timestamps json.RawMessage) error {
+	return m.repo.MergeIntents(ctx, convID, intents, timestamps)
 }
 
 // strPtr returns a pointer to the given string, or nil if the string is empty.

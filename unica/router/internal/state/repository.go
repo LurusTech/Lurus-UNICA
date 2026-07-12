@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // Repository provides PostgreSQL CRUD operations for customers, conversations, and messages.
@@ -372,6 +372,84 @@ func (r *Repository) UpdateConversationMetadata(ctx context.Context, convID stri
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("update conversation metadata (rows affected): %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("conversation not found: %s", convID)
+	}
+	return nil
+}
+
+// MarkHandoff records a handoff event on a conversation: it increments
+// handoff_count and stamps handoff_at, both of which the reporter aggregates
+// for AI-resolution and human-response-time metrics.
+func (r *Repository) MarkHandoff(ctx context.Context, convID string) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE conversations
+		 SET handoff_count = handoff_count + 1, handoff_at = NOW(), updated_at = NOW()
+		 WHERE id = $1`,
+		convID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark handoff: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("mark handoff (rows affected): %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("conversation not found: %s", convID)
+	}
+	return nil
+}
+
+// SetFirstAgentReply stamps first_agent_reply_at with the current time, but only
+// the first time it is called for a conversation (the WHERE guard makes repeated
+// calls no-ops). The reporter uses first_agent_reply_at - handoff_at as the
+// human-agent response time.
+func (r *Repository) SetFirstAgentReply(ctx context.Context, convID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE conversations
+		 SET first_agent_reply_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND first_agent_reply_at IS NULL`,
+		convID,
+	)
+	if err != nil {
+		return fmt.Errorf("set first agent reply: %w", err)
+	}
+	return nil
+}
+
+// MergeIntents unions the given intents into metadata.intents and merges their
+// timestamps into metadata.intent_timestamps atomically. Unlike a plain jsonb
+// || merge (which replaces the whole intents array), this preserves intents
+// detected on earlier turns of the same conversation.
+func (r *Repository) MergeIntents(ctx context.Context, convID string, intents []string, timestamps json.RawMessage) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE conversations
+		 SET metadata = COALESCE(metadata, '{}'::jsonb)
+		     || jsonb_build_object(
+		         'intents',
+		         (SELECT to_jsonb(ARRAY(
+		             SELECT DISTINCT e FROM unnest(
+		                 COALESCE(ARRAY(SELECT jsonb_array_elements_text(metadata->'intents')), ARRAY[]::text[])
+		                 || $2::text[]
+		             ) AS e
+		         )))
+		     )
+		     || jsonb_build_object(
+		         'intent_timestamps',
+		         COALESCE(metadata->'intent_timestamps', '{}'::jsonb) || $3::jsonb
+		     ),
+		     updated_at = NOW()
+		 WHERE id = $1`,
+		convID, pq.Array(intents), string(timestamps),
+	)
+	if err != nil {
+		return fmt.Errorf("merge intents: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("merge intents (rows affected): %w", err)
 	}
 	if rows == 0 {
 		return fmt.Errorf("conversation not found: %s", convID)

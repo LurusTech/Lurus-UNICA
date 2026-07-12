@@ -3,6 +3,8 @@ package webhook
 
 import (
 	"context"
+	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +37,7 @@ type ChatwootWebhookConfig struct {
 // ChatwootWebhookHandler handles incoming webhook events from Chatwoot.
 type ChatwootWebhookHandler struct {
 	rdb    *redis.Client
+	db     *sql.DB // optional; when set, first agent reply timestamps are recorded
 	config ChatwootWebhookConfig
 }
 
@@ -44,6 +47,13 @@ func NewChatwootWebhookHandler(rdb *redis.Client, config ChatwootWebhookConfig) 
 		rdb:    rdb,
 		config: config,
 	}
+}
+
+// SetDB attaches an optional database connection used to stamp
+// first_agent_reply_at for reporter response-time metrics. When nil, that
+// recording is skipped.
+func (h *ChatwootWebhookHandler) SetDB(db *sql.DB) {
+	h.db = db
 }
 
 // cwWebhookPayload represents the top-level Chatwoot webhook event payload.
@@ -84,7 +94,8 @@ func (h *ChatwootWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	// Verify webhook token
 	token := r.Header.Get("X-Chatwoot-Webhook-Token")
-	if h.config.WebhookToken != "" && token != h.config.WebhookToken {
+	if h.config.WebhookToken != "" &&
+		subtle.ConstantTimeCompare([]byte(token), []byte(h.config.WebhookToken)) != 1 {
 		log.Printf("[chatwoot-webhook] invalid webhook token received")
 		metrics.ChatwootWebhookErrorsTotal.WithLabelValues("auth_failed").Inc()
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -216,6 +227,19 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 	metrics.ChatwootAgentRepliesTotal.WithLabelValues(outMsg.Data.ProductLineID).Inc()
 	log.Printf("[chatwoot-webhook] agent reply published to outbound stream (cw_conv=%d, unica_conv=%s, msg_id=%s)",
 		payload.Conversation.ID, unicaConvID, outMsg.ID)
+
+	// Record the first human-agent reply time for reporter response-time metrics.
+	// The WHERE guard makes this a no-op after the first reply, so it is safe to
+	// run on every agent message.
+	if h.db != nil {
+		if _, err := h.db.ExecContext(ctx,
+			`UPDATE conversations SET first_agent_reply_at = NOW(), updated_at = NOW()
+			 WHERE id = $1 AND first_agent_reply_at IS NULL`,
+			unicaConvID,
+		); err != nil {
+			log.Printf("[chatwoot-webhook] warning: failed to record first agent reply for %s: %v", unicaConvID, err)
+		}
+	}
 
 	return nil
 }

@@ -8,15 +8,17 @@ import (
 
 // mockMetadataUpdater is a test double for MetadataUpdater.
 type mockMetadataUpdater struct {
-	lastConvID string
-	lastJSON   json.RawMessage
-	callCount  int
-	err        error
+	lastConvID    string
+	lastIntents   []string
+	lastTimestamps json.RawMessage
+	callCount     int
+	err           error
 }
 
-func (m *mockMetadataUpdater) UpdateConversationMetadata(_ context.Context, convID string, metadataJSON json.RawMessage) error {
+func (m *mockMetadataUpdater) MergeIntents(_ context.Context, convID string, intents []string, timestamps json.RawMessage) error {
 	m.lastConvID = convID
-	m.lastJSON = metadataJSON
+	m.lastIntents = intents
+	m.lastTimestamps = timestamps
 	m.callCount++
 	return m.err
 }
@@ -51,18 +53,18 @@ func TestTracker_TrackIntents_StoresMetadata(t *testing.T) {
 		t.Errorf("expected conv-1, got %s", mock.lastConvID)
 	}
 
-	// Verify the stored JSON structure
-	var meta IntentMetadata
-	if err := json.Unmarshal(mock.lastJSON, &meta); err != nil {
-		t.Fatalf("failed to unmarshal stored metadata: %v", err)
+	// Verify the intents passed through and each got a timestamp
+	if len(mock.lastIntents) != 2 {
+		t.Errorf("expected 2 intents, got %d", len(mock.lastIntents))
 	}
-	if len(meta.Intents) != 2 {
-		t.Errorf("expected 2 intents, got %d", len(meta.Intents))
+	var timestamps map[string]string
+	if err := json.Unmarshal(mock.lastTimestamps, &timestamps); err != nil {
+		t.Fatalf("failed to unmarshal timestamps: %v", err)
 	}
-	if _, ok := meta.IntentTimestamps["price_inquiry"]; !ok {
+	if _, ok := timestamps["price_inquiry"]; !ok {
 		t.Error("missing timestamp for price_inquiry")
 	}
-	if _, ok := meta.IntentTimestamps["comparison"]; !ok {
+	if _, ok := timestamps["comparison"]; !ok {
 		t.Error("missing timestamp for comparison")
 	}
 }
