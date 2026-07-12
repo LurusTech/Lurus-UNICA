@@ -96,18 +96,25 @@ func (p *AgentPool) IncrementLoad(ctx context.Context, agentID string) (int64, e
 	return val, nil
 }
 
+// decrementClampScript atomically decrements a counter and clamps it at zero.
+// Doing the decrement and the clamp in one script prevents a concurrent
+// IncrementLoad from being silently clobbered by a separate SET-to-zero.
+var decrementClampScript = redis.NewScript(`
+local v = redis.call('DECR', KEYS[1])
+if v < 0 then
+	redis.call('SET', KEYS[1], 0)
+	return 0
+end
+return v
+`)
+
 // DecrementLoad atomically decreases the active conversation count for an agent.
 // It will not go below zero.
 func (p *AgentPool) DecrementLoad(ctx context.Context, agentID string) (int64, error) {
 	key := agentLoadPrefix + agentID
-	val, err := p.rdb.Decr(ctx, key).Result()
+	val, err := decrementClampScript.Run(ctx, p.rdb, []string{key}).Int64()
 	if err != nil {
 		return 0, fmt.Errorf("decrement load for agent %s: %w", agentID, err)
-	}
-	// Clamp to zero
-	if val < 0 {
-		p.rdb.Set(ctx, key, "0", 0)
-		return 0, nil
 	}
 	return val, nil
 }

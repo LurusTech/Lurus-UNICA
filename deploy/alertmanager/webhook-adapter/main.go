@@ -119,7 +119,7 @@ func alertHandler(cfg *Config) http.HandlerFunc {
 		}
 
 		// Send to all configured targets
-		var errs []error
+		delivered := 0
 		for _, target := range targets {
 			notifier, ok := notifiers[target.Platform]
 			if !ok {
@@ -129,14 +129,17 @@ func alertHandler(cfg *Config) http.HandlerFunc {
 
 			if err := notifier.Send(target.URL, target.Secret, payload); err != nil {
 				log.Printf("ERROR: send to %s: %v", target.Platform, err)
-				errs = append(errs, err)
 			} else {
+				delivered++
 				log.Printf("INFO: sent to %s successfully", target.Platform)
 			}
 		}
 
-		if len(errs) > 0 && len(errs) == len(targets) {
-			http.Error(w, "all targets failed", http.StatusBadGateway)
+		// If nothing was actually delivered (all sends failed and/or every target
+		// was skipped as an unknown platform), report failure so AlertManager
+		// retries instead of silently dropping the alert.
+		if delivered == 0 {
+			http.Error(w, "no targets delivered", http.StatusBadGateway)
 			return
 		}
 

@@ -124,8 +124,13 @@ func (l *Limiter) Allow(ctx context.Context, channel string) (Result, error) {
 
 	if count > cl.MaxRequests {
 		rateLimitTotal.WithLabelValues(channel, "rejected").Inc()
-		// Calculate retry-after based on oldest entry in window
-		retryAfter := cl.Window / time.Duration(cl.MaxRequests)
+		// Calculate retry-after based on oldest entry in window.
+		// Guard against MaxRequests<=0 (e.g. a channel configured to block all
+		// traffic), which would otherwise panic with integer divide-by-zero.
+		retryAfter := cl.Window
+		if cl.MaxRequests > 0 {
+			retryAfter = cl.Window / time.Duration(cl.MaxRequests)
+		}
 		log.Printf("[ratelimit] channel=%s rejected: count=%d limit=%d", channel, count, cl.MaxRequests)
 		return Result{
 			Allowed:    false,

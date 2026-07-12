@@ -45,6 +45,11 @@ type TokenManager struct {
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
+
+	// started tracks whether Start has run, so channels registered afterwards
+	// (via dynamic config reload) also get a background refresh goroutine.
+	started  bool
+	startCtx context.Context
 }
 
 // NewTokenManager creates a new TokenManager.
@@ -62,10 +67,20 @@ func NewTokenManager(rdb *redis.Client, buffer time.Duration, retryMax int, retr
 // RegisterChannel registers a channel for token management.
 func (m *TokenManager) RegisterChannel(channelID string, creds ChannelCredentials, refresher TokenRefresher) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	_, existed := m.channels[channelID]
 	m.channels[channelID] = &channelEntry{
 		credentials: creds,
 		refresher:   refresher,
+	}
+	// If Start already ran, channels added later (e.g. via dynamic config
+	// reload) must get their own refresh loop; Start only snapshots channels
+	// present at boot. Skip re-registration of an existing channel.
+	spawn := m.started && !existed
+	m.mu.Unlock()
+
+	if spawn {
+		m.wg.Add(1)
+		go m.backgroundRefresh(m.startCtx, channelID)
 	}
 	log.Printf("[token] registered channel %s (platform=%s)", channelID, refresher.Platform())
 }
@@ -169,9 +184,11 @@ func (m *TokenManager) publishAlert(ctx context.Context, channelID string, err e
 
 // Start begins background refresh goroutines for all registered channels.
 func (m *TokenManager) Start(ctx context.Context) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
+	m.started = true
+	m.startCtx = ctx
 	for channelID := range m.channels {
 		m.wg.Add(1)
 		go m.backgroundRefresh(ctx, channelID)

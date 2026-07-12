@@ -85,7 +85,13 @@ func signDingTalkURL(webhookURL string, secret string) (string, error) {
 	mac.Write([]byte(stringToSign))
 	sign := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
-	return webhookURL + "&timestamp=" + timestamp + "&sign=" + url.QueryEscape(sign), nil
+	// Use '?' when the configured webhook URL has no query string yet, otherwise
+	// the signed params are appended with a stray '&' and DingTalk rejects them.
+	sep := "&"
+	if !strings.Contains(webhookURL, "?") {
+		sep = "?"
+	}
+	return webhookURL + sep + "timestamp=" + timestamp + "&sign=" + url.QueryEscape(sign), nil
 }
 
 // formatAlertMarkdown creates a markdown title and body from the AlertManager payload.

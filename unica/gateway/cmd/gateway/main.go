@@ -99,10 +99,26 @@ func main() {
 	mux.Handle("/metrics", promhttp.Handler())
 
 	// Register Chatwoot webhook handler
+	var webhookDB *sql.DB
 	if cfg.ChatwootWebhookToken != "" {
 		cwWebhookHandler := webhook.NewChatwootWebhookHandler(rdb, webhook.ChatwootWebhookConfig{
 			WebhookToken: cfg.ChatwootWebhookToken,
 		})
+		// Attach a DB (best-effort) so first_agent_reply_at is recorded for
+		// reporter response-time metrics. A DB failure must not stop the
+		// gateway from forwarding agent replies, so this is non-fatal.
+		if cfg.DatabaseURL != "" {
+			if db, err := sql.Open("postgres", cfg.DatabaseURL); err != nil {
+				log.Printf("[gateway] warning: failed to open DB for chatwoot webhook: %v", err)
+			} else if err := db.PingContext(ctx); err != nil {
+				log.Printf("[gateway] warning: failed to connect DB for chatwoot webhook: %v", err)
+				db.Close()
+			} else {
+				webhookDB = db
+				cwWebhookHandler.SetDB(db)
+				log.Printf("[gateway] chatwoot webhook first-agent-reply recording enabled")
+			}
+		}
 		mux.Handle("/api/v1/webhook/chatwoot", cwWebhookHandler)
 		log.Printf("[gateway] Chatwoot webhook handler registered at /api/v1/webhook/chatwoot")
 	}
@@ -251,10 +267,15 @@ func main() {
 		log.Printf("[gateway] Redis close error: %v", err)
 	}
 
-	// Phase 6: Close dynamic channel config database connection, if enabled
+	// Phase 6: Close database connections, if enabled
 	if dynamicConfigDB != nil {
 		if err := dynamicConfigDB.Close(); err != nil {
 			log.Printf("[gateway] dynamic channel config DB close error: %v", err)
+		}
+	}
+	if webhookDB != nil {
+		if err := webhookDB.Close(); err != nil {
+			log.Printf("[gateway] chatwoot webhook DB close error: %v", err)
 		}
 	}
 

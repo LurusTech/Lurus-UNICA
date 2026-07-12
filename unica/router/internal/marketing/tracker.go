@@ -13,13 +13,9 @@ import (
 // MetadataUpdater is the interface for updating conversation metadata.
 // Satisfied by state.Manager.
 type MetadataUpdater interface {
-	UpdateConversationMetadata(ctx context.Context, convID string, metadataJSON json.RawMessage) error
-}
-
-// IntentMetadata represents the intent tracking data stored in conversation metadata.
-type IntentMetadata struct {
-	Intents          []string          `json:"intents"`
-	IntentTimestamps map[string]string `json:"intent_timestamps"`
+	// MergeIntents unions the intents into metadata.intents and merges their
+	// timestamps, preserving intents detected on earlier turns.
+	MergeIntents(ctx context.Context, convID string, intents []string, timestamps json.RawMessage) error
 }
 
 // Tracker stores detected intents in conversation metadata and emits metrics.
@@ -41,23 +37,19 @@ func (t *Tracker) TrackIntents(ctx context.Context, convID, productLineID string
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	meta := IntentMetadata{
-		Intents:          intents,
-		IntentTimestamps: make(map[string]string, len(intents)),
-	}
+	timestamps := make(map[string]string, len(intents))
 	for _, intent := range intents {
-		meta.IntentTimestamps[intent] = now
+		timestamps[intent] = now
 	}
-
-	// Build the metadata JSON to merge into the conversation
-	// Use PostgreSQL JSONB merge (||) so existing intents array gets updated
-	metaJSON, err := json.Marshal(meta)
+	tsJSON, err := json.Marshal(timestamps)
 	if err != nil {
-		return fmt.Errorf("marshal intent metadata: %w", err)
+		return fmt.Errorf("marshal intent timestamps: %w", err)
 	}
 
-	if err := t.updater.UpdateConversationMetadata(ctx, convID, metaJSON); err != nil {
-		return fmt.Errorf("update conversation metadata: %w", err)
+	// Union the new intents with any previously detected ones rather than
+	// overwriting, so a conversation's full intent history is preserved.
+	if err := t.updater.MergeIntents(ctx, convID, intents, tsJSON); err != nil {
+		return fmt.Errorf("merge intents: %w", err)
 	}
 
 	// Emit Prometheus metrics

@@ -34,6 +34,12 @@ type Retryer struct {
 
 // NewRetryer creates a new Retryer with the given config and dead-letter queue.
 func NewRetryer(cfg RetryConfig, dlq *DeadLetterQueue) *Retryer {
+	// MaxRetries is the total number of attempts. A value <1 would skip the
+	// process loop entirely and dead-letter every message without ever calling
+	// processFn; clamp it to at least one attempt.
+	if cfg.MaxRetries < 1 {
+		cfg.MaxRetries = 1
+	}
 	return &Retryer{cfg: cfg, dlq: dlq}
 }
 

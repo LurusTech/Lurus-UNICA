@@ -415,6 +415,14 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	// Track retrieval metrics
 	if len(difyResp.RetrieverResources) > 0 {
 		metrics.DifyRetrievalHitTotal.Inc()
+		// Persist the hit flag into conversation metadata so the reporter's
+		// knowledge-base hit-rate query has data to read (the Prometheus
+		// counter alone is not queryable per-conversation).
+		if r.stateManager != nil {
+			if err := r.stateManager.UpdateConversationMetadata(ctx, convID, json.RawMessage(`{"dify_retrieval_hit":true}`)); err != nil {
+				log.Printf("[router] worker %d: failed to persist dify_retrieval_hit for %s: %v", workerID, convID, err)
+			}
+		}
 		// Log retriever resources for debugging/auditing
 		for i, res := range difyResp.RetrieverResources {
 			log.Printf("[router] worker %d: RAG source %d for conversation %s: dataset=%s doc=%s score=%.3f",
