@@ -43,6 +43,7 @@ type Router struct {
 	stateManager       *state.Manager
 	difyClient         *bridge.DifyClient
 	routeCache         *RouteCache
+	convLock           *ConvLock
 	chatwootForwarder  *ChatwootForwarder
 	evaluator          *guardrail.Evaluator
 	marketingTracker   *marketing.Tracker
@@ -98,6 +99,7 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		stateManager:      stateManager,
 		difyClient:        difyClient,
 		routeCache:        routeCache,
+		convLock:          NewConvLock(rdb),
 		chatwootForwarder: cwForwarder,
 		evaluator:         guardrail.NewEvaluator(),
 		marketingTracker:  mktTracker,
@@ -115,6 +117,13 @@ func (r *Router) Start(ctx context.Context) {
 	if err := r.ensureConsumerGroup(ctx); err != nil {
 		log.Printf("[router] warning: failed to create consumer group: %v", err)
 	}
+
+	// Recover this consumer's pending entries (delivered but not acked before
+	// a previous crash/restart) exactly once, before workers start. All
+	// workers share one consumer name, so draining per-worker would process
+	// the same PEL entries multiple times; and the main loops read only new
+	// (">") entries, so without this pass un-acked messages stay stranded.
+	r.drainPending(ctx, 0)
 
 	for i := 0; i < r.workers; i++ {
 		r.wg.Add(1)
@@ -185,6 +194,47 @@ func (r *Router) readLoop(ctx context.Context, workerID int) {
 	}
 }
 
+// drainPending processes this consumer's previously delivered but
+// unacknowledged entries (its PEL) until none remain. The read cursor is
+// advanced past each batch so an entry that fails again (and stays un-acked)
+// cannot cause an infinite loop; it will be retried on the next restart.
+func (r *Router) drainPending(ctx context.Context, workerID int) {
+	cursor := "0"
+	for {
+		select {
+		case <-r.stopCh:
+			return
+		default:
+		}
+
+		result, err := r.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+			Group:    r.consumerGroup,
+			Consumer: r.consumerName,
+			Streams:  []string{InboundStream, cursor},
+			Count:    10,
+		}).Result()
+		if err != nil {
+			if err != redis.Nil {
+				log.Printf("[router] worker %d: pending drain error: %v", workerID, err)
+			}
+			return
+		}
+
+		total := 0
+		for _, stream := range result {
+			total += len(stream.Messages)
+			for _, entry := range stream.Messages {
+				r.processMessage(ctx, entry, workerID)
+				cursor = entry.ID
+			}
+		}
+		if total == 0 {
+			return
+		}
+		log.Printf("[router] worker %d: recovered %d pending message(s)", workerID, total)
+	}
+}
+
 // processMessage handles a single inbound stream message.
 func (r *Router) processMessage(ctx context.Context, entry redis.XMessage, workerID int) {
 	start := time.Now()
@@ -215,6 +265,28 @@ func (r *Router) processMessage(ctx context.Context, entry redis.XMessage, worke
 
 	// Set product_line_id on the message for state manager
 	msg.Data.ProductLineID = routeConfig.ProductLineID
+
+	// Serialize processing per customer+channel across workers and instances.
+	// Without this, two quick messages from the same customer can both read
+	// state "pending", both transition, and both trigger a Dify call; it also
+	// guards conversation creation and the dify_conv session read-modify-write.
+	// If the lock cannot be obtained within the wait budget, the message is
+	// requeued to the back of the stream and the original entry acked, so it
+	// is retried without blocking this worker or being stranded in the PEL.
+	lockID := msg.Data.ChannelID + ":" + msg.Data.PlatformMeta.PlatformUserID
+	if msg.Data.PlatformMeta.PlatformUserID == "" {
+		lockID = msg.Data.ChannelID + ":" + msg.Data.CustomerID
+	}
+	release, err := r.convLock.Acquire(ctx, lockID)
+	if err != nil {
+		log.Printf("[router] worker %d: could not lock %s for message %s: %v (requeueing)",
+			workerID, lockID, entry.ID, err)
+		if r.requeue(ctx, entry) {
+			r.ack(ctx, entry.ID)
+		}
+		return
+	}
+	defer release()
 
 	// Handle inbound message via state manager (creates/finds customer + conversation, stores message)
 	convID, err := r.stateManager.HandleInboundMessage(ctx, &msg)
@@ -476,6 +548,22 @@ func (r *Router) ack(ctx context.Context, id string) {
 	if err := r.rdb.XAck(ctx, InboundStream, r.consumerGroup, id).Err(); err != nil {
 		log.Printf("[router] XACK error for %s: %v", id, err)
 	}
+}
+
+// requeue re-adds a stream entry's values to the back of the inbound stream so
+// it is retried later. Used when the conversation lock cannot be obtained.
+// Returns false when the requeue failed; the caller must then leave the entry
+// un-acked so it stays in the pending list and is recovered by the startup
+// pending drain.
+func (r *Router) requeue(ctx context.Context, entry redis.XMessage) bool {
+	if err := r.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: InboundStream,
+		Values: entry.Values,
+	}).Err(); err != nil {
+		log.Printf("[router] failed to requeue message %s (stays pending): %v", entry.ID, err)
+		return false
+	}
+	return true
 }
 
 // publishAIResponse builds and publishes the AI response to the outbound stream and stores it in DB.
