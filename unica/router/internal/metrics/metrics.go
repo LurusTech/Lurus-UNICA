@@ -187,4 +187,18 @@ var (
 		Name: "marketing_proactive_messages_total",
 		Help: "Total proactive marketing messages sent",
 	}, []string{"product_line"})
+
+	// AcestRecallTotal counts knowledge recall calls to the acest kb-server
+	// by kind (playbook|kb) and status (hit|empty|error).
+	AcestRecallTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_acest_recall_total",
+		Help: "Total acest knowledge recall calls",
+	}, []string{"kind", "status"})
+
+	// AcestRecallDuration tracks acest recall latency.
+	AcestRecallDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "router_acest_recall_duration_seconds",
+		Help:    "acest knowledge recall latency (both kinds combined)",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5},
+	})
 )

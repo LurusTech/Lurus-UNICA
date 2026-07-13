@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/kefu/unica/router/internal/bridge"
+	"github.com/kefu/unica/router/internal/experience"
 	"github.com/kefu/unica/router/internal/handoff"
 	"github.com/kefu/unica/router/internal/routing"
 	"github.com/kefu/unica/router/internal/state"
@@ -72,6 +74,34 @@ func main() {
 		Workers:       cfg.workers,
 	}
 	router := routing.NewRouter(rdb, db, stateManager, difyClient, routeCache, routerConfig)
+
+	// Wire the acest knowledge integration (experience playbook + external KB)
+	// when configured. Disabled entirely when ACEST_KB_URL is unset; recall
+	// and feedback both fail open, so an unreachable kb-server never affects
+	// message routing.
+	var expCollector *experience.Collector
+	if cfg.acestURL != "" {
+		acestClient := bridge.NewAcestClient()
+		acestCfg := bridge.AcestConfig{BaseURL: cfg.acestURL, Token: cfg.acestToken}
+
+		if err := acestClient.Health(ctx, acestCfg); err != nil {
+			log.Printf("[router] warning: acest kb-server not reachable at %s: %v (continuing, will retry per-call)", cfg.acestURL, err)
+		} else {
+			log.Printf("[router] acest kb-server connected at %s", cfg.acestURL)
+		}
+
+		expCollector = experience.NewCollector(acestClient, acestCfg, cfg.acestQueueSize)
+		expCollector.Start()
+
+		router.SetAcest(&routing.AcestIntegration{
+			Client:        acestClient,
+			Config:        acestCfg,
+			RecallTimeout: cfg.acestRecallTimeout,
+			RecallTopK:    cfg.acestRecallTopK,
+			KBSources:     cfg.acestKBSources,
+			Collector:     expCollector,
+		})
+	}
 
 	// Create handoff handler and consumer
 	chatwootClient := bridge.NewChatwootClient()
@@ -147,6 +177,11 @@ func main() {
 	// Phase 4: Stop state manager
 	stateManager.Stop()
 
+	// Phase 4b: Stop experience collector (best-effort feedback loop)
+	if expCollector != nil {
+		expCollector.Stop()
+	}
+
 	// Phase 5: Close connections
 	if err := rdb.Close(); err != nil {
 		log.Printf("[router] Redis close error: %v", err)
@@ -165,6 +200,14 @@ type config struct {
 	routeCacheTTL time.Duration
 	port          string
 	idleTimeout   time.Duration
+
+	// acest kb-server integration (disabled when acestURL is empty)
+	acestURL           string
+	acestToken         string
+	acestRecallTimeout time.Duration
+	acestRecallTopK    int
+	acestKBSources     []string
+	acestQueueSize     int
 }
 
 // loadConfig reads configuration from environment variables with defaults.
@@ -194,6 +237,35 @@ func loadConfig() config {
 		idleTimeout = 30 * time.Minute
 	}
 	cfg.idleTimeout = idleTimeout
+
+	// acest knowledge integration
+	cfg.acestURL = strings.TrimRight(os.Getenv("ACEST_KB_URL"), "/")
+	cfg.acestToken = os.Getenv("ACEST_KB_TOKEN")
+	if cfg.acestURL != "" && cfg.acestToken == "" {
+		log.Printf("[router] warning: ACEST_KB_URL set but ACEST_KB_TOKEN empty; authenticated calls will fail")
+	}
+	recallTimeout, err := time.ParseDuration(envOrDefault("ACEST_RECALL_TIMEOUT", "2s"))
+	if err != nil {
+		recallTimeout = 2 * time.Second
+	}
+	cfg.acestRecallTimeout = recallTimeout
+	topK, err := strconv.Atoi(envOrDefault("ACEST_RECALL_TOP_K", "3"))
+	if err != nil || topK < 1 {
+		topK = 3
+	}
+	cfg.acestRecallTopK = topK
+	if src := os.Getenv("ACEST_KB_SOURCES"); src != "" {
+		for _, s := range strings.Split(src, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				cfg.acestKBSources = append(cfg.acestKBSources, s)
+			}
+		}
+	}
+	queueSize, err := strconv.Atoi(envOrDefault("ACEST_EXPERIENCE_QUEUE", "256"))
+	if err != nil || queueSize < 1 {
+		queueSize = 256
+	}
+	cfg.acestQueueSize = queueSize
 
 	log.Printf("[router] config: postgres=%s redis=%s group=%s consumer=%s workers=%d cache_ttl=%s port=%s idle_timeout=%s",
 		cfg.postgresURL, cfg.redisURL, cfg.consumerGroup, cfg.consumerName,

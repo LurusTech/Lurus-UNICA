@@ -44,6 +44,7 @@ type Router struct {
 	difyClient         *bridge.DifyClient
 	routeCache         *RouteCache
 	convLock           *ConvLock
+	acest              *AcestIntegration
 	chatwootForwarder  *ChatwootForwarder
 	evaluator          *guardrail.Evaluator
 	marketingTracker   *marketing.Tracker
@@ -430,6 +431,19 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		"product_line":  msg.Data.ProductLineID,
 	}
 
+	// Recall experience/knowledge context from the acest kb-server and inject
+	// it as Dify app variables. Fail-open: on error or timeout the inputs are
+	// simply absent and the Dify app proceeds without them.
+	if r.acest != nil {
+		experienceCtx, knowledgeCtx := r.recallKnowledge(ctx, query)
+		if experienceCtx != "" {
+			inputs["experience_context"] = experienceCtx
+		}
+		if knowledgeCtx != "" {
+			inputs["knowledge_context"] = knowledgeCtx
+		}
+	}
+
 	// Call Dify API
 	difyStart := time.Now()
 	difyCfg := bridge.DifyConfig{
@@ -519,6 +533,16 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		// Normal flow: publish AI response to outbound stream
 		r.publishAIResponse(ctx, config, msg, convID, workerID, difyResp.Answer, confidenceF32, difyResp.Metadata.Usage.TotalTokens, len(difyResp.RetrieverResources), difyDuration)
 
+		// Feed the delivered answer back into the experience KB as a success
+		// sample (asynchronous, lossy by design).
+		r.submitExperience(bridge.Experience{
+			UserQuery:         query,
+			AssistantResponse: difyResp.Answer,
+			Success:           true,
+			ToolsUsed:         retrievalDatasets(difyResp),
+			SessionID:         convID,
+		})
+
 	case guardrail.DecisionHandoff:
 		// Handoff flow: send holding message, publish handoff event, transition state
 		log.Printf("[router] worker %d: guardrail triggered handoff for conversation %s (reason=%s, confidence=%.3f, keyword=%s)",
@@ -531,7 +555,36 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		if err := r.stateManager.TransitionState(ctx, convID, state.StateHumanProcessing, "guardrail"); err != nil {
 			log.Printf("[router] worker %d: failed to transition conversation %s to human_processing: %v", workerID, convID, err)
 		}
+
+		// Feed the suppressed answer back as a failure sample so the
+		// experience KB learns which questions the AI could not handle.
+		r.submitExperience(bridge.Experience{
+			UserQuery:         query,
+			AssistantResponse: difyResp.Answer,
+			Success:           false,
+			Error:             fmt.Sprintf("handoff: %s (confidence=%.3f)", evalResult.Reason, evalResult.Confidence),
+			ToolsUsed:         retrievalDatasets(difyResp),
+			SessionID:         convID,
+		})
 	}
+}
+
+// retrievalDatasets returns the deduplicated RAG dataset names that
+// contributed to a Dify answer, for experience tools_used attribution.
+func retrievalDatasets(difyResp *bridge.DifyResponse) []string {
+	if len(difyResp.RetrieverResources) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(difyResp.RetrieverResources))
+	var names []string
+	for _, res := range difyResp.RetrieverResources {
+		if res.DatasetName == "" || seen[res.DatasetName] {
+			continue
+		}
+		seen[res.DatasetName] = true
+		names = append(names, "dataset:"+res.DatasetName)
+	}
+	return names
 }
 
 // getConversationState retrieves the current state of a conversation.
