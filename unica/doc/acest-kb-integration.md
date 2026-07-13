@@ -19,8 +19,8 @@ ACEST_KB_API_TOKEN=<token> acest kb-server --allow-write [--port 7423] [--bind <
 ```
 
 注意：
-- 经验提交（/api/v2/experiences）走 kb-server 内部的 LLM 蒸馏管线，acest_home 下需有
-  可用的模型配置，否则提交任务会 failed。
+- 经验提交（/api/v2/experiences）走 kb-server 内部的蒸馏管线。未配置 LLM 时自动
+  退化为规则式评估（提交不会失败，蒸馏质量略低）；配置模型后蒸馏效果更好。
 - 客服经验域应使用独立的 acest_home 数据目录，与个人编码经验库分开；需要互通时用
   acest CLI 的 export/import 单向同步。
 - 外源知识源（文档库）需在 acest 侧预先注册（CLI/桌面端），HTTP 无创建源端点。
