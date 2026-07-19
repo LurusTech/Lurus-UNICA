@@ -105,3 +105,45 @@ func TestAllPermissions(t *testing.T) {
 		t.Errorf("expected 9 permissions, got %d", len(perms))
 	}
 }
+
+func TestCanAssignRole(t *testing.T) {
+	pl := func(s string) *string { return &s }
+	empty := ""
+
+	tests := []struct {
+		name           string
+		roles          []string
+		productLineIDs []string
+		targetRole     string
+		targetPL       *string
+		want           bool
+	}{
+		// Super admin can assign anything.
+		{"superadmin grants global", []string{"super_admin"}, nil, "super_admin", nil, true},
+		{"superadmin grants scoped any PL", []string{"super_admin"}, nil, "agent", pl("plX"), true},
+		{"superadmin via roles list", []string{"agent", "super_admin"}, nil, "super_admin", nil, true},
+
+		// CRITICAL: a product admin must not be able to grant the global
+		// super_admin role (self-escalation / platform takeover).
+		{"product_admin cannot grant global", []string{"product_admin"}, []string{"pl1"}, "super_admin", nil, false},
+
+		// Product admin may grant scoped roles only within their own product line.
+		{"product_admin grants scoped in own PL", []string{"product_admin"}, []string{"pl1"}, "agent", pl("pl1"), true},
+		{"product_admin cannot grant in other PL", []string{"product_admin"}, []string{"pl1"}, "agent", pl("pl2"), false},
+		{"product_admin scoped nil PL denied", []string{"product_admin"}, []string{"pl1"}, "agent", nil, false},
+		{"product_admin scoped empty PL denied", []string{"product_admin"}, []string{"pl1"}, "agent", &empty, false},
+
+		// No effective roles at all → denied.
+		{"no roles denied", []string{}, nil, "agent", pl("pl1"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CanAssignRole(tt.roles, tt.productLineIDs, tt.targetRole, tt.targetPL)
+			if got != tt.want {
+				t.Errorf("CanAssignRole(%v, %v, %q, %v) = %v, want %v",
+					tt.roles, tt.productLineIDs, tt.targetRole, tt.targetPL, got, tt.want)
+			}
+		})
+	}
+}

@@ -77,6 +77,39 @@ func HasPermission(role Role, perm Permission) bool {
 	return perms[perm]
 }
 
+// CanAssignRole reports whether a caller holding effectiveRoles (scoped to
+// callerProductLineIDs) may assign targetRole, optionally scoped to
+// targetProductLineID.
+//
+//   - A super admin may assign any role.
+//   - A non-super-admin may NOT assign a global role (e.g. super_admin) — this
+//     is what prevents a product admin from self-granting super_admin.
+//   - A non-super-admin may assign a scoped role only within a product line
+//     they administer.
+func CanAssignRole(effectiveRoles []string, callerProductLineIDs []string, targetRole string, targetProductLineID *string) bool {
+	for _, r := range effectiveRoles {
+		if r == string(RoleSuperAdmin) {
+			return true
+		}
+	}
+
+	// Non-super-admin: global roles are off limits entirely.
+	if IsGlobalRole(Role(targetRole)) {
+		return false
+	}
+
+	// Scoped role: the caller must administer the exact target product line.
+	if targetProductLineID == nil || *targetProductLineID == "" {
+		return false
+	}
+	for _, id := range callerProductLineIDs {
+		if id == *targetProductLineID {
+			return true
+		}
+	}
+	return false
+}
+
 // GetPermissions returns all permissions granted to a role.
 func GetPermissions(role Role) []Permission {
 	perms, ok := permissionMatrix[role]

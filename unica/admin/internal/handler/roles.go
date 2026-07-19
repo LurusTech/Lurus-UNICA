@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 )
@@ -73,6 +74,21 @@ func (h *RoleHandler) HandleAssignRole(w http.ResponseWriter, r *http.Request) {
 	// Non-global roles require a product line ID
 	if !rbac.IsGlobalRole(rbac.Role(req.RoleName)) && req.ProductLineID == nil {
 		ErrorJSON(w, http.StatusBadRequest, "product_line_id required for scoped roles")
+		return
+	}
+
+	// Authorization: requireManageUsers also admits product admins (scoped to
+	// their own product lines), so the caller's authority over the *requested
+	// role* must be checked here. Without this, a product admin could grant
+	// themselves the global super_admin role and take over the platform.
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		ErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	effectiveRoles := append([]string{claims.Role}, claims.Roles...)
+	if !rbac.CanAssignRole(effectiveRoles, claims.ProductLineIDs, req.RoleName, req.ProductLineID) {
+		ErrorJSON(w, http.StatusForbidden, "you are not permitted to assign this role")
 		return
 	}
 
