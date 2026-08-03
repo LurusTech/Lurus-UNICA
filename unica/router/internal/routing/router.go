@@ -15,6 +15,7 @@ import (
 	"github.com/kefu/unica/pkg/model"
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/guardrail"
+	"github.com/kefu/unica/router/internal/intent"
 	"github.com/kefu/unica/router/internal/marketing"
 	"github.com/kefu/unica/router/internal/metrics"
 	"github.com/kefu/unica/router/internal/state"
@@ -35,25 +36,31 @@ type RouterConfig struct {
 	ConsumerGroup string
 	ConsumerName  string
 	Workers       int
+
+	// TriageMode controls pre-dispatch intent classification. The zero value is
+	// treated as guardrail.DefaultTriageMode so existing callers and tests keep
+	// working without opting in.
+	TriageMode guardrail.TriageMode
 }
 
 // Router consumes inbound messages, resolves routes, calls AI, and publishes responses.
 type Router struct {
-	rdb                *redis.Client
-	stateManager       *state.Manager
-	difyClient         *bridge.DifyClient
-	routeCache         *RouteCache
-	convLock           *ConvLock
-	acest              *AcestIntegration
-	chatwootForwarder  *ChatwootForwarder
-	evaluator          *guardrail.Evaluator
-	marketingTracker   *marketing.Tracker
-	surveyHandler      *survey.Handler
-	consumerGroup      string
-	consumerName       string
-	workers            int
-	stopCh             chan struct{}
-	wg                 sync.WaitGroup
+	rdb               *redis.Client
+	stateManager      *state.Manager
+	difyClient        *bridge.DifyClient
+	routeCache        *RouteCache
+	convLock          *ConvLock
+	acest             *AcestIntegration
+	chatwootForwarder *ChatwootForwarder
+	evaluator         *guardrail.Evaluator
+	triageMode        guardrail.TriageMode
+	marketingTracker  *marketing.Tracker
+	surveyHandler     *survey.Handler
+	consumerGroup     string
+	consumerName      string
+	workers           int
+	stopCh            chan struct{}
+	wg                sync.WaitGroup
 }
 
 // NewRouter creates a new Router with the given dependencies.
@@ -95,6 +102,11 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		mktTracker = marketing.NewTracker(stateManager)
 	}
 
+	triageMode := config.TriageMode
+	if triageMode == "" {
+		triageMode = guardrail.DefaultTriageMode
+	}
+
 	return &Router{
 		rdb:               rdb,
 		stateManager:      stateManager,
@@ -103,6 +115,7 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		convLock:          NewConvLock(rdb),
 		chatwootForwarder: cwForwarder,
 		evaluator:         guardrail.NewEvaluator(),
+		triageMode:        triageMode,
 		marketingTracker:  mktTracker,
 		surveyHandler:     surveyH,
 		consumerGroup:     config.ConsumerGroup,
@@ -416,6 +429,20 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		return
 	}
 
+	// Pre-dispatch triage: messages no AI answer can satisfy (account actions,
+	// personal-record lookups, escalations) are handed off before paying for a
+	// model round trip. Under shadow mode the classification is only recorded.
+	if r.triageMode.Classifies() {
+		triage := intent.Classify(query)
+		metrics.IntentClassifiedTotal.WithLabelValues(
+			string(triage.Class), triage.Reason, string(r.triageMode)).Inc()
+
+		if r.triageMode.DecidesRouting() && triage.NeedsHuman() {
+			r.handoffBeforeAI(ctx, config, msg, convID, workerID, triage)
+			return
+		}
+	}
+
 	userID := msg.Data.PlatformMeta.PlatformUserID
 	if userID == "" {
 		userID = msg.Data.CustomerID
@@ -495,7 +522,7 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	}
 
 	// Calculate confidence score
-	confidence := calculateConfidence(difyResp)
+	confidence := CalculateConfidence(difyResp)
 	confidenceF32 := float32(confidence)
 
 	// Track retrieval metrics
@@ -525,7 +552,7 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 
 	// Guardrail evaluation: decide whether to send AI response or trigger handoff
 	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
-	evalResult := r.evaluator.Evaluate(query, confidence, guardrailCfg)
+	evalResult := r.evaluator.EvaluateWithMode(query, confidence, guardrailCfg, r.triageMode)
 	metrics.GuardrailDecisionsTotal.WithLabelValues(string(evalResult.Decision), evalResult.Reason).Inc()
 
 	switch evalResult.Decision {
@@ -556,16 +583,48 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 			log.Printf("[router] worker %d: failed to transition conversation %s to human_processing: %v", workerID, convID, err)
 		}
 
-		// Feed the suppressed answer back as a failure sample so the
-		// experience KB learns which questions the AI could not handle.
-		r.submitExperience(bridge.Experience{
-			UserQuery:         query,
-			AssistantResponse: difyResp.Answer,
-			Success:           false,
-			Error:             fmt.Sprintf("handoff: %s (confidence=%.3f)", evalResult.Reason, evalResult.Confidence),
-			ToolsUsed:         retrievalDatasets(difyResp),
-			SessionID:         convID,
-		})
+		// Feed the suppressed answer back as a failure sample only when the
+		// handoff actually says something about answer quality. A keyword or
+		// blocked-topic interception suppresses an answer that may have been
+		// entirely correct; recording it as a failure would teach the experience
+		// KB that the question is unanswerable and degrade future recall.
+		if guardrail.IsQualitySignal(evalResult.Reason) {
+			r.submitExperience(bridge.Experience{
+				UserQuery:         query,
+				AssistantResponse: difyResp.Answer,
+				Success:           false,
+				Error:             fmt.Sprintf("handoff: %s (confidence=%.3f)", evalResult.Reason, evalResult.Confidence),
+				ToolsUsed:         retrievalDatasets(difyResp),
+				SessionID:         convID,
+			})
+		}
+	}
+}
+
+// handoffBeforeAI routes a message to a human without calling the model.
+//
+// No experience sample is submitted: triage is a routing policy, not a judgement
+// of answer quality, and there is no answer to judge in the first place.
+func (r *Router) handoffBeforeAI(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, triage intent.Result) {
+	evalResult := &guardrail.EvalResult{
+		Decision:       guardrail.DecisionHandoff,
+		Reason:         "intent_" + string(triage.Class),
+		MatchedKeyword: triage.Matched,
+	}
+
+	metrics.IntentTriageHandoffTotal.WithLabelValues(string(triage.Class), triage.Reason).Inc()
+	metrics.GuardrailDecisionsTotal.WithLabelValues(string(evalResult.Decision), evalResult.Reason).Inc()
+
+	log.Printf("[router] worker %d: pre-dispatch triage handoff for conversation %s (class=%s, rule=%s, matched=%q)",
+		workerID, convID, triage.Class, triage.Reason, triage.Matched)
+
+	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
+	r.publishHoldingMessage(ctx, config, msg, convID, workerID, guardrailCfg.HoldingMessage)
+	r.publishHandoffEvent(ctx, msg, convID, config.ProductLineID, evalResult, "")
+
+	if err := r.stateManager.TransitionState(ctx, convID, state.StateHumanProcessing, "triage"); err != nil {
+		log.Printf("[router] worker %d: failed to transition conversation %s to human_processing: %v",
+			workerID, convID, err)
 	}
 }
 
@@ -726,27 +785,27 @@ func (r *Router) publishHoldingMessage(ctx context.Context, config *RouteConfig,
 
 // handoffEvent is the payload published to the handoff stream.
 type handoffEvent struct {
-	Type                  string  `json:"type"`
-	ConversationID        string  `json:"conversation_id"`
-	ProductLineID         string  `json:"product_line_id"`
-	Reason                string  `json:"reason"`
-	ConfidenceScore       float64 `json:"confidence_score"`
-	AIResponseSuppressed  string  `json:"ai_response_suppressed"`
-	CustomerMessage       string  `json:"customer_message"`
-	Timestamp             string  `json:"timestamp"`
+	Type                 string  `json:"type"`
+	ConversationID       string  `json:"conversation_id"`
+	ProductLineID        string  `json:"product_line_id"`
+	Reason               string  `json:"reason"`
+	ConfidenceScore      float64 `json:"confidence_score"`
+	AIResponseSuppressed string  `json:"ai_response_suppressed"`
+	CustomerMessage      string  `json:"customer_message"`
+	Timestamp            string  `json:"timestamp"`
 }
 
 // publishHandoffEvent publishes a handoff event to the unica:handoff stream.
 func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMessage, convID, productLineID string, evalResult *guardrail.EvalResult, suppressedAnswer string) {
 	event := handoffEvent{
 		Type:                 model.MessageTypeHandoff,
-		ConversationID:      convID,
-		ProductLineID:       productLineID,
-		Reason:              evalResult.Reason,
-		ConfidenceScore:     evalResult.Confidence,
+		ConversationID:       convID,
+		ProductLineID:        productLineID,
+		Reason:               evalResult.Reason,
+		ConfidenceScore:      evalResult.Confidence,
 		AIResponseSuppressed: suppressedAnswer,
-		CustomerMessage:     msg.Data.Content.Text,
-		Timestamp:           time.Now().UTC().Format(time.RFC3339),
+		CustomerMessage:      msg.Data.Content.Text,
+		Timestamp:            time.Now().UTC().Format(time.RFC3339),
 	}
 
 	eventJSON, err := json.Marshal(event)

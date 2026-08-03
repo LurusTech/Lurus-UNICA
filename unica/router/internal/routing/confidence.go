@@ -7,10 +7,13 @@ import (
 // defaultNoMatchConfidence is the confidence score when no knowledge chunks are retrieved.
 const defaultNoMatchConfidence = 0.3
 
-// calculateConfidence derives a confidence score from Dify response metadata.
+// CalculateConfidence derives a confidence score from Dify response metadata.
 // - If retriever_resources is empty, returns 0.3 (no knowledge match).
 // - Otherwise, returns the average of retriever resource scores (capped at 1.0).
-func calculateConfidence(resp *bridge.DifyResponse) float64 {
+//
+// Exported so the golden-set evaluation harness (cmd/evalset) scores answers
+// with the exact rule the live pipeline uses instead of a drifting copy.
+func CalculateConfidence(resp *bridge.DifyResponse) float64 {
 	if resp == nil || len(resp.RetrieverResources) == 0 {
 		return defaultNoMatchConfidence
 	}

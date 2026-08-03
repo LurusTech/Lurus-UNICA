@@ -14,6 +14,25 @@ const (
 	DecisionHandoff Decision = "handoff"
 )
 
+// Reasons recorded on an EvalResult. They are Prometheus label values and drive
+// the experience write-back rule, so treat them as a stable interface.
+const (
+	ReasonConfidenceOK  = "confidence_ok"
+	ReasonLowConfidence = "low_confidence"
+	ReasonKeywordMatch  = "keyword_match"
+	ReasonBlockedTopic  = "blocked_topic"
+)
+
+// IsQualitySignal reports whether a handoff reason says anything about the
+// quality of the AI's answer.
+//
+// Only low confidence does. Keyword matches, blocked topics and intent triage
+// are policy interceptions: the answer may have been perfectly correct, it was
+// simply never eligible to be sent. Recording those as failed experience samples
+// teaches the experience knowledge base that the questions are unanswerable,
+// which inverts the learning loop it exists to drive.
+func IsQualitySignal(reason string) bool { return reason == ReasonLowConfidence }
+
 // EvalResult contains the full details of a guardrail evaluation.
 type EvalResult struct {
 	Decision       Decision // send or handoff
@@ -38,6 +57,18 @@ func NewEvaluator() *Evaluator {
 //  3. Confidence threshold check -> handoff if below threshold
 //  4. Otherwise -> send
 func (e *Evaluator) Evaluate(customerMsg string, confidence float64, config *GuardrailConfig) *EvalResult {
+	return e.EvaluateWithMode(customerMsg, confidence, config, TriageOff)
+}
+
+// EvaluateWithMode is Evaluate with explicit control over whether the legacy
+// keyword list still applies.
+//
+// Under TriageOn the keyword rules are retired: pre-dispatch triage has already
+// intercepted the messages they were meant to catch, and leaving them active
+// would re-intercept the consultative questions the classifier deliberately let
+// through — the exact defect this replaces. Blocked topics stay active in every
+// mode; they are a compliance control, not an intent heuristic.
+func (e *Evaluator) EvaluateWithMode(customerMsg string, confidence float64, config *GuardrailConfig, mode TriageMode) *EvalResult {
 	if config == nil {
 		config = DefaultGuardrailConfig()
 	}
@@ -49,21 +80,23 @@ func (e *Evaluator) Evaluate(customerMsg string, confidence float64, config *Gua
 		if topic != "" && strings.Contains(lowerMsg, strings.ToLower(topic)) {
 			return &EvalResult{
 				Decision:       DecisionHandoff,
-				Reason:         "blocked_topic",
+				Reason:         ReasonBlockedTopic,
 				Confidence:     confidence,
 				MatchedKeyword: topic,
 			}
 		}
 	}
 
-	// 2. Keyword-based handoff triggers
-	for _, kw := range config.HandoffKeywords {
-		if kw != "" && strings.Contains(lowerMsg, strings.ToLower(kw)) {
-			return &EvalResult{
-				Decision:       DecisionHandoff,
-				Reason:         "keyword_match",
-				Confidence:     confidence,
-				MatchedKeyword: kw,
+	// 2. Keyword-based handoff triggers, superseded by pre-dispatch triage.
+	if !mode.DecidesRouting() {
+		for _, kw := range config.HandoffKeywords {
+			if kw != "" && strings.Contains(lowerMsg, strings.ToLower(kw)) {
+				return &EvalResult{
+					Decision:       DecisionHandoff,
+					Reason:         ReasonKeywordMatch,
+					Confidence:     confidence,
+					MatchedKeyword: kw,
+				}
 			}
 		}
 	}
@@ -72,7 +105,7 @@ func (e *Evaluator) Evaluate(customerMsg string, confidence float64, config *Gua
 	if confidence < config.ConfidenceThreshold {
 		return &EvalResult{
 			Decision:   DecisionHandoff,
-			Reason:     "low_confidence",
+			Reason:     ReasonLowConfidence,
 			Confidence: confidence,
 		}
 	}
@@ -80,7 +113,7 @@ func (e *Evaluator) Evaluate(customerMsg string, confidence float64, config *Gua
 	// 4. All checks passed
 	return &EvalResult{
 		Decision:   DecisionSend,
-		Reason:     "confidence_ok",
+		Reason:     ReasonConfidenceOK,
 		Confidence: confidence,
 	}
 }

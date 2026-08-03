@@ -148,6 +148,7 @@ cd unica/gateway && go build ./... && ./gateway   # 同理 router/admin/reporter
 | `DATABASE_URL` + `AES_ENCRYPTION_KEY` | gateway | 启用动态渠道配置（后台管理渠道） |
 | `CHATWOOT_WEBHOOK_TOKEN` | gateway | Chatwoot 坐席回复回流 |
 | `ACEST_KB_URL` / `ACEST_KB_TOKEN` | router | acest 双知识库（可选，见上文） |
+| `INTENT_TRIAGE` | router | 调用 AI 前的意图分诊：`off`（旧关键词行为）/ `shadow`（默认，只记录指标不改判定）/ `on`（分诊决定路由，关键词表退役） |
 | `JWT_SECRET` | admin | 后台鉴权 |
 
 ## 测试

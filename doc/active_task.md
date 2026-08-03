@@ -1,36 +1,76 @@
-# Active Task: 门户产品线管理 — 打通"产品线→知识库→渠道"配置链
+# Active Task: 回答质量标尺 + 分诊与学习闭环修复（本体化改造第 0 期）
 
 ## Context
-用户指出配置断层：知识库在 Dify 设、渠道在门户设，但产品线本身没有设置入口，三者串不起来。本增量在门户新增"产品线管理"页 + admin 新增 Dify 一键开通接口，实现用户期望的流程：建产品线 → 一键初始化该产品线的 AI 应用与知识库（挂载）→ 渠道管理里选产品线+平台。知识库内容的上传编辑仍在 Dify 控制台（门户提供直达链接），不重造 Dify UI。
+当前系统没有任何能说明"回答对不对"的指标——置信度只是检索相似度均值（`confidence.go:13`），
+调阈值、改提示词全靠感觉。本增量先建立可复跑的正确率标尺，再修两处已验证的链路缺陷
+（咨询型问题被关键词误转人工、正确答案被当失败样本回写经验库），并用标尺证明改善。
+**本期不引入本体、不改 Dify 提示词、不碰 gateway/admin/portal。**
 
 ## 设计决策
-- **不做 workspace-per-产品线**（Dify 社区版多工作区支持不可靠）：全部产品线的应用+知识库建在默认工作区内，命名前缀区分（如 "UNICA-{name} 应用/知识库"）。隔离靠 app/dataset 边界 + UNICA 数据库绑定，与交付脚本的差异记录在案。
-- **Dify 凭证自动化**：admin 新增 DIFY_ADMIN_EMAIL/DIFY_ADMIN_PASSWORD 环境变量，开通时调 Dify console login 换临时 token，不再要求人工粘贴 DIFY_ADMIN_TOKEN（脚本旧方式的痛点）。
-- 绑定回写沿用既有约定：product_lines.dify_agent_id / dify_api_key / dify_base_url / config_json{dify_dataset_id}（与 setup_dify_workspaces.go 一致，幂等：已绑定则跳过）。
+- **标尺优先**：先建黄金测试集并跑出基线，再动任何逻辑。没有基线的改动无法验收。
+- **打分不用 LLM 评委**：每条用例标注 `must_contain_any` / `must_not_contain` 字符串断言即可
+  自动判定，零额外成本、结果稳定。
+- **分诊宁松勿严**：只拦截高置信度的事务型/情绪型意图，判不准一律放行给 AI。
+  误杀咨询问题的代价（自动解决率下降）高于多调一次 LLM。
+- **回写语义修正**：`keyword_match`/`blocked_topic` 是策略拦截，不是质量信号，不回写经验库；
+  仅 `low_confidence` 记 `Success:false`。
+- 跑分工具做成独立 CLI（需连真实 Dify），不进 `go test`，避免 CI 依赖外部服务。
 
 ## Critical Files
-- unica/admin/internal/bridge/dify.go（扩展：login 换 token、CreateApp、CreateDataset、CreateAppAPIKey）
-- unica/admin/internal/handler/product_lines.go（新增 POST /api/v1/product-lines/{id}/provision-dify；GET 响应补充绑定状态字段）
-- unica/admin/internal/repository/product_line.go（绑定字段读写）
-- unica/admin/internal/config/config.go（DIFY_ADMIN_EMAIL/PASSWORD）
-- portal/product-lines.html（新建：产品线 CRUD + 一键开通 + AI 参数编辑(现有 ai-config API) + 知识库直达链接）
-- portal/index.html（卡片改为：产品线管理/渠道接入/客服工作台/AI 与知识库）
-- portal/channels.html（产品线为空时引导去产品线页）
+- unica/router/testdata/golden/{megastore,freshmart,techzone}.yaml（新建：每线 20 条用例）
+- unica/router/cmd/evalset/main.go（新建：离线跑分 CLI，输出各线正确率）
+- unica/router/internal/intent/classifier.go + classifier_test.go（新建：意图分层，纯离线可测）
+- unica/router/internal/routing/router.go（分诊前置到 Dify 调用之前；`submitExperience` 按 reason 分流）
+- unica/router/internal/guardrail/evaluator.go（接收 intent 结果，替代 HandoffKeywords 子串匹配）
+- unica/router/internal/metrics/（新增 `router_intent_classified_total{intent}`）
 
 ## Step-by-Step Plan
-- [x] 1. workflow 并行实现完成（另主会话补了 DELETE /api/v1/product-lines/{id}，带"仍有渠道时 409 拒绝"保护）
-- [x] 2. workflow 验证全绿
-- [x] 3. 已部署 ubuntu-1（admin 新二进制 + DIFY_ADMIN_* env + 三个门户页面）
-- [x] 4. E2E 通过：provision-dify 真实 Dify 实测——登录/建应用/建知识库/发 API Key/回写绑定 全部成功，幂等重试正确返回 provisioned=false，产品线列表带 has_dify_binding/dify_dataset_id
-- [ ] 5. 用户实测门户流程；测试数据"默认产品线"已带真实绑定，可保留当样例
-
-## 新发现的交付遗留 bug（本次已绕开，待消息链路增量根修）
-- router/internal/bridge/dify_admin.go UpdateAppConfig 用 `PUT /apps/{id}` 只传 pre_prompt，真实 Dify 0.15.3 返回 400（要求 name 参数；提示词实际应走 model-config 且依赖已配置模型供应商）。原交付仅对 mock 测试过。admin 侧开通流程已将该步骤改为非致命警告。
+- [x] 1. 黄金测试集完成：3 产品线 × 20 条 = 60 条，覆盖 7 类问题 + 跨线陷阱 + 防编造 + 意图边界对。
+      新增字段 `must_deny`（闭世界否定）与 `must_not_match`（正则逃生舱）；每条带 `intent` 标注，
+      供分类器离线复用。语料本身由 `internal/eval` 单测在每次 `go test` 时校验。
+- [x] 2. `internal/eval`（断言引擎 + 报告聚合 + 基线对比）与 `cmd/evalset`（跑分 CLI）完成。
+      CLI 复用线上判定链路：同一次 Dify 调用 → `routing.CalculateConfidence` →
+      `guardrail.Evaluate` → `marketing.DetectIntents` 剥离标签后打分，测的是客户实际收到的文本。
+- [ ] 3. **跑出基线并记录**（阻塞：需连真实 Dify + POSTGRES_URL，本机够不到）
+- [x] 4. `internal/intent` 完成：三分类规则式分类器。60 条黄金用例意图标注全部命中；
+      另有专项测试证明旧关键词表会误杀的 4 条咨询问题现已放行。
+      **提前于第 3 步执行**：新包未接入主链路，不影响基线可比性。
+- [x] 5. 已接入 router，并加 `INTENT_TRIAGE` 三档模式（`off`/`shadow`/`on`，默认 `shadow`）解除对第 3 步的依赖：
+      `shadow` 只记录指标、不改任何判定，因此本次改动可以先上线；等 Dify 就绪后用
+      `evalset -intent-triage off` 与 `-intent-triage on` 在同一部署上跑出前后对照，
+      **基线不必抢在改动之前采集**。分诊命中时在调用 Dify 之前 handoff（`handoffBeforeAI`）；
+      `on` 档下 `HandoffKeywords` 退役，`BlockedTopics` 与置信度阈值在所有档位保留。
+- [x] 6. `submitExperience` 改由 `guardrail.IsQualitySignal(reason)` 把关：
+      仅 `low_confidence` 记失败样本；关键词/屏蔽话题/分诊拦截一律不回写。
+      分诊前置 handoff 也不提交（根本没有答案可评）。
+- [ ] 7. 验证：`go build ./... && go vet ./... && go test ./...` **已全绿**；
+      待 Dify 就绪后补：evalset 前后对照 + 观察
+      `router_intent_classified_total{class,mode}` 与 `router_guardrail_decisions_total{reason}`。
 
 ## Out of Scope
-- 知识库文档上传/编辑（留在 Dify 控制台）
-- Chatwoot 收件箱自动开通（后续增量，脚本已有）
-- gateway/router 部署与消息链路
+- 本体 YAML / facts_context 注入 / claim 校验（第 1 期，见 `doc/plan-ontology-grounding.md`）
+- 置信度算法重构（第 2 期）
+- 修改 Dify 应用提示词（第 1 期统一改为引用 `{{facts_context}}` 变量，本期不动）
+- `dify_admin.go` UpdateAppConfig 400 bug（第 1 期消息链路增量根修）
+
+## 上一增量遗留（门户产品线管理，代码已交付部署）
+- [ ] 用户实测门户流程；测试数据"默认产品线"已带真实绑定，可保留当样例
+- 完整记录见 git 历史中本文件的上一版本
 
 ## Current Status
-- [ ] In Progress — 计划待用户确认
+- [ ] Ready for Review — 代码部分（第 1/2/4/5/6 步）全部完成，`go build ./... && go vet ./... && go test ./...` 全绿。
+      默认 `INTENT_TRIAGE=shadow`，对现有部署零行为变更，可以直接上线。
+
+### 待 Dify 就绪后执行（第 3 + 7 步，工作目录 `unica/router`）
+```
+# A：旧行为基线
+POSTGRES_URL=... go run ./cmd/evalset -intent-triage off -verbose \
+    -save-baseline ../../doc/eval-baseline.json
+
+# B：新行为对照
+POSTGRES_URL=... go run ./cmd/evalset -intent-triage on -verbose \
+    -baseline ../../doc/eval-baseline.json
+```
+前提：`product_lines.name` 必须与语料里的 MegaStore / FreshMart / TechZone 一致，
+且三条产品线均已 provision（有 dify_api_key）。也可用
+`-line TechZone -dify-base-url ... -dify-api-key ...` 单线试跑，绕开数据库。

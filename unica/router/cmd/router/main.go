@@ -18,6 +18,7 @@ import (
 
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/experience"
+	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/handoff"
 	"github.com/kefu/unica/router/internal/routing"
 	"github.com/kefu/unica/router/internal/state"
@@ -72,7 +73,9 @@ func main() {
 		ConsumerGroup: cfg.consumerGroup,
 		ConsumerName:  cfg.consumerName,
 		Workers:       cfg.workers,
+		TriageMode:    cfg.triageMode,
 	}
+	log.Printf("[router] intent triage mode: %s", cfg.triageMode)
 	router := routing.NewRouter(rdb, db, stateManager, difyClient, routeCache, routerConfig)
 
 	// Wire the acest knowledge integration (experience playbook + external KB)
@@ -200,6 +203,7 @@ type config struct {
 	routeCacheTTL time.Duration
 	port          string
 	idleTimeout   time.Duration
+	triageMode    guardrail.TriageMode
 
 	// acest kb-server integration (disabled when acestURL is empty)
 	acestURL           string
@@ -237,6 +241,18 @@ func loadConfig() config {
 		idleTimeout = 30 * time.Minute
 	}
 	cfg.idleTimeout = idleTimeout
+
+	// Pre-dispatch intent triage. Defaults to shadow: classifications are
+	// recorded as metrics but every routing decision stays with the legacy rules,
+	// so enabling this on an existing deployment changes nothing observable to
+	// customers. A malformed value falls back to the default rather than
+	// silently disabling the feature.
+	triageMode, err := guardrail.ParseTriageMode(os.Getenv("INTENT_TRIAGE"))
+	if err != nil {
+		log.Printf("[router] warning: %v; falling back to %q", err, guardrail.DefaultTriageMode)
+		triageMode = guardrail.DefaultTriageMode
+	}
+	cfg.triageMode = triageMode
 
 	// acest knowledge integration
 	cfg.acestURL = strings.TrimRight(os.Getenv("ACEST_KB_URL"), "/")

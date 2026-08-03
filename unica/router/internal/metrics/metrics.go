@@ -95,6 +95,23 @@ var (
 		Help: "Total guardrail evaluation decisions",
 	}, []string{"decision", "reason"})
 
+	// IntentClassifiedTotal counts pre-dispatch intent classifications by class,
+	// the rule that fired, and the triage mode in force. Under shadow mode this
+	// is the only observable effect, and comparing its class distribution against
+	// GuardrailDecisionsTotal{reason="keyword_match"} quantifies how many
+	// consultative questions the legacy keyword list was intercepting.
+	IntentClassifiedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_intent_classified_total",
+		Help: "Total pre-dispatch intent classifications",
+	}, []string{"class", "reason", "mode"})
+
+	// IntentTriageHandoffTotal counts handoffs decided before any model call, so
+	// the saved Dify calls are directly countable.
+	IntentTriageHandoffTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_intent_triage_handoff_total",
+		Help: "Total handoffs triggered by pre-dispatch triage, before calling the AI",
+	}, []string{"class", "reason"})
+
 	// HandoffEventsProcessed counts total handoff events processed.
 	HandoffEventsProcessed = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "router_handoff_events_processed_total",
