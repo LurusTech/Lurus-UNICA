@@ -1,0 +1,221 @@
+# Golden evaluation set for the TechZone product line.
+# Schema documented in megastore.yaml. Facts extracted from
+# deploy/config/canned_responses.yaml — update both in the same commit.
+#
+# TechZone is the only line whose return policy carries a precondition (未拆封)
+# and the only one with a split warranty (手机 12 月 / 配件 6 月). Both are
+# routinely dropped or merged by the model — several cases target exactly that.
+
+product_line: TechZone
+
+facts_of_record:
+  shipping_carrier: "顺丰"
+  shipping_standard_days: "2-3 个工作日"
+  shipping_express: "次日达"
+  shipping_express_fee: "到付"          # no fixed amount exists
+  return_window_days: 15
+  return_precondition: [未拆封]
+  post_open_remedy: "质量问题走保修"
+  return_process: [联系客服, 确认问题, 寄回并保留完整包装, 检测通过后退款]
+  warranty_months_phone: 12
+  warranty_months_accessory: 6
+  payment_methods: [微信支付, 支付宝, 银行卡]
+  installments: [6, 12, 24]
+  hotline: "400-300-0003"
+  service_hours: "每天 9:00-21:00"
+
+cases:
+  - id: tech-01
+    category: return_policy
+    query: "你们退货政策是几天？"
+    intent: informational
+    expect:
+      must_contain_any: ["15天", "15 天"]
+      must_contain_all: ["未拆封"]
+      must_not_contain: ["7天", "24小时"]
+      handoff: false
+    note: |
+      同时考两件事：天数正确(15 而非 MegaStore 的 7)，且不得漏说前置条件。
+      漏说"未拆封"即为不完整答复 —— 对应本体的 owl:minCardinality 约束。
+
+  - id: tech-02
+    category: return_policy
+    query: "拆开用过了还能无理由退吗？"
+    intent: informational
+    expect:
+      must_deny: ["无理由"]
+      must_contain_any: ["未拆封", "保修", "质量问题"]
+      handoff: false
+    note: |
+      核心陷阱。MegaStore 的 7 天无理由无拆封限制，模型极易套用。
+      正确答复应否认拆封后的无理由退货，并指向保修路径。
+
+  - id: tech-03
+    category: return_policy
+    query: "支持7天无理由退换货吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["15天", "15 天"]
+      must_not_contain: ["7天无理由", "支持7天"]
+      handoff: false
+    note: 客户用错天数提问，正确行为是纠正为 15 天而非顺着客户说。
+
+  - id: tech-04
+    category: return_policy
+    query: "已经拆封了，但发现有质量问题，怎么办？"
+    intent: informational
+    expect:
+      must_contain_any: ["保修", "质保"]
+      must_not_contain: ["无理由"]
+      handoff: false
+
+  - id: tech-05
+    category: return_policy
+    query: "退货流程是怎样的？"
+    intent: informational
+    expect:
+      must_contain_all: ["包装"]
+      must_contain_any: ["检测", "寄回"]
+      must_not_contain: ["拍照"]
+      handoff: false
+    note: 必须提到保留完整包装与检测环节；拍照是 FreshMart 的流程。
+
+  - id: tech-06
+    category: warranty
+    query: "手机保修多久？"
+    intent: informational
+    expect:
+      must_contain_any: ["1年", "一年", "12个月"]
+      must_not_contain: ["6个月", "半年"]
+      handoff: false
+
+  - id: tech-07
+    category: warranty
+    query: "买的耳机这类配件保修多长时间？"
+    intent: informational
+    expect:
+      must_contain_any: ["6个月", "6 个月", "半年"]
+      must_not_contain: ["1年", "一年", "12个月"]
+      handoff: false
+    note: 与 tech-06 构成对照对。模型常把两者混为一档。
+
+  - id: tech-08
+    category: warranty
+    query: "你们所有产品的保修期都一样吗？"
+    intent: informational
+    expect:
+      must_contain_all: ["手机", "配件"]
+      must_contain_any: ["1年", "一年", "12个月"]
+      handoff: false
+    note: |
+      单值性约束检测（对应 owl:FunctionalProperty）。答案必须分别给出两档，
+      不得笼统答"都是一年"或给出自相矛盾的两个数字。
+
+  - id: tech-09
+    category: shipping
+    query: "一般几天能到货？"
+    intent: informational
+    expect:
+      must_contain_any: ["2-3", "2～3", "2 到 3"]
+      must_not_contain: ["3-5", "当日达"]
+      handoff: false
+
+  - id: tech-10
+    category: shipping
+    query: "你们发什么快递？"
+    intent: informational
+    expect:
+      must_contain_all: ["顺丰"]
+      must_deny: ["冷链"]
+      handoff: false
+
+  - id: tech-11
+    category: shipping
+    query: "加急配送运费多少钱？"
+    intent: informational
+    expect:
+      must_contain_any: ["到付"]
+      must_not_match: ["\\d+\\s*元"]
+      handoff: false
+    note: |
+      防编造。TechZone 加急是运费到付、无固定金额，
+      而 MegaStore(15元)/FreshMart(10元) 都有具体数字，模型极易搬运。
+
+  - id: tech-12
+    category: shipping
+    query: "加急能多快到？"
+    intent: informational
+    expect:
+      must_contain_any: ["次日", "第二天"]
+      must_not_contain: ["2小时", "1-2个工作日"]
+      handoff: false
+
+  - id: tech-13
+    category: payment
+    query: "支持哪些支付方式？"
+    intent: informational
+    expect:
+      must_contain_all: ["微信"]
+      must_contain_any: ["分期"]
+      must_deny: ["货到付款"]
+      handoff: false
+
+  - id: tech-14
+    category: payment
+    query: "买手机能分期吗？分几期？"
+    intent: informational
+    expect:
+      must_contain_all: ["分期"]
+      must_contain_any: ["6", "12", "24"]
+      handoff: false
+
+  - id: tech-15
+    category: payment
+    query: "可以货到付款吗？"
+    intent: informational
+    expect:
+      must_deny: ["货到付款"]
+      handoff: false
+    note: 货到付款是 FreshMart 独有。与 mega-11 / fresh-13 构成三线对照。
+
+  - id: tech-16
+    category: product_spec
+    query: "这款手机电池多大容量？"
+    intent: informational
+    expect:
+      must_contain_any: ["型号", "哪款", "具体", "链接"]
+      must_not_match: ["\\d+\\s*(?:mAh|毫安)"]
+      handoff: false
+    note: 防编造。无型号上下文时不得给出任何容量数值。
+
+  - id: tech-17
+    category: usage
+    query: "买回来不会用怎么办？"
+    intent: informational
+    expect:
+      must_contain_any: ["入门指南", "指南", "远程", "技术支持"]
+      handoff: false
+
+  - id: tech-18
+    category: contact
+    query: "技术支持电话是多少？"
+    intent: informational
+    expect:
+      must_contain_all: ["400-300-0003"]
+      must_not_contain: ["400-100-0001", "400-200-0002"]
+      handoff: false
+
+  - id: tech-19
+    category: transactional
+    query: "我要申请退货，订单号12345"
+    intent: transactional
+    expect:
+      handoff: true
+    note: 事务型。对比 tech-01/tech-05 同属退货话题但为咨询，必须放行。
+
+  - id: tech-20
+    category: emotional
+    query: "买到翻新机了，你们就是骗子，我要曝光"
+    intent: emotional
+    expect:
+      handoff: true

@@ -1,0 +1,224 @@
+# Golden evaluation set for the FreshMart product line.
+# Schema documented in megastore.yaml. Facts extracted from
+# deploy/config/canned_responses.yaml — update both in the same commit.
+#
+# FreshMart is the highest-risk line: it has NO no-questions-asked return policy
+# at all, only a 24h quality-defect claim window. Every case asserting the absence
+# of a policy exercises the closed-world assumption.
+
+product_line: FreshMart
+
+facts_of_record:
+  shipping_local: "同城当日达"
+  shipping_remote: "外地次日达"
+  shipping_method: "冷链配送"
+  express_minutes: 120
+  express_fee_yuan: 10
+  express_scope: "限同城"
+  return_window_days: null          # no no-questions-asked return exists
+  quality_claim_window_hours: 24
+  return_precondition: [质量问题, 拍照取证]
+  refund_arrival_hours: 24
+  warranty_months: null             # fresh goods carry no warranty
+  payment_methods: [微信支付, 支付宝, 银行卡, 货到付款]
+  freshness: "当日采购"
+  hotline: "400-200-0002"
+  service_hours: "每天 7:00-22:00"
+
+cases:
+  - id: fresh-01
+    category: return_policy
+    query: "你们支持7天无理由退货吗？"
+    intent: informational
+    expect:
+      must_deny: ["无理由", "7天无理由"]
+      must_contain_any: ["24小时", "质量问题"]
+      must_not_contain: ["15天"]
+      handoff: false
+    note: |
+      本套测试集最重要的一条。FreshMart 根本不存在无理由退货，
+      MegaStore(7天)/TechZone(15天) 的文档在向量空间高度相似，
+      当前系统检索分照样很高、confidence 过阈值、直接发送错误承诺。
+
+  - id: fresh-02
+    category: return_policy
+    query: "昨天买的菜坏了，能退吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["24小时", "质量问题"]
+      must_contain_all: ["拍照"]
+      must_not_contain: ["7天", "15天"]
+      handoff: false
+    note: 咨询型。对比 fresh-19 的"我要退款"，语义相近但意图不同，必须放行给 AI。
+
+  - id: fresh-03
+    category: return_policy
+    query: "审核通过后多久退款到账？"
+    intent: informational
+    expect:
+      must_contain_any: ["24小时"]
+      must_not_contain: ["3个工作日", "3 个工作日"]
+      handoff: false
+    note: MegaStore 是 3 个工作日，跨线陷阱。
+
+  - id: fresh-04
+    category: return_policy
+    query: "申请退款的流程是什么？"
+    intent: informational
+    expect:
+      must_contain_all: ["拍照"]
+      must_contain_any: ["审核"]
+      must_not_contain: ["寄回", "检测"]
+      handoff: false
+    note: 生鲜不寄回（MegaStore 寄回、TechZone 检测），流程完全不同。
+
+  - id: fresh-05
+    category: shipping
+    query: "你们发顺丰吗？"
+    intent: informational
+    expect:
+      must_deny: ["顺丰"]
+      must_contain_any: ["冷链", "配送"]
+      handoff: false
+    note: 顺丰是 TechZone 独有，闭世界否定。
+
+  - id: fresh-06
+    category: shipping
+    query: "同城下单多久能送到？"
+    intent: informational
+    expect:
+      must_contain_any: ["当日", "当天"]
+      must_not_contain: ["3-5", "2-3", "工作日"]
+      handoff: false
+
+  - id: fresh-07
+    category: shipping
+    query: "我在外地，多久能收到？"
+    intent: informational
+    expect:
+      must_contain_any: ["次日", "第二天"]
+      must_not_contain: ["3-5", "当日达"]
+      handoff: false
+
+  - id: fresh-08
+    category: shipping
+    query: "最快多久能送到？"
+    intent: informational
+    expect:
+      must_contain_any: ["2小时", "2 小时"]
+      must_contain_all: ["同城"]
+      handoff: false
+    note: 必须带上"限同城"这个前置条件，漏说即为不完整答复。
+
+  - id: fresh-09
+    category: shipping
+    query: "加急配送要另外收费吗？多少钱？"
+    intent: informational
+    expect:
+      must_contain_any: ["10元", "10 元"]
+      must_not_contain: ["15元", "到付"]
+      handoff: false
+
+  - id: fresh-10
+    category: shipping
+    query: "生鲜怎么保证运输过程不坏？"
+    intent: informational
+    expect:
+      must_contain_all: ["冷链"]
+      handoff: false
+
+  - id: fresh-11
+    category: warranty
+    query: "你们商品有质保吗？"
+    intent: informational
+    expect:
+      must_deny: ["质保", "保修"]
+      must_contain_any: ["24小时", "质量问题", "生鲜"]
+      handoff: false
+    note: |
+      闭世界否定。生鲜无质保概念，但 MegaStore(1年)/TechZone(手机1年) 都有，
+      模型极易跨线套用。正确答复应否认质保并改述 24 小时质量问题政策。
+
+  - id: fresh-12
+    category: payment
+    query: "支持哪些支付方式？"
+    intent: informational
+    expect:
+      must_contain_all: ["微信"]
+      must_contain_any: ["货到付款"]
+      must_deny: ["分期"]
+      handoff: false
+
+  - id: fresh-13
+    category: payment
+    query: "可以货到付款吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["支持", "可以"]
+      must_contain_all: ["货到付款"]
+      handoff: false
+    note: 正向用例。与 mega-11 构成对照——同一问句在两条线上答案相反。
+
+  - id: fresh-14
+    category: payment
+    query: "买多了能分期付款吗？"
+    intent: informational
+    expect:
+      must_deny: ["分期"]
+      must_not_contain: ["6/12/24", "12期"]
+      handoff: false
+    note: 分期是 TechZone 独有。
+
+  - id: fresh-15
+    category: contact
+    query: "客服热线是多少？"
+    intent: informational
+    expect:
+      must_contain_all: ["400-200-0002"]
+      must_not_contain: ["400-100-0001", "400-300-0003"]
+      handoff: false
+
+  - id: fresh-16
+    category: contact
+    query: "晚上九点还能找到客服吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["可以", "能", "22:00", "7:00-22:00"]
+      must_not_contain: ["周一至周五", "18:00"]
+      handoff: false
+    note: 需要模型从"每天 7:00-22:00"推出 21 点在服务时间内。
+
+  - id: fresh-17
+    category: usage
+    query: "你们的菜新鲜吗？怎么保证的？"
+    intent: informational
+    expect:
+      must_contain_any: ["当日采购", "当日", "新鲜"]
+      handoff: false
+
+  - id: fresh-18
+    category: product_spec
+    query: "这个苹果一个多重？"
+    intent: informational
+    expect:
+      must_contain_any: ["商品", "链接", "具体", "哪款"]
+      must_not_match: ["\\d+\\s*(?:克|g|斤|kg|千克)"]
+      handoff: false
+    note: 防编造。无商品上下文时不得给出任何重量数值。
+
+  - id: fresh-19
+    category: transactional
+    query: "我要退款，昨天买的菜坏了"
+    intent: transactional
+    expect:
+      handoff: true
+    note: |
+      关键边界用例。与 fresh-02 事实描述几乎相同，但含第一人称意愿动词"我要"，
+      属事务型，应在调用 Dify 之前分诊拦下。分类器必须能区分这一对。
+
+  - id: fresh-20
+    category: emotional
+    query: "买到烂菜了，再不处理我就去12315投诉曝光"
+    intent: emotional
+    expect:
+      handoff: true

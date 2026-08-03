@@ -33,3 +33,8 @@ tmp/
 # Environment files (preview credentials)
 .env
 .env.*
+
+# evalset run artifacts. The pass/fail baseline (doc/eval-baseline.json) IS
+# committed — it is the reference every later run is compared against; only the
+# verbose per-run report, which embeds full answer text, is transient.
+doc/eval-report-*.json

@@ -1,0 +1,225 @@
+# Golden evaluation set for the MegaStore product line.
+#
+# Facts of record are extracted from deploy/config/canned_responses.yaml.
+# When that file changes, update this one in the same commit.
+#
+# Case schema:
+#   id              unique across all golden files
+#   category        one of: return_policy | shipping | warranty | payment | usage
+#                          | product_spec | pricing | contact | transactional | emotional
+#   query           the customer message sent verbatim to Dify
+#   intent          expected classification: informational | transactional | emotional
+#                   (consumed offline by internal/intent tests, no network required)
+#   expect.must_contain_all   every literal must appear in the answer
+#   expect.must_contain_any   at least one literal must appear
+#   expect.must_not_contain   none of these literals may appear
+#   expect.must_deny          the answer must not affirm this capability
+#                             (matches "支持/提供/可以/能 ... TERM" unless negated by 不)
+#   expect.must_not_match     raw RE2 patterns, escape hatch for tricky cases
+#   expect.handoff            expected guardrail decision; omit to skip the check
+#   note                      why this case exists, especially cross-line traps
+
+product_line: MegaStore
+
+facts_of_record:
+  shipping_standard_days: "3-5 个工作日"
+  shipping_express_days: "1-2 个工作日"
+  shipping_express_fee_yuan: 15
+  return_window_days: 7
+  return_precondition: none
+  refund_arrival_days: 3
+  warranty_months: 12
+  payment_methods: [微信支付, 支付宝, 银行卡]
+  hotline: "400-100-0001"
+  service_hours: "周一至周五 9:00-18:00"
+
+cases:
+  - id: mega-01
+    category: return_policy
+    query: "你们退货是几天？"
+    intent: informational
+    expect:
+      must_contain_any: ["7天", "7 天"]
+      must_not_contain: ["15天", "30天", "24小时"]
+      handoff: false
+    note: 基线用例。TechZone 是 15 天、FreshMart 无此政策，串档立即暴露。
+
+  - id: mega-02
+    category: return_policy
+    query: "拆开包装了还能退吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["7天", "可以", "支持"]
+      must_not_contain: ["未拆封", "拆封后不", "不能退"]
+      handoff: false
+    note: 跨线陷阱。TechZone 的无理由退货限未拆封，MegaStore 无此限制，模型易套用。
+
+  - id: mega-03
+    category: return_policy
+    query: "退款大概多久能到账？"
+    intent: informational
+    expect:
+      must_contain_any: ["3个工作日", "3 个工作日"]
+      must_not_contain: ["24小时"]
+      handoff: false
+    note: FreshMart 是 24 小时到账，此处为跨线陷阱。
+
+  - id: mega-04
+    category: return_policy
+    query: "退货流程是怎样的？"
+    intent: informational
+    expect:
+      must_contain_all: ["客服"]
+      must_contain_any: ["寄回", "退回"]
+      must_not_contain: ["拍照", "检测通过"]
+      handoff: false
+    note: FreshMart 要拍照、TechZone 要检测，MegaStore 都不要求。
+
+  - id: mega-05
+    category: shipping
+    query: "一般几天能收到货？"
+    intent: informational
+    expect:
+      must_contain_any: ["3-5", "3～5", "3 到 5"]
+      must_not_contain: ["当日达", "次日达", "2-3"]
+      handoff: false
+    note: FreshMart 当日/次日达、TechZone 2-3 天，三线时效均不同。
+
+  - id: mega-06
+    category: shipping
+    query: "加急配送要额外加多少钱？"
+    intent: informational
+    expect:
+      must_contain_any: ["15元", "15 元"]
+      must_not_contain: ["10元", "到付"]
+      handoff: false
+    note: FreshMart 加急 10 元、TechZone 运费到付。
+
+  - id: mega-07
+    category: shipping
+    query: "加急的话多久能到？"
+    intent: informational
+    expect:
+      must_contain_any: ["1-2", "1～2", "1 到 2"]
+      must_not_contain: ["2小时", "次日达"]
+      handoff: false
+
+  - id: mega-08
+    category: shipping
+    query: "你们是冷链配送吗？"
+    intent: informational
+    expect:
+      must_deny: ["冷链"]
+      handoff: false
+    note: 闭世界否定。冷链是 FreshMart 独有，MegaStore 必须明确否认而非含糊带过。
+
+  - id: mega-09
+    category: warranty
+    query: "买了之后有质保吗？多久？"
+    intent: informational
+    expect:
+      must_contain_any: ["一年", "1年", "12个月"]
+      must_not_contain: ["6个月", "半年"]
+      handoff: false
+    note: TechZone 配件保修 6 个月，跨线陷阱。
+
+  - id: mega-10
+    category: payment
+    query: "支持哪些支付方式？"
+    intent: informational
+    expect:
+      must_contain_all: ["微信"]
+      must_contain_any: ["支付宝"]
+      must_deny: ["货到付款", "分期"]
+      handoff: false
+    note: 货到付款是 FreshMart 独有、分期是 TechZone 独有。
+
+  - id: mega-11
+    category: payment
+    query: "可以货到付款吗？"
+    intent: informational
+    expect:
+      must_deny: ["货到付款"]
+      handoff: false
+    note: 闭世界否定的核心用例。当前系统极可能答"支持"。
+
+  - id: mega-12
+    category: payment
+    query: "大额订单能分期付款吗？"
+    intent: informational
+    expect:
+      must_deny: ["分期"]
+      must_not_contain: ["6/12/24", "12期", "24期"]
+      handoff: false
+    note: 分期是 TechZone 独有能力。
+
+  - id: mega-13
+    category: contact
+    query: "客服电话是多少？"
+    intent: informational
+    expect:
+      must_contain_all: ["400-100-0001"]
+      must_not_contain: ["400-200-0002", "400-300-0003"]
+      handoff: false
+    note: 三条产品线热线不同，最容易串档的确定性事实。
+
+  - id: mega-14
+    category: contact
+    query: "周末打电话有人接吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["周一至周五", "工作日"]
+      must_not_contain: ["每天", "全天"]
+      handoff: false
+    note: MegaStore 仅工作日，另两线是每天。需要模型从服务时间推出"周末无人"。
+
+  - id: mega-15
+    category: product_spec
+    query: "这个的尺寸是多少？"
+    intent: informational
+    expect:
+      must_contain_any: ["型号", "商品", "链接", "哪款", "具体"]
+      must_not_match: ["\\d+\\s*(?:cm|厘米|mm|毫米|英寸)"]
+      handoff: false
+    note: 防编造。无商品上下文时正确行为是索要型号，而不是给出任何具体尺寸。
+
+  - id: mega-16
+    category: pricing
+    query: "这个多少钱？"
+    intent: informational
+    expect:
+      must_contain_any: ["哪款", "具体", "商品", "链接", "型号"]
+      must_not_match: ["\\d+\\s*元"]
+      handoff: false
+    note: 防编造。注意与 mega-06 的"15元"区分——那是政策事实，此处任何价格都是幻觉。
+
+  - id: mega-17
+    category: transactional
+    query: "我的快递到哪了？"
+    intent: transactional
+    expect:
+      handoff: true
+    note: 需要真实订单数据，AI 无法作答。第 0 期应在调用 Dify 之前分诊拦下。
+
+  - id: mega-18
+    category: transactional
+    query: "我要退款"
+    intent: transactional
+    expect:
+      handoff: true
+    note: 事务型动作。对比 mega-01/03——同含"退款"语义但那些是咨询，必须放行。
+
+  - id: mega-19
+    category: transactional
+    query: "帮我把收货地址改一下"
+    intent: transactional
+    expect:
+      handoff: true
+
+  - id: mega-20
+    category: emotional
+    query: "你们东西质量太差了，我要投诉！"
+    intent: emotional
+    expect:
+      handoff: true
+    note: 情绪型，最高优先级拦截，不经 AI。
