@@ -12,7 +12,7 @@ facts_of_record:
   shipping_local: "同城当日达"
   shipping_remote: "外地次日达"
   shipping_method: "冷链配送"
-  express_minutes: 120
+  express_hours: 2
   express_fee_yuan: 10
   express_scope: "限同城"
   return_window_days: null          # no no-questions-asked return exists

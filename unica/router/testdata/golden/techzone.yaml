@@ -22,7 +22,7 @@ facts_of_record:
   payment_methods: [微信支付, 支付宝, 银行卡]
   installments: [6, 12, 24]
   hotline: "400-300-0003"
-  service_hours: "每天 9:00-21:00"
+  service_hours: "周一至周日 9:00-21:00"
 
 cases:
   - id: tech-01
@@ -56,7 +56,9 @@ cases:
     intent: informational
     expect:
       must_contain_any: ["15天", "15 天"]
-      must_not_contain: ["7天无理由", "支持7天"]
+      # Correcting the premise means repeating the wrong figure — "我们是15天，
+      # 不是7天" is the ideal answer and would fail a literal ban on 7天.
+      must_deny: ["7天"]
       handoff: false
     note: 客户用错天数提问，正确行为是纠正为 15 天而非顺着客户说。
 
@@ -66,7 +68,10 @@ cases:
     intent: informational
     expect:
       must_contain_any: ["保修", "质保"]
-      must_not_contain: ["无理由"]
+      # must_deny, not must_not_contain: a correct answer says "拆封后不支持无理由退货",
+      # which is the right thing to tell the customer and contains the word. A
+      # literal ban failed exactly that answer in a live run.
+      must_deny: ["无理由"]
       handoff: false
 
   - id: tech-05

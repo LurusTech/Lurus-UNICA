@@ -128,12 +128,33 @@ acest ace search 退款   # 检索沉淀的经验
 
 详细数据流与运维说明见 [`unica/doc/acest-kb-integration.md`](unica/doc/acest-kb-integration.md)。
 
+## 领域本体：让 AI 不再靠常识补答案
+
+RAG 只保证"检索到了相似内容"，保证不了"说的是对的"。三条产品线的退货政策互相冲突
+（7 天无理由 / 15 天限未拆封 / 根本没有无理由退货），检索分数区分不了它们。
+
+领域本体把这类确定性事实从概率通道里拿出来：每条产品线声明自己的政策事实与"本业务不提供什么"，
+router 在调用 AI 前注入，回答后校验。与行业无关——`deploy/config/ontology/examples/` 下有
+留学中介与财务代理的完整样例，它们同时是保证机制通用性的测试夹具。
+
+```bash
+cd unica/router
+go run ./cmd/ontology validate -dir ../../deploy/config/ontology   # 检查，无需数据库
+go run ./cmd/ontology preview  -dir ../../deploy/config/ontology   # 看注入内容
+POSTGRES_URL=... go run ./cmd/ontology publish -dir ../../deploy/config/ontology
+```
+
+两个独立开关写在 `product_lines.config_json.ontology`：`inject_facts`（注入事实）与
+`validation`（`off`/`shadow`/`enforce`）。**默认都关**，升级不改变任何现有行为。
+
+编写指南见 [`doc/ontology-schema.md`](doc/ontology-schema.md)。
+
 ## 快速开始
 
 ```bash
 # 1. 基础设施（PostgreSQL + Redis），或使用 deploy/ 下的 K8s 清单
 # 2. 迁移
-psql $POSTGRES_URL -f unica/router/migrations/001_core_schema.sql   # 001~010 依次执行
+psql $POSTGRES_URL -f unica/router/migrations/001_core_schema.sql   # 001~011 依次执行
 
 # 3. 各服务（每个模块独立 go.mod）
 cd unica/gateway && go build ./... && ./gateway   # 同理 router/admin/reporter
@@ -149,6 +170,7 @@ cd unica/gateway && go build ./... && ./gateway   # 同理 router/admin/reporter
 | `CHATWOOT_WEBHOOK_TOKEN` | gateway | Chatwoot 坐席回复回流 |
 | `ACEST_KB_URL` / `ACEST_KB_TOKEN` | router | acest 双知识库（可选，见上文） |
 | `INTENT_TRIAGE` | router | 调用 AI 前的意图分诊：`off`（旧关键词行为）/ `shadow`（默认，只记录指标不改判定）/ `on`（分诊决定路由，关键词表退役） |
+| `ONTOLOGY_ENABLED` | router | 领域本体总开关（默认 `true`）。逐产品线在 `config_json.ontology` 里开通，见 [`doc/ontology-schema.md`](doc/ontology-schema.md) |
 | `JWT_SECRET` | admin | 后台鉴权 |
 
 ## 测试

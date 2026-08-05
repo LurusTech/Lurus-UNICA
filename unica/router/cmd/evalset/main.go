@@ -33,6 +33,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/kefu/unica/router/internal/bridge"
+	"github.com/kefu/unica/router/internal/domain"
 	"github.com/kefu/unica/router/internal/eval"
 	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/intent"
@@ -45,6 +46,13 @@ type lineConfig struct {
 	difyBaseURL string
 	difyAPIKey  string
 	guardrail   *guardrail.GuardrailConfig
+	// facts is the rendered ontology block, empty when the product line has no
+	// ontology or injection was not requested.
+	facts string
+	// ontology is retained so the answer can be validated as well as grounded.
+	// Checking costs nothing here and is the only way to learn whether the
+	// structural half of validation works against a live model.
+	ontology *domain.Ontology
 }
 
 func main() {
@@ -62,18 +70,22 @@ func main() {
 		apiKeyFlag   = flag.String("dify-api-key", "", "override Dify API key (requires -line and -dify-base-url)")
 		triageFlag   = flag.String("intent-triage", string(guardrail.TriageOff),
 			"pre-dispatch triage mode: off (legacy baseline) | shadow | on (candidate)")
+		injectFacts = flag.Bool("inject-facts", false,
+			"inject the product line's ontology facts the way the router does; "+
+				"running once with and once without is the ontology A/B")
 	)
 	flag.Parse()
 
 	if err := run(*dir, *lineFilter, *caseFilter, *verbose, *jsonOut, *baselinePath, *savePath,
-		*concurrency, *timeout, *baseURLFlag, *apiKeyFlag, *triageFlag); err != nil {
+		*concurrency, *timeout, *baseURLFlag, *apiKeyFlag, *triageFlag, *injectFacts); err != nil {
 		fmt.Fprintf(os.Stderr, "evalset: %v\n", err)
 		os.Exit(2)
 	}
 }
 
 func run(dir, lineFilter, caseFilter string, verbose bool, jsonOut, baselinePath, savePath string,
-	concurrency int, timeout time.Duration, baseURLFlag, apiKeyFlag, triageFlag string) error {
+	concurrency int, timeout time.Duration, baseURLFlag, apiKeyFlag, triageFlag string,
+	injectFacts bool) error {
 
 	triageMode, err := guardrail.ParseTriageMode(triageFlag)
 	if err != nil {
@@ -90,17 +102,17 @@ func run(dir, lineFilter, caseFilter string, verbose bool, jsonOut, baselinePath
 		return fmt.Errorf("no cases matched (line=%q case=%q)", lineFilter, caseFilter)
 	}
 
-	configs, err := resolveConfigs(cases, lineFilter, baseURLFlag, apiKeyFlag)
+	configs, err := resolveConfigs(cases, lineFilter, baseURLFlag, apiKeyFlag, injectFacts)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "running %d case(s), concurrency %d, intent triage %s...\n",
-		len(cases), concurrency, triageMode)
+	fmt.Fprintf(os.Stderr, "running %d case(s), concurrency %d, intent triage %s, facts %s...\n",
+		len(cases), concurrency, triageMode, onOff(injectFacts))
 	outcomes := runCases(cases, configs, concurrency, timeout, triageMode)
 
 	report := eval.BuildReport(outcomes)
-	fmt.Printf("\nintent triage: %s\n", triageMode)
+	fmt.Printf("\nintent triage: %s   facts injection: %s\n", triageMode, onOff(injectFacts))
 	fmt.Print(report.Text(verbose))
 
 	if jsonOut != "" {
@@ -144,7 +156,8 @@ func filterCases(all []eval.Case, lineFilter, caseFilter string) []eval.Case {
 // resolveConfigs collects Dify credentials and guardrail settings for every
 // product line present in the run, either from explicit flags (single line) or
 // from the product_lines table.
-func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag string) (map[string]lineConfig, error) {
+func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag string,
+	injectFacts bool) (map[string]lineConfig, error) {
 	lines := make(map[string]bool)
 	for _, c := range cases {
 		lines[c.ProductLine] = true
@@ -183,14 +196,17 @@ func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag strin
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
+	store := domain.NewStore(db, time.Minute)
 	configs := make(map[string]lineConfig, len(lines))
+
 	for line := range lines {
+		var id string
 		var baseURL, apiKey sql.NullString
 		var configJSON []byte
 
 		err := db.QueryRowContext(ctx,
-			`SELECT dify_base_url, dify_api_key, config_json FROM product_lines WHERE name = $1`,
-			line).Scan(&baseURL, &apiKey, &configJSON)
+			`SELECT id, dify_base_url, dify_api_key, config_json FROM product_lines WHERE name = $1`,
+			line).Scan(&id, &baseURL, &apiKey, &configJSON)
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("product line %q not found in product_lines; "+
 				"golden set names must match the database", line)
@@ -202,10 +218,38 @@ func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag strin
 			return nil, fmt.Errorf("product line %q has no dify_api_key; provision it first", line)
 		}
 
+		// Injection is driven by the flag rather than by config_json: the point of
+		// the run is to measure what injection does, which requires forcing both
+		// sides of the comparison regardless of how the line is configured.
+		// The ontology is loaded whenever one is published, independently of the
+		// injection flag. Validating a run *without* injection is the only way to
+		// measure recall: those answers are mostly wrong, so the share the
+		// validator catches is real evidence. A run where every answer is already
+		// correct can only ever show that it does not over-fire.
+		lineOntology, version, err := store.Active(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("load ontology for %q: %w", line, err)
+		}
+		if injectFacts && lineOntology == nil {
+			return nil, fmt.Errorf("product line %q has no published ontology; "+
+				"run cmd/ontology publish first, or drop -inject-facts", line)
+		}
+
+		var facts string
+		if injectFacts {
+			facts = domain.Render(lineOntology)
+			fmt.Fprintf(os.Stderr, "  %s: ontology v%d, %d chars of facts injected\n",
+				line, version, len(facts))
+		} else if lineOntology != nil {
+			fmt.Fprintf(os.Stderr, "  %s: ontology v%d loaded for checking only\n", line, version)
+		}
+
 		configs[line] = lineConfig{
 			difyBaseURL: baseURL.String,
 			difyAPIKey:  apiKey.String,
 			guardrail:   guardrail.LoadGuardrailConfig(json.RawMessage(configJSON)),
+			facts:       facts,
+			ontology:    lineOntology,
 		}
 	}
 	return configs, nil
@@ -266,6 +310,9 @@ func scoreCase(client *bridge.DifyClient, cfg lineConfig, c eval.Case, timeout t
 		"channel":       "evalset",
 		"product_line":  c.ProductLine,
 	}
+	if cfg.facts != "" {
+		inputs["facts_context"] = cfg.facts
+	}
 
 	// Empty conversation ID keeps every case independent; a shared conversation
 	// would let one answer contaminate the next.
@@ -277,14 +324,35 @@ func scoreCase(client *bridge.DifyClient, cfg lineConfig, c eval.Case, timeout t
 		return eval.Outcome{Case: c, Err: err.Error()}
 	}
 
-	// Score the customer-facing text: marketing tags are stripped before delivery.
-	answer := marketing.DetectIntents(resp.Answer).CleanedAnswer
+	// Score the customer-facing text: both tag protocols are stripped before
+	// delivery, so neither may count towards or against an assertion.
+	claimResult := domain.ParseClaims(resp.Answer)
+	answer := marketing.DetectIntents(claimResult.CleanedAnswer).CleanedAnswer
 
-	confidence := routing.CalculateConfidence(resp)
+	// Mirror the router: an answer grounded in injected facts is not low
+	// confidence merely because it needed no retrieval.
+	confidence := routing.GroundedConfidence(resp, routing.GroundingEvidence{
+		FactsInjected: cfg.facts != "",
+	})
 	decision := guardrail.NewEvaluator().EvaluateWithMode(c.Query, confidence, cfg.guardrail, triageMode)
 	handoff := decision.Decision == guardrail.DecisionHandoff
 
-	return eval.Evaluate(c, answer, handoff)
+	outcome := eval.Evaluate(c, answer, handoff)
+
+	// Validation runs for diagnostics only and never changes pass or fail. The
+	// golden set judges answer content; this is a second, independent opinion,
+	// and the disagreements between the two are what say whether enforcing would
+	// be safe.
+	if cfg.ontology != nil {
+		violations := domain.Validate(cfg.ontology, claimResult.Claims, answer)
+		grounding := eval.Grounding{Claims: len(claimResult.Claims)}
+		for _, v := range violations {
+			grounding.Violations = append(grounding.Violations,
+				fmt.Sprintf("[%s] %s", v.Kind, v.Message))
+		}
+		outcome.Grounding = &grounding
+	}
+	return outcome
 }
 
 func compareBaseline(path string, report eval.Report) (regressed bool, err error) {
@@ -306,6 +374,13 @@ func compareBaseline(path string, report eval.Report) (regressed bool, err error
 		fmt.Printf("  - %s\n", id)
 	}
 	return len(broke) > 0, nil
+}
+
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
 
 func writeJSON(path string, v interface{}) error {

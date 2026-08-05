@@ -1,3 +1,17 @@
+# Dify preview stack.
+#
+# Parameterised so one file serves both a local WSL machine and a remote preview
+# host: everything host-specific comes from .env (see .env.example). The previous
+# revision hard-coded a single tailnet address, which meant a second environment
+# had to fork the file and then drift from it.
+#
+#   cp .env.example .env && edit
+#   docker compose up -d
+#
+# Dify is pinned to 0.15.3 deliberately: it is the version the router's bridge
+# code was written and tested against, including the known UpdateAppConfig
+# behaviour recorded in doc/active_task.md.
+
 name: unica-dify
 
 networks:
@@ -5,15 +19,15 @@ networks:
     name: unica-dify-net
 
 x-api-env: &api-env
-  CONSOLE_API_URL: "http://100.122.83.20:3402"
-  CONSOLE_WEB_URL: "http://100.122.83.20:3402"
-  SERVICE_API_URL: "http://100.122.83.20:3402"
-  APP_WEB_URL: "http://100.122.83.20:3402"
-  DB_USERNAME: dify
-  DB_PASSWORD: "262366c174474c6006ee00b75d6830ad"
+  CONSOLE_API_URL: "${DIFY_PUBLIC_URL}"
+  CONSOLE_WEB_URL: "${DIFY_PUBLIC_URL}"
+  SERVICE_API_URL: "${DIFY_PUBLIC_URL}"
+  APP_WEB_URL: "${DIFY_PUBLIC_URL}"
+  DB_USERNAME: "${POSTGRES_USER}"
+  DB_PASSWORD: "${POSTGRES_PASSWORD}"
   DB_HOST: postgres
   DB_PORT: "5432"
-  DB_DATABASE: dify_db
+  DB_DATABASE: "${POSTGRES_DB}"
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   REDIS_PASSWORD: ""
@@ -21,36 +35,43 @@ x-api-env: &api-env
   REDIS_USE_SSL: "false"
   CELERY_BROKER_URL: "redis://redis:6379/1"
   BROKER_USE_SSL: "false"
-  SECRET_KEY: "RwrSceUVbJ0n/GRbN1gE/P6xwdoqbslHnDeYn5eJvLlEran9Dnm+7XBV"
+  SECRET_KEY: "${DIFY_SECRET_KEY}"
   VECTOR_STORE: pgvector
   PGVECTOR_HOST: postgres
   PGVECTOR_PORT: "5432"
-  PGVECTOR_USER: dify
-  PGVECTOR_PASSWORD: "262366c174474c6006ee00b75d6830ad"
-  PGVECTOR_DATABASE: dify_db
+  PGVECTOR_USER: "${POSTGRES_USER}"
+  PGVECTOR_PASSWORD: "${POSTGRES_PASSWORD}"
+  PGVECTOR_DATABASE: "${POSTGRES_DB}"
   STORAGE_TYPE: local
   STORAGE_LOCAL_PATH: /app/api/storage
   CODE_EXECUTION_ENDPOINT: "http://sandbox:8194"
-  CODE_EXECUTION_API_KEY: "466d7d73b24e98370440d53b72dbf90a"
+  CODE_EXECUTION_API_KEY: "${SANDBOX_API_KEY}"
   LOG_LEVEL: INFO
-  INNER_API_KEY: "d4afb53d65db920a67e2b266e22f50dc"
+  INNER_API_KEY: "${DIFY_INNER_API_KEY}"
 
 services:
+  # Serves Dify and, in a preview environment, the UNICA business database as a
+  # second database on the same instance. Keeping them together is a preview
+  # convenience, not a production pattern.
   postgres:
     image: pgvector/pgvector:pg16
     container_name: unica-dify-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: dify
-      POSTGRES_PASSWORD: "262366c174474c6006ee00b75d6830ad"
-      POSTGRES_DB: dify_db
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+    ports:
+      # Exposed so the router, the evaluation harness and the ontology CLI can
+      # reach it from the host without entering a container.
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
-      - /data/unica-dify/pgdata:/var/lib/postgresql/data
-      - /data/unica-dify/initdb:/docker-entrypoint-initdb.d:ro
+      - ${DIFY_DATA_DIR}/pgdata:/var/lib/postgresql/data
+      - ${DIFY_DATA_DIR}/initdb:/docker-entrypoint-initdb.d:ro
     mem_limit: 512m
     oom_score_adj: 500
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dify -d dify_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -76,7 +97,7 @@ services:
       MODE: api
       MIGRATION_ENABLED: "true"
     volumes:
-      - /data/unica-dify/storage:/app/api/storage
+      - ${DIFY_DATA_DIR}/storage:/app/api/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,7 +115,7 @@ services:
       MODE: worker
       MIGRATION_ENABLED: "false"
     volumes:
-      - /data/unica-dify/storage:/app/api/storage
+      - ${DIFY_DATA_DIR}/storage:/app/api/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,8 +129,8 @@ services:
     container_name: unica-dify-web
     restart: unless-stopped
     environment:
-      CONSOLE_API_URL: "http://100.122.83.20:3402"
-      APP_API_URL: "http://100.122.83.20:3402"
+      CONSOLE_API_URL: "${DIFY_PUBLIC_URL}"
+      APP_API_URL: "${DIFY_PUBLIC_URL}"
     mem_limit: 400m
     oom_score_adj: 500
 
@@ -118,7 +139,7 @@ services:
     container_name: unica-dify-sandbox
     restart: unless-stopped
     environment:
-      API_KEY: "466d7d73b24e98370440d53b72dbf90a"
+      API_KEY: "${SANDBOX_API_KEY}"
       GIN_MODE: release
       WORKER_TIMEOUT: "15"
     mem_limit: 300m
@@ -129,10 +150,10 @@ services:
     container_name: unica-dify-nginx
     restart: unless-stopped
     ports:
-      - "3402:80"
+      - "${DIFY_PORT:-3402}:80"
     volumes:
-      - /data/unica-dify/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - /data/unica-dify/proxy_params_dify:/etc/nginx/proxy_params_dify:ro
+      - ${DIFY_DATA_DIR}/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${DIFY_DATA_DIR}/proxy_params_dify:/etc/nginx/proxy_params_dify:ro
     depends_on:
       - api
       - web
