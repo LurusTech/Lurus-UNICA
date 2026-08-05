@@ -106,9 +106,12 @@ func main() {
 	auditLogHandler := handler.NewAuditLogHandler(auditRepo)
 	log.Println("[admin] audit logger initialized")
 
-	// Ontology editing surface. The store's cache is irrelevant here (admin
-	// reads versions, not the hot path), so a short TTL is fine.
-	ontologyHandler := handler.NewOntologyHandler(domain.NewStore(db, time.Minute), plRepo, auditLogger)
+	// Ontology editing and violation review surfaces. The store's cache is
+	// irrelevant here (admin reads versions and evidence, not the hot path),
+	// so a short TTL is fine.
+	domainStore := domain.NewStore(db, time.Minute)
+	ontologyHandler := handler.NewOntologyHandler(domainStore, plRepo, auditLogger)
+	violationsHandler := handler.NewViolationsHandler(domainStore, plRepo, auditLogger)
 
 	// Build middleware chain
 	authMW := auth.AuthMiddleware(jwtMgr)
@@ -247,12 +250,22 @@ func main() {
 	// audit middleware would start auditing every product-line request.
 	mux.Handle("/api/v1/product-lines/", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/product-lines/")
-		if len(segments) >= 2 && (segments[1] == "ontology" || segments[1] == "ontology-config") {
-			requireManageAIConfig(http.HandlerFunc(ontologyHandler.Handle)).ServeHTTP(w, r)
-			return
+		if len(segments) >= 2 {
+			switch segments[1] {
+			case "ontology", "ontology-config":
+				requireManageAIConfig(http.HandlerFunc(ontologyHandler.Handle)).ServeHTTP(w, r)
+				return
+			case "violations":
+				requireManageAIConfig(http.HandlerFunc(violationsHandler.HandleByProductLine)).ServeHTTP(w, r)
+				return
+			}
 		}
 		requireManagePL(http.HandlerFunc(plHandler.HandleProductLine)).ServeHTTP(w, r)
 	})))
+
+	// Violation review is addressed by violation id, not product line; the
+	// handler resolves the line from the row and applies scoping itself.
+	mux.Handle("/api/v1/violations/", authMW(requireManageAIConfig(http.HandlerFunc(violationsHandler.HandleReview))))
 
 	// Protected endpoints - Channels (with audit middleware)
 	mux.Handle("/api/v1/channels", authMW(requireManageChannels(channelAuditMW(http.HandlerFunc(channelHandler.HandleChannels)))))

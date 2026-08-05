@@ -26,6 +26,17 @@ var (
 		Help:    "Token refresh latency",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"channel"})
+
+	// TokenRefreshExhaustedTotal counts channels whose token refresh gave up
+	// after exhausting every retry. This counter — not the unica:alerts Redis
+	// stream written next to it — is the path that reaches an operator: the
+	// stream has no consumer and exists only as an audit trail of what failed
+	// and why. Alerting rules watch this metric; the stream supplies evidence
+	// once someone is looking.
+	TokenRefreshExhaustedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "gateway_token_refresh_exhausted_total",
+		Help: "Total token refreshes that failed after exhausting all retries",
+	}, []string{"channel"})
 )
 
 // channelEntry holds per-channel registration data.
@@ -154,8 +165,10 @@ func (m *TokenManager) refreshToken(ctx context.Context, channelID string) (stri
 		}
 	}
 
-	// All retries exhausted — publish alert to Redis Stream
+	// All retries exhausted — raise the counter alerts fire on, then write the
+	// audit record to the Redis Stream.
 	TokenRefreshTotal.WithLabelValues(channelID, "error").Inc()
+	TokenRefreshExhaustedTotal.WithLabelValues(channelID).Inc()
 	m.publishAlert(ctx, channelID, lastErr)
 	return "", fmt.Errorf("token refresh failed after %d retries for %s: %w", m.retryMax, channelID, lastErr)
 }

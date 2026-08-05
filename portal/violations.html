@@ -1,0 +1,1060 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>质量复核 - UNICA 统一管理门户</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --text: #1a1d24;
+    --text-muted: #6b7280;
+    --border: #e2e5ea;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --ok: #16a34a;
+    --bad: #dc2626;
+    --warn: #d97706;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+      --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+      --row-hover: #1e222b;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+    --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+    --row-hover: #1e222b;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f8; --surface: #ffffff; --text: #1a1d24; --text-muted: #6b7280;
+    --border: #e2e5ea; --primary: #2563eb; --primary-hover: #1d4ed8;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1200px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  input[type="checkbox"] { width: auto; padding: 0; }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+
+  /* Login screen */
+  #login-view {
+    max-width: 380px; margin: 10vh auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; box-shadow: var(--shadow);
+  }
+  #login-view h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  #login-view p.sub { color: var(--text-muted); margin: 0 0 22px; font-size: 0.88rem; }
+  #login-error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
+  }
+
+  /* App view */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; margin-bottom: 20px; }
+  .toolbar .field { margin-bottom: 0; min-width: 220px; }
+  .toolbar .field.narrow { min-width: 0; }
+  .toolbar .spacer { flex: 1; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 8px 13px; border-radius: 999px; font-size: 0.82rem; white-space: nowrap; }
+  .chip[aria-pressed="true"] {
+    background: var(--primary); color: #fff; border-color: var(--primary);
+  }
+  .switch-row { display: flex; align-items: center; gap: 8px; height: 38px; }
+  .switch-row label { margin-bottom: 0; white-space: nowrap; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 24px; box-shadow: var(--shadow); margin-bottom: 20px;
+  }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 4px;
+  }
+  .card h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  .card-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 18px; line-height: 1.6; }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 0.85em; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 5px;
+  }
+
+  .table-wrap { border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 1020px; }
+  th, td { text-align: left; padding: 11px 12px; font-size: 0.88rem; border-bottom: 1px solid var(--border); white-space: nowrap; vertical-align: top; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr:last-child td { border-bottom: none; }
+  tr.v-row { cursor: pointer; }
+  tr.v-row:hover { background: var(--row-hover); }
+  tr.v-row.expanded { background: var(--row-hover); }
+  td.msg { white-space: normal; min-width: 180px; max-width: 420px; line-height: 1.6; }
+  /* Property names are snake_case and break badly; clip them and keep the full
+     value in the title attribute and the detail panel. */
+  td.prop { max-width: 140px; }
+  td.prop code {
+    display: inline-block; max-width: 100%; overflow: hidden;
+    text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap;
+  }
+  /* The action set must stay on one line; the summary column absorbs the width. */
+  td.actions-cell { cursor: default; width: 1%; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.info { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+  .row-actions { display: flex; gap: 6px; flex-wrap: nowrap; }
+  .row-actions button { padding: 5px 9px; font-size: 0.78rem; white-space: nowrap; }
+
+  /* Detail panel */
+  tr.detail-row > td { padding: 0; background: var(--bg); white-space: normal; }
+  .detail { padding: 16px 18px; }
+  .detail-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .detail-col {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; border-left-width: 3px;
+  }
+  .detail-col.got { border-left-color: var(--bad); }
+  .detail-col.want { border-left-color: var(--ok); }
+  .detail-col h4 {
+    margin: 0 0 6px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .detail-val { font-size: 0.88rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .detail-val.empty { color: var(--text-muted); }
+  .evidence {
+    margin-top: 14px; font-size: 0.86rem; line-height: 1.7;
+    border-left: 3px solid var(--border); padding-left: 12px;
+  }
+  .evidence .lead { color: var(--text-muted); font-size: 0.78rem; display: block; margin-bottom: 2px; }
+  .evidence q { quotes: "\201C" "\201D"; }
+  .detail-meta {
+    margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+    font-size: 0.8rem; color: var(--text-muted);
+  }
+  .detail-meta .copy-btn { padding: 3px 9px; font-size: 0.75rem; margin-left: 6px; }
+
+  .pager {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px;
+  }
+  .pager .count { margin-right: auto; font-size: 0.82rem; color: var(--text-muted); }
+
+  .empty-state { padding: 40px 16px; text-align: center; color: var(--text-muted); line-height: 1.8; }
+  .empty-state a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .empty-state a:hover { text-decoration: underline; }
+  .empty-state .big { display: block; font-size: 1.6rem; margin-bottom: 8px; }
+  .empty-state .title { color: var(--text); font-weight: 600; font-size: 0.95rem; }
+  .empty-state.celebrate .title { color: var(--ok); }
+  .empty-state .actions-row { margin-top: 14px; display: flex; justify-content: center; gap: 10px; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease; line-height: 1.6;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  .toast.warn { border-left-color: var(--warn); }
+  .toast a { color: var(--primary); font-weight: 500; text-decoration: none; display: inline-block; margin-top: 6px; }
+  .toast a:hover { text-decoration: underline; }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" href="./index.html">← 返回首页</a>
+    <h1>质量复核</h1>
+  </div>
+  <div id="user-info" hidden>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <!-- Login view -->
+  <section id="login-view">
+    <h2>登录</h2>
+    <p class="sub">请使用管理账号登录以复核 AI 回答违规证据</p>
+    <div id="login-error"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
+    </form>
+  </section>
+
+  <!-- App view -->
+  <section id="app-view" hidden>
+    <div class="toolbar">
+      <div class="field">
+        <label for="pl-select">产品线</label>
+        <select id="pl-select"><option value="">请选择产品线</option></select>
+      </div>
+      <div class="field narrow">
+        <label id="status-label">状态</label>
+        <div class="chips" id="status-chips" role="group" aria-labelledby="status-label">
+          <button type="button" class="chip" data-status="pending" aria-pressed="true">待复核</button>
+          <button type="button" class="chip" data-status="" aria-pressed="false">全部</button>
+          <button type="button" class="chip" data-status="ontology_wrong" aria-pressed="false">本体错了</button>
+          <button type="button" class="chip" data-status="model_wrong" aria-pressed="false">模型错了</button>
+          <button type="button" class="chip" data-status="false_positive" aria-pressed="false">误报</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="kind-select">违规类型</label>
+        <select id="kind-select"><option value="">全部</option></select>
+      </div>
+      <div class="field narrow">
+        <div class="switch-row">
+          <input type="checkbox" id="enforced-only" />
+          <label for="enforced-only">仅拦截</label>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <button id="refresh-btn">刷新</button>
+    </div>
+
+    <div class="card empty-state" id="no-pl-hint">请先在上方选择一条产品线</div>
+
+    <div class="card" id="queue-card" hidden>
+      <div class="card-head">
+        <h2>复核队列</h2>
+        <span class="pill muted" id="total-pill">—</span>
+      </div>
+      <p class="card-sub">
+        每一条都是 AI 回答与本体冲突的证据。判定「本体错了」说明本体写漏或写错，
+        应回到领域本体修正并重新发布；「模型错了」进入回答质量问题；「误报」说明校验规则本身过严。
+      </p>
+
+      <div class="table-wrap" id="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>发生时间</th>
+              <th>违规类型</th>
+              <th>属性</th>
+              <th>摘要</th>
+              <th>模式</th>
+              <th>复核状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="v-tbody">
+            <tr><td colspan="7" class="loading-text">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="empty-state" id="empty-box" hidden></div>
+
+      <div class="pager" id="pager" hidden>
+        <span class="count" id="page-count"></span>
+        <button id="prev-btn">上一页</button>
+        <button id="next-btn">下一页</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN_KEY = "unica_access_token";
+  var PAGE_SIZE = 50;
+
+  // Violation kinds are a stable server-side interface; this map only supplies
+  // the operator-facing wording. Unknown kinds fall back to the raw value.
+  var KIND_LABELS = {
+    undeclared_property: "未声明属性",
+    unknown_scope: "未知场景",
+    domain_mismatch: "类型不适用",
+    range: "取值越界",
+    contradicts_assertion: "与断言冲突",
+    functional_conflict: "单值冲突",
+    ambiguous_scope: "场景未限定",
+    missing_companion: "缺少配套事实",
+    denied_capability: "声称不提供的能力"
+  };
+
+  var STATUS_LABELS = {
+    pending: "待复核",
+    ontology_wrong: "本体错了",
+    model_wrong: "模型错了",
+    false_positive: "误报"
+  };
+
+  var STATUS_PILLS = {
+    pending: "warn",
+    ontology_wrong: "info",
+    model_wrong: "bad",
+    false_positive: "muted"
+  };
+
+  var state = {
+    productLines: [],
+    currentPL: null,
+    status: "pending",
+    kind: "",
+    enforcedOnly: false,
+    offset: 0,
+    total: 0,
+    items: [],
+    knownKinds: [],
+    expanded: {},
+    loading: false
+  };
+
+  var els = {
+    loginView: document.getElementById("login-view"),
+    appView: document.getElementById("app-view"),
+    loginForm: document.getElementById("login-form"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
+    userInfo: document.getElementById("user-info"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+
+    plSelect: document.getElementById("pl-select"),
+    statusChips: document.getElementById("status-chips"),
+    kindSelect: document.getElementById("kind-select"),
+    enforcedOnly: document.getElementById("enforced-only"),
+    refreshBtn: document.getElementById("refresh-btn"),
+
+    noPlHint: document.getElementById("no-pl-hint"),
+    queueCard: document.getElementById("queue-card"),
+    totalPill: document.getElementById("total-pill"),
+    tableWrap: document.getElementById("table-wrap"),
+    tbody: document.getElementById("v-tbody"),
+    emptyBox: document.getElementById("empty-box"),
+    pager: document.getElementById("pager"),
+    pageCount: document.getElementById("page-count"),
+    prevBtn: document.getElementById("prev-btn"),
+    nextBtn: document.getElementById("next-btn"),
+
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  // link is optional: {href, text}. Toasts carrying a link stay longer because
+  // they are meant to be clicked.
+  function toast(message, kind, link) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    var line = document.createElement("div");
+    line.textContent = message;
+    el.appendChild(line);
+    if (link) {
+      var a = document.createElement("a");
+      a.href = link.href;
+      a.textContent = link.text;
+      el.appendChild(a);
+    }
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, link ? 9000 : 3200);
+  }
+
+  // ---------- Auth / API ----------
+  function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
+  function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
+
+  function showLogin(message) {
+    clearToken();
+    els.appView.hidden = true;
+    els.userInfo.hidden = true;
+    els.loginView.hidden = false;
+    if (message) {
+      els.loginError.textContent = message;
+      els.loginError.style.display = "block";
+    }
+  }
+
+  function showApp() {
+    els.loginView.hidden = true;
+    els.appView.hidden = false;
+    els.userInfo.hidden = false;
+  }
+
+  // Wraps fetch with Authorization header, JSON parsing, and 401/403 handling.
+  function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    var token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+    return fetch(path, Object.assign({}, options, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          showLogin("登录已过期，请重新登录");
+          throw new Error("unauthorized");
+        }
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
+          }
+          if (!res.ok) {
+            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
+            if (res.status === 403) {
+              msg = "无权限：" + ((data && data.error) || "当前账号不能复核违规证据");
+            }
+            var err = new Error(msg);
+            err.status = res.status;
+            throw err;
+          }
+          return data;
+        });
+      });
+  }
+
+  function reportError(prefix, err) {
+    if (err.message === "unauthorized") return;
+    toast(prefix + ": " + err.message, "error");
+  }
+
+  // ---------- Login ----------
+  els.loginForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    els.loginError.style.display = "none";
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "登录中…";
+
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+
+    fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email, password: password })
+    })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          var data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (e) {}
+          if (!res.ok) {
+            var msg = (data && data.error) || "邮箱或密码错误";
+            throw new Error(msg);
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        if (!data || !data.access_token) throw new Error("登录响应异常");
+        setToken(data.access_token);
+        els.userEmail.textContent = email;
+        showApp();
+        bootstrap();
+      })
+      .catch(function (err) {
+        els.loginError.textContent = err.message || "登录失败，请检查网络";
+        els.loginError.style.display = "block";
+      })
+      .finally(function () {
+        els.loginSubmit.disabled = false;
+        els.loginSubmit.textContent = "登 录";
+      });
+  });
+
+  els.logoutBtn.addEventListener("click", function () {
+    showLogin();
+  });
+
+  // ---------- Bootstrap after login ----------
+  function bootstrap() {
+    loadProductLines();
+  }
+
+  function loadProductLines() {
+    return api("/api/v1/product-lines")
+      .then(function (data) {
+        state.productLines = Array.isArray(data) ? data : [];
+        renderProductLineOptions();
+      })
+      .catch(function (err) {
+        reportError("加载产品线失败", err);
+      });
+  }
+
+  function renderProductLineOptions() {
+    if (state.productLines.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无产品线</option>';
+      els.noPlHint.innerHTML = '还没有产品线，先去<a href="./product-lines.html">创建 →</a>';
+      els.noPlHint.hidden = false;
+      els.queueCard.hidden = true;
+      return;
+    }
+    els.plSelect.innerHTML = state.productLines.map(function (pl) {
+      return '<option value="' + escapeHtml(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
+    }).join("");
+    // Auto-select the first line: this page is meaningless without one.
+    els.plSelect.value = String(state.productLines[0].id);
+    selectProductLine(els.plSelect.value);
+  }
+
+  els.plSelect.addEventListener("change", function () {
+    selectProductLine(els.plSelect.value);
+  });
+
+  function selectProductLine(id) {
+    state.currentPL = findProductLine(id);
+    if (!state.currentPL) {
+      els.queueCard.hidden = true;
+      els.noPlHint.hidden = false;
+      return;
+    }
+    els.noPlHint.hidden = true;
+    els.queueCard.hidden = false;
+    // Kind options are derived from the loaded rows, so they belong to one line.
+    state.knownKinds = [];
+    state.kind = "";
+    renderKindOptions();
+    resetPaging();
+    loadViolations();
+  }
+
+  function findProductLine(id) {
+    for (var i = 0; i < state.productLines.length; i++) {
+      if (String(state.productLines[i].id) === String(id)) return state.productLines[i];
+    }
+    return null;
+  }
+
+  // ---------- Filters ----------
+  els.statusChips.addEventListener("click", function (e) {
+    var btn = e.target.closest("button.chip");
+    if (!btn) return;
+    state.status = btn.dataset.status || "";
+    syncStatusChips();
+    resetPaging();
+    loadViolations();
+  });
+
+  function syncStatusChips() {
+    var chips = els.statusChips.querySelectorAll("button.chip");
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].setAttribute("aria-pressed", (chips[i].dataset.status || "") === state.status ? "true" : "false");
+    }
+  }
+
+  els.kindSelect.addEventListener("change", function () {
+    state.kind = els.kindSelect.value;
+    resetPaging();
+    loadViolations();
+  });
+
+  els.enforcedOnly.addEventListener("change", function () {
+    state.enforcedOnly = els.enforcedOnly.checked;
+    resetPaging();
+    loadViolations();
+  });
+
+  els.refreshBtn.addEventListener("click", function () {
+    if (state.currentPL) loadViolations();
+    else loadProductLines();
+  });
+
+  els.prevBtn.addEventListener("click", function () {
+    if (state.offset <= 0) return;
+    state.offset = Math.max(0, state.offset - PAGE_SIZE);
+    loadViolations();
+  });
+
+  els.nextBtn.addEventListener("click", function () {
+    if (state.offset + PAGE_SIZE >= state.total) return;
+    state.offset += PAGE_SIZE;
+    loadViolations();
+  });
+
+  function resetPaging() {
+    state.offset = 0;
+    state.expanded = {};
+  }
+
+  function clearFilters() {
+    state.status = "pending";
+    state.kind = "";
+    state.enforcedOnly = false;
+    els.kindSelect.value = "";
+    els.enforcedOnly.checked = false;
+    syncStatusChips();
+    resetPaging();
+    loadViolations();
+  }
+
+  // A non-default filter set is the difference between "nothing matched" and
+  // "this product line has produced nothing at all".
+  function filtersActive() {
+    return state.status !== "pending" || state.kind !== "" || state.enforcedOnly;
+  }
+
+  // ---------- Load ----------
+  function violationsPath(params) {
+    var qs = [];
+    Object.keys(params).forEach(function (k) {
+      var v = params[k];
+      // Empty filters are omitted entirely rather than sent as blanks.
+      if (v === "" || v === null || v === undefined) return;
+      qs.push(encodeURIComponent(k) + "=" + encodeURIComponent(v));
+    });
+    return "/api/v1/product-lines/" + encodeURIComponent(state.currentPL.id) +
+      "/violations" + (qs.length ? "?" + qs.join("&") : "");
+  }
+
+  function loadViolations() {
+    if (!state.currentPL) return Promise.resolve();
+    state.loading = true;
+    els.emptyBox.hidden = true;
+    els.pager.hidden = true;
+    els.tableWrap.hidden = false;
+    els.tbody.innerHTML = '<tr><td colspan="7" class="loading-text">加载中…</td></tr>';
+
+    var plId = state.currentPL.id;
+    return api(violationsPath({
+      kind: state.kind,
+      review_status: state.status,
+      enforced: state.enforcedOnly ? "true" : "",
+      limit: PAGE_SIZE,
+      offset: state.offset
+    }))
+      .then(function (data) {
+        if (String(plId) !== String(state.currentPL.id)) return; // stale response
+        data = data || {};
+        state.items = Array.isArray(data.items) ? data.items : [];
+        state.total = typeof data.total === "number" ? data.total : state.items.length;
+
+        // The queue can shrink between pages as rows are reviewed out of the
+        // filter, stranding the operator past the last page. Snap back instead.
+        if (state.items.length === 0 && state.offset > 0) {
+          var lastOffset = Math.floor(Math.max(0, state.total - 1) / PAGE_SIZE) * PAGE_SIZE;
+          if (lastOffset < state.offset) {
+            state.offset = lastOffset;
+            return loadViolations();
+          }
+        }
+
+        collectKinds(state.items);
+        render();
+        if (state.items.length === 0) probeEmptyReason();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.tbody.innerHTML =
+          '<tr><td colspan="7" class="empty-state">加载失败：' + escapeHtml(err.message) + "</td></tr>";
+        els.totalPill.className = "pill muted";
+        els.totalPill.textContent = "—";
+        reportError("加载违规记录失败", err);
+      })
+      .finally(function () { state.loading = false; });
+  }
+
+  // Distinguishes an empty queue from a product line with no ontology activity
+  // at all. Only runs when the current page came back empty.
+  function probeEmptyReason() {
+    var plId = state.currentPL.id;
+    api(violationsPath({ limit: 1, offset: 0 }))
+      .then(function (data) {
+        if (String(plId) !== String(state.currentPL.id)) return;
+        var anyAtAll = data && typeof data.total === "number" ? data.total : 0;
+        renderEmptyState(anyAtAll > 0);
+      })
+      .catch(function () {
+        renderEmptyState(true);
+      });
+  }
+
+  function collectKinds(items) {
+    var changed = false;
+    items.forEach(function (v) {
+      if (v.kind && state.knownKinds.indexOf(v.kind) === -1) {
+        state.knownKinds.push(v.kind);
+        changed = true;
+      }
+    });
+    if (changed) renderKindOptions();
+  }
+
+  function renderKindOptions() {
+    var kinds = state.knownKinds.slice();
+    // Keep the active filter selectable even if this page holds none of it.
+    if (state.kind && kinds.indexOf(state.kind) === -1) kinds.push(state.kind);
+    kinds.sort(function (a, b) { return kindLabel(a).localeCompare(kindLabel(b), "zh-CN"); });
+    var html = ['<option value="">全部</option>'];
+    kinds.forEach(function (k) {
+      html.push('<option value="' + escapeHtml(k) + '">' + escapeHtml(kindLabel(k)) + "</option>");
+    });
+    els.kindSelect.innerHTML = html.join("");
+    els.kindSelect.value = state.kind;
+  }
+
+  function kindLabel(kind) {
+    return KIND_LABELS[kind] || kind || "—";
+  }
+
+  // ---------- Render ----------
+  function render() {
+    renderTotalPill();
+    if (state.items.length === 0) {
+      els.tableWrap.hidden = true;
+      els.pager.hidden = true;
+      // The empty copy itself is decided by probeEmptyReason.
+      return;
+    }
+    els.emptyBox.hidden = true;
+    els.tableWrap.hidden = false;
+    els.tbody.innerHTML = state.items.map(rowHtml).join("");
+    bindRows();
+    renderPager();
+  }
+
+  function renderTotalPill() {
+    var label = state.status ? STATUS_LABELS[state.status] || state.status : "全部";
+    els.totalPill.className = "pill " + (state.total > 0 ? "info" : "muted");
+    els.totalPill.textContent = label + " " + state.total + " 条";
+  }
+
+  function renderPager() {
+    var from = state.offset + 1;
+    var to = state.offset + state.items.length;
+    els.pageCount.textContent = "第 " + from + "–" + to + " 条 / 共 " + state.total + " 条";
+    els.prevBtn.disabled = state.offset <= 0;
+    els.nextBtn.disabled = state.offset + PAGE_SIZE >= state.total;
+    els.pager.hidden = false;
+  }
+
+  function renderEmptyState(hasAnyViolations) {
+    els.tableWrap.hidden = true;
+    els.pager.hidden = true;
+    if (!hasAnyViolations) {
+      els.emptyBox.className = "empty-state";
+      els.emptyBox.innerHTML =
+        '<span class="big">🗂️</span>' +
+        '<span class="title">该产品线还没有任何本体校验记录</span><br />' +
+        '需要先在<a href="./ontology.html">领域本体</a>发布本体，并把回答校验开到 shadow 或 enforce，' +
+        "AI 回答与本体冲突时才会在这里留下证据。";
+    } else if (state.status === "pending" && !state.kind && !state.enforcedOnly) {
+      els.emptyBox.className = "empty-state celebrate";
+      els.emptyBox.innerHTML =
+        '<span class="big">🎉</span>' +
+        '<span class="title">复核队列已清空</span><br />' +
+        "当前没有待复核的证据。切换到「全部」可以回看已复核的记录。";
+    } else {
+      els.emptyBox.className = "empty-state";
+      els.emptyBox.innerHTML =
+        '<span class="title">没有符合筛选条件的记录</span><br />' +
+        "换一组筛选条件，或清除筛选查看待复核队列。" +
+        '<div class="actions-row"><button id="clear-filters-btn">清除筛选</button></div>';
+      var btn = document.getElementById("clear-filters-btn");
+      if (btn) btn.addEventListener("click", clearFilters);
+    }
+    els.emptyBox.hidden = false;
+  }
+
+  function rowHtml(v) {
+    var id = String(v.id);
+    var expanded = !!state.expanded[id];
+    var status = v.review_status || "pending";
+    var statusPill = '<span class="pill ' + (STATUS_PILLS[status] || "muted") + '">' +
+      escapeHtml(STATUS_LABELS[status] || status) + "</span>";
+    var enforcedPill = v.enforced
+      ? '<span class="pill bad">拦截</span>'
+      : '<span class="pill muted">影子</span>';
+
+    return (
+      '<tr class="v-row' + (expanded ? " expanded" : "") + '" data-id="' + escapeHtml(id) + '">' +
+      "<td>" + escapeHtml(formatDate(v.created_at)) + "</td>" +
+      '<td><span class="pill" title="' + escapeHtml(v.kind || "") + '">' + escapeHtml(kindLabel(v.kind)) + "</span></td>" +
+      '<td class="prop">' +
+      (v.property ? '<code title="' + escapeHtml(v.property) + '">' + escapeHtml(v.property) + "</code>" : "—") +
+      "</td>" +
+      '<td class="msg">' + escapeHtml(v.message || "—") + "</td>" +
+      "<td>" + enforcedPill + "</td>" +
+      "<td>" + statusPill + "</td>" +
+      '<td class="actions-cell"><div class="row-actions">' +
+      '<button data-act="toggle">' + (expanded ? "收起" : "展开") + "</button>" +
+      reviewButtonsHtml(status) +
+      "</div></td>" +
+      "</tr>" +
+      '<tr class="detail-row" data-detail="' + escapeHtml(id) + '"' + (expanded ? "" : " hidden") + ">" +
+      '<td colspan="7">' + detailHtml(v) + "</td></tr>"
+    );
+  }
+
+  function reviewButtonsHtml(status) {
+    if (status && status !== "pending") {
+      return '<button data-act="review" data-status="pending">重开</button>';
+    }
+    return (
+      '<button data-act="review" data-status="ontology_wrong">本体错了</button>' +
+      '<button data-act="review" data-status="model_wrong">模型错了</button>' +
+      '<button data-act="review" data-status="false_positive">误报</button>'
+    );
+  }
+
+  function detailHtml(v) {
+    var meta = [];
+    if (v.property) meta.push("属性 <code>" + escapeHtml(v.property) + "</code>");
+    if (v.scope) meta.push("场景 <code>" + escapeHtml(v.scope) + "</code>");
+    if (v.ontology_version != null && v.ontology_version !== "") {
+      meta.push("本体版本 <code>v" + escapeHtml(v.ontology_version) + "</code>");
+    }
+    if (v.reviewed_by) {
+      meta.push("复核人 " + escapeHtml(v.reviewed_by) +
+        (v.reviewed_at ? " · " + escapeHtml(formatDate(v.reviewed_at)) : ""));
+    }
+
+    var convo = v.conversation_id
+      ? "会话 ID <code>" + escapeHtml(v.conversation_id) + "</code>" +
+        '<button class="copy-btn" data-act="copy" data-value="' + escapeHtml(v.conversation_id) + '">复制</button>'
+      : "";
+
+    return (
+      '<div class="detail">' +
+      '<div class="detail-cols">' +
+      '<div class="detail-col got"><h4>AI 回答给出（got）</h4>' +
+      valueHtml(v.got) + "</div>" +
+      '<div class="detail-col want"><h4>本体要求（want）</h4>' +
+      valueHtml(v.want) + "</div>" +
+      "</div>" +
+      (v.evidence
+        ? '<div class="evidence"><span class="lead">证据句</span><q>' + escapeHtml(v.evidence) + "</q></div>"
+        : "") +
+      '<div class="detail-meta">' +
+      (convo ? "<span>" + convo + "</span>" : "") +
+      meta.map(function (m) { return "<span>" + m + "</span>"; }).join("") +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function valueHtml(value) {
+    if (value === null || value === undefined || value === "") {
+      return '<div class="detail-val empty">未提供</div>';
+    }
+    return '<div class="detail-val">' + escapeHtml(value) + "</div>";
+  }
+
+  function bindRows() {
+    var rows = els.tbody.querySelectorAll("tr.v-row");
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].addEventListener("click", onRowClick);
+    }
+    var buttons = els.tbody.querySelectorAll("button[data-act]");
+    for (var j = 0; j < buttons.length; j++) {
+      buttons[j].addEventListener("click", onActionClick);
+    }
+  }
+
+  function onRowClick(e) {
+    if (e.target.closest("button")) return;
+    toggleDetail(this.dataset.id);
+  }
+
+  function onActionClick(e) {
+    e.stopPropagation();
+    var btn = e.currentTarget;
+    var act = btn.dataset.act;
+    if (act === "copy") {
+      copyText(btn.dataset.value);
+      return;
+    }
+    var row = btn.closest("tr");
+    var id = row && row.dataset.id;
+    if (!id) return;
+    if (act === "toggle") toggleDetail(id);
+    else if (act === "review") reviewViolation(id, btn.dataset.status, btn);
+  }
+
+  function toggleDetail(id) {
+    var open = !state.expanded[id];
+    if (open) state.expanded[id] = true;
+    else delete state.expanded[id];
+
+    var row = els.tbody.querySelector('tr.v-row[data-id="' + cssEscape(id) + '"]');
+    var detail = els.tbody.querySelector('tr.detail-row[data-detail="' + cssEscape(id) + '"]');
+    if (!row || !detail) return;
+    detail.hidden = !open;
+    row.classList.toggle("expanded", open);
+    var toggleBtn = row.querySelector('button[data-act="toggle"]');
+    if (toggleBtn) toggleBtn.textContent = open ? "收起" : "展开";
+  }
+
+  // ---------- Review ----------
+  function reviewViolation(id, status, btn) {
+    var row = btn.closest("tr");
+    setRowBusy(row, true);
+    var original = btn.textContent;
+    btn.textContent = "提交中…";
+
+    api("/api/v1/violations/" + encodeURIComponent(id) + "/review", {
+      method: "PUT",
+      body: JSON.stringify({ status: status })
+    })
+      .then(function (item) {
+        if (!item || item.id == null) throw new Error("复核响应异常");
+        replaceItem(item);
+        if (status === "ontology_wrong") {
+          toast("已标记为「本体错了」。请修正本体并重新发布，同类回答才会真正停止。", "success", {
+            href: "./ontology.html",
+            text: "前往领域本体 →"
+          });
+        } else if (status === "pending") {
+          toast("已重开，回到待复核队列", "success");
+        } else {
+          toast("已标记为「" + (STATUS_LABELS[status] || status) + "」", "success");
+        }
+      })
+      .catch(function (err) {
+        btn.textContent = original;
+        setRowBusy(row, false);
+        reportError("复核失败", err);
+      });
+  }
+
+  function setRowBusy(row, busy) {
+    if (!row) return;
+    var buttons = row.querySelectorAll("button");
+    for (var i = 0; i < buttons.length; i++) buttons[i].disabled = busy;
+  }
+
+  // Re-renders the whole page body so the row picks up its new status pill and
+  // action set while keeping every expanded panel open.
+  function replaceItem(item) {
+    for (var i = 0; i < state.items.length; i++) {
+      if (String(state.items[i].id) === String(item.id)) {
+        state.items[i] = item;
+        break;
+      }
+    }
+    els.tbody.innerHTML = state.items.map(rowHtml).join("");
+    bindRows();
+  }
+
+  // ---------- Clipboard ----------
+  // Falls back to a temporary textarea because the portal is often served over
+  // plain HTTP, where the async clipboard API is unavailable.
+  function copyText(text) {
+    if (!text) return;
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text)
+        .then(function () { toast("已复制会话 ID", "success"); })
+        .catch(function () { legacyCopy(text); });
+      return;
+    }
+    legacyCopy(text);
+  }
+
+  function legacyCopy(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove();
+    toast(ok ? "已复制会话 ID" : "复制失败，请手动选择", ok ? "success" : "warn");
+  }
+
+  // ---------- Utils ----------
+  function formatDate(iso) {
+    if (!iso) return "—";
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString("zh-CN", { hour12: false });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Row ids come from the server; quote them before use in a selector.
+  function cssEscape(str) {
+    return String(str).replace(/["\\]/g, "\\$&");
+  }
+
+  // ---------- Init ----------
+  syncStatusChips();
+  if (getToken()) {
+    showApp();
+    bootstrap();
+  } else {
+    showLogin();
+  }
+})();
+</script>

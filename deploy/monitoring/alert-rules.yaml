@@ -104,3 +104,59 @@ spec:
               for over 5 minutes. Customer conversations cannot be assigned.
             dashboard: "http://grafana.unica.local/d/agent-workspace/agent-workspace"
             runbook: "Check agent scheduling. Notify team leads to bring agents online."
+
+    # Answer-quality alerts. These watch the ontology enforcement loop and the
+    # channel credentials it depends on, rather than service liveness.
+    - name: unica-answer-quality
+      rules:
+        # AQ-1: Ontology enforcement circuit breaker tripped in the last 10 minutes.
+        # A trip means enforcement was suppressing so large a share of answers that
+        # the ontology itself is the more likely fault, not the model.
+        - alert: OntologyBreakerTripped
+          expr: increase(router_ontology_breaker_trips_total[10m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            team: ai
+          annotations:
+            summary: "产品线 {{ $labels.product_line }} 的本体校验已被熔断"
+            description: >
+              产品线 {{ $labels.product_line }} 在过去 10 分钟内触发了 {{ $value }} 次本体熔断。
+              熔断打开期间正确答案可能被大面积拦截，且违规答案会被放行给客户。
+            dashboard: "http://grafana.unica.local/d/unica-ontology-quality/unica-ontology-quality"
+            runbook: "检查最近发布的本体版本并考虑回滚（portal 领域本体页）。对比熔断前后的 router_claim_violations_total 分布，确认是本体规则误报还是模型答案退化。"
+
+        # AQ-2: Claim violation spike.
+        # UNVALIDATED THRESHOLD: 50 violations / 15m is a placeholder chosen before
+        # any production traffic has been observed. Recalibrate against the real
+        # violation baseline (see the ontology-quality dashboard) before trusting it.
+        - alert: ClaimViolationSpike
+          expr: sum(increase(router_claim_violations_total[15m])) > 50
+          for: 0m
+          labels:
+            severity: warning
+            team: ai
+          annotations:
+            summary: "本体违规数在 15 分钟内超过 50 次"
+            description: >
+              过去 15 分钟共记录 {{ $value }} 次答案与本体冲突。
+              可能是知识库内容过期、本体规则过严，或模型答案质量下降。
+            dashboard: "http://grafana.unica.local/d/unica-ontology-quality/unica-ontology-quality"
+            runbook: "按 kind 维度查看违规分布，定位是哪一类断言在冲突。确认当前处于 shadow 还是 enforce 模式后再决定是否回滚本体或修正知识库。"
+
+        # AQ-3: Channel token refresh exhausted all retries.
+        # The channel's credentials are effectively dead — outbound messages for
+        # that channel will stop flowing until the token can be refreshed again.
+        - alert: TokenRefreshExhausted
+          expr: increase(gateway_token_refresh_exhausted_total[15m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "渠道 {{ $labels.channel }} 令牌刷新重试全部失败"
+            description: >
+              渠道 {{ $labels.channel }} 在过去 15 分钟内有 {{ $value }} 次令牌刷新耗尽全部重试。
+              该渠道的凭证已不可用，消息收发将中断。
+            dashboard: "http://grafana.unica.local/d/unica-ontology-quality/unica-ontology-quality"
+            runbook: "核对渠道凭证（AppKey/AppSecret）是否过期或被吊销。失败详情见 Redis Stream unica:alerts 中 type=token_refresh_failure 的记录。"

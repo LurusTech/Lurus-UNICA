@@ -1,0 +1,230 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Ontology Quality Loop: claim violations, fact injection, enforcement circuit breaker, claim_conflict handoffs, and channel token refresh exhaustion",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "本体熔断状态（按产品线）",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "校验生效", "color": "green", "index": 0 },
+                "1": { "text": "熔断打开", "color": "red", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "router_ontology_breaker_open",
+          "legendFormat": "{{product_line}}"
+        }
+      ]
+    },
+    {
+      "title": "claim_conflict 转人工占比",
+      "type": "gauge",
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.3 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_guardrail_decisions_total{reason=\"claim_conflict\"}[5m])) / sum(rate(router_guardrail_decisions_total[5m]))",
+          "legendFormat": "claim_conflict 占比"
+        }
+      ]
+    },
+    {
+      "title": "令牌刷新耗尽（1 小时增量，按渠道）",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(gateway_token_refresh_exhausted_total[1h])) by (channel)",
+          "legendFormat": "{{channel}}"
+        }
+      ]
+    },
+    {
+      "title": "本体违规速率（按违规类型）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2, "stacking": { "mode": "normal" } }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_claim_violations_total[5m])) by (kind)",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "title": "本体违规速率（按校验模式 shadow / enforce）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_claim_violations_total[5m])) by (mode)",
+          "legendFormat": "{{mode}}"
+        }
+      ]
+    },
+    {
+      "title": "领域事实注入速率（按产品线）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_ontology_facts_injected_total[5m])) by (product_line)",
+          "legendFormat": "{{product_line}}"
+        }
+      ]
+    },
+    {
+      "title": "熔断跳闸与放行（1 小时增量）",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(router_ontology_breaker_trips_total[1h])) by (product_line)",
+          "legendFormat": "跳闸 {{product_line}}"
+        },
+        {
+          "expr": "sum(increase(router_ontology_breaker_bypassed_total[1h])) by (product_line)",
+          "legendFormat": "放行 {{product_line}}"
+        }
+      ]
+    },
+    {
+      "title": "claim_conflict 转人工 vs 全部护栏决策",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 21 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(router_guardrail_decisions_total{reason=\"claim_conflict\"}[5m]))",
+          "legendFormat": "claim_conflict"
+        },
+        {
+          "expr": "sum(rate(router_guardrail_decisions_total[5m]))",
+          "legendFormat": "全部护栏决策"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["unica", "router", "ontology", "quality"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "UNICA 本体质量闭环",
+  "uid": "unica-ontology-quality",
+  "version": 1
+}

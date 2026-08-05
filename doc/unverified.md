@@ -91,11 +91,24 @@ handler 测试全部打桩：`SetConfigKey` 的 `jsonb_build_object` 合并语�
 **要验证需要**：对任意真实库跑一遍 GET/PUT ontology-config 和 publish/
 rollback/GET ontology 全流程（第 5 期部署演练覆盖）。
 
-### 3.5.2 portal 本体页只对过 mock，没对过真实 admin
-页面对冻结 API 的 mock 全流程冒烟通过，字段名与 handler 逐一核对过，
-但没有和真实 admin + 真实登录态联调过。
+### 3.5.2 portal 本体页与复核页只对过 mock，没对过真实 admin
+两页均对冻结 API 的 mock 全流程冒烟通过（复核页 51/51），字段名与 handler
+逐一核对过，但没有和真实 admin + 真实登录态联调过。
 
-**要验证需要**：第 5 期部署后按页面路径走一遍真实发布与回滚。
+**要验证需要**：第 5 期部署后按页面路径走一遍真实发布/回滚/复核标注。
+
+### 3.5.3 迁移 013 与违规读/复核 SQL 未在真实数据库上跑过
+`013_claim_violation_review.sql` 从未重放；`ListViolations`（动态 WHERE +
+分页 + COUNT）、`ReviewViolation`（CASE 清空复核人）只有纯函数部分被测。
+
+**要验证需要**：全新库重放 13 个迁移 + 对真库过一遍列表/复核全流程（第 5 期）。
+
+### 3.5.4 告警阈值与仪表盘部署
+`ClaimViolationSpike` 的 50/15min 是占位阈值（规则文件里已标注），无数据支撑；
+新仪表盘 `ontology-quality.json` 尚未进 `dashboard-configmap.yaml`
+（该 configmap 靠手工命令生成，且此前已漏掉两块旧面板）。
+
+**要验证需要**：shadow 真实流量标定阈值；第 5 期部署时重新生成 configmap。
 
 ---
 

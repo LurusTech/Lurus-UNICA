@@ -45,6 +45,23 @@ func NewOntologyHandler(store ontologyStore, pls ontologyProductLines, logger *a
 	return &OntologyHandler{store: store, pls: pls, logger: logger}
 }
 
+// productLineScopeAllowed applies the product-line scoping rule shared by the
+// per-line resources: a non-superadmin may only touch lines in their claims.
+// A request without claims is left to the auth middleware; by the time a
+// handler runs it means a package-internal test, which gets superadmin scope.
+func productLineScopeAllowed(r *http.Request, plID string) bool {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil || claims.Role == string(rbac.RoleSuperAdmin) {
+		return true
+	}
+	for _, id := range claims.ProductLineIDs {
+		if id == plID {
+			return true
+		}
+	}
+	return false
+}
+
 // Handle dispatches /api/v1/product-lines/{id}/ontology[...] and
 // /api/v1/product-lines/{id}/ontology-config. The mux routes these sub-paths
 // here (gated by the AI-config permission) and everything else under the
@@ -67,21 +84,9 @@ func (h *OntologyHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Product-line scoping, same rule as the other per-line resources: a
-	// non-superadmin may only touch lines in their claims.
-	claims := auth.GetClaims(r.Context())
-	if claims != nil && claims.Role != string(rbac.RoleSuperAdmin) {
-		hasAccess := false
-		for _, id := range claims.ProductLineIDs {
-			if id == plID {
-				hasAccess = true
-				break
-			}
-		}
-		if !hasAccess {
-			ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
-			return
-		}
+	if !productLineScopeAllowed(r, plID) {
+		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+		return
 	}
 
 	switch segments[1] {
