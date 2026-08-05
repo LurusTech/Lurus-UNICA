@@ -21,6 +21,15 @@ const (
 	ReasonLowConfidence = "low_confidence"
 	ReasonKeywordMatch  = "keyword_match"
 	ReasonBlockedTopic  = "blocked_topic"
+	// ReasonClaimConflict is set when the answer contradicted the product line
+	// ontology. Like the two above it is a policy interception rather than a
+	// statement about retrieval quality, so it is not written back to the
+	// experience knowledge base as a failed sample.
+	ReasonClaimConflict = "claim_conflict"
+	// ReasonAIUnavailable is set when no answer was produced at all — the model
+	// call failed or came back empty. It is a availability failure, not a
+	// judgement about an answer, so it never feeds the experience KB.
+	ReasonAIUnavailable = "ai_unavailable"
 )
 
 // IsQualitySignal reports whether a handoff reason says anything about the
@@ -39,6 +48,12 @@ type EvalResult struct {
 	Reason         string   // "confidence_ok", "low_confidence", "keyword_match", "blocked_topic"
 	Confidence     float64  // The confidence score that was evaluated
 	MatchedKeyword string   // The keyword that triggered handoff (empty if not keyword-triggered)
+
+	// Detail explains the decision to the human agent who picks the conversation
+	// up. A confidence threshold needs no explanation, but "the answer said the
+	// return window is 7 days and this product line has none" does — without it
+	// the agent has to reconstruct why the AI was overruled.
+	Detail string
 }
 
 // Evaluator performs guardrail checks on AI responses before they are sent.

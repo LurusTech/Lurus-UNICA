@@ -14,6 +14,7 @@ import (
 
 	"github.com/kefu/unica/pkg/model"
 	"github.com/kefu/unica/router/internal/bridge"
+	"github.com/kefu/unica/router/internal/domain"
 	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/intent"
 	"github.com/kefu/unica/router/internal/marketing"
@@ -54,6 +55,7 @@ type Router struct {
 	chatwootForwarder *ChatwootForwarder
 	evaluator         *guardrail.Evaluator
 	triageMode        guardrail.TriageMode
+	ontology          *domain.Store
 	marketingTracker  *marketing.Tracker
 	surveyHandler     *survey.Handler
 	consumerGroup     string
@@ -123,6 +125,13 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		workers:           config.Workers,
 		stopCh:            make(chan struct{}),
 	}
+}
+
+// SetOntology wires the domain ontology store. Leaving it unset disables the
+// feature outright, which is the deployment-level kill switch; per-product-line
+// adoption is a separate decision made in config_json.
+func (r *Router) SetOntology(store *domain.Store) {
+	r.ontology = store
 }
 
 // Start begins consuming inbound messages with the configured number of workers.
@@ -461,13 +470,38 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	// Recall experience/knowledge context from the acest kb-server and inject
 	// it as Dify app variables. Fail-open: on error or timeout the inputs are
 	// simply absent and the Dify app proceeds without them.
+	var experienceInjected bool
 	if r.acest != nil {
 		experienceCtx, knowledgeCtx := r.recallKnowledge(ctx, query)
 		if experienceCtx != "" {
 			inputs["experience_context"] = experienceCtx
+			experienceInjected = true
 		}
 		if knowledgeCtx != "" {
 			inputs["knowledge_context"] = knowledgeCtx
+		}
+	}
+
+	// Domain ontology: deterministic facts for this product line, injected with
+	// a stated precedence over the retrieved context above. Both halves are
+	// opt-in per product line and both fail open — a product line that has not
+	// adopted the feature, or whose ontology cannot be loaded, proceeds exactly
+	// as it did before.
+	ontologyCfg := domain.LoadConfig(config.ConfigJSON)
+	var ontology *domain.Ontology
+	var ontologyVersion int
+	if r.ontology != nil && ontologyCfg.Active() {
+		var err error
+		ontology, ontologyVersion, err = r.ontology.Active(ctx, config.ProductLineID)
+		if err != nil {
+			log.Printf("[router] worker %d: ontology unavailable for product line %s: %v",
+				workerID, config.ProductLineID, err)
+		}
+	}
+	if ontology != nil && ontologyCfg.InjectFacts {
+		if facts := domain.Render(ontology); facts != "" {
+			inputs["facts_context"] = facts
+			metrics.OntologyFactsInjectedTotal.WithLabelValues(config.ProductLineID).Inc()
 		}
 	}
 
@@ -484,18 +518,42 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	if err != nil {
 		log.Printf("[router] worker %d: Dify API error for conversation %s: %v", workerID, convID, err)
 		metrics.DifyErrorsTotal.WithLabelValues("api_call").Inc()
+		r.handoffWithoutAnswer(ctx, config, msg, convID, workerID,
+			guardrail.ReasonAIUnavailable, "AI 服务调用失败："+err.Error())
 		return
 	}
 
 	if difyResp.Answer == "" {
 		log.Printf("[router] worker %d: Dify returned empty answer for conversation %s", workerID, convID)
 		metrics.DifyErrorsTotal.WithLabelValues("empty_answer").Inc()
+		r.handoffWithoutAnswer(ctx, config, msg, convID, workerID,
+			guardrail.ReasonAIUnavailable, "AI 返回了空回复")
 		return
 	}
+
+	// Strip [FACT:...] claim tags before anything else reads the answer. This
+	// runs regardless of configuration: a tag that reaches a customer is a defect
+	// even when nobody is checking the claims it carries.
+	claimResult := domain.ParseClaims(difyResp.Answer)
+	difyResp.Answer = claimResult.CleanedAnswer
 
 	// Marketing intent detection: parse [INTENT:xxx] tags and strip from customer-facing answer
 	detectResult := marketing.DetectIntents(difyResp.Answer)
 	difyResp.Answer = detectResult.CleanedAnswer
+
+	// Check the answer against the ontology. Shadow mode records and counts but
+	// decides nothing; only enforce overrides the guardrail below.
+	var violations []domain.Violation
+	if ontology != nil && ontologyCfg.Validates() {
+		violations = domain.Validate(ontology, claimResult.Claims, difyResp.Answer)
+		for _, v := range violations {
+			metrics.ClaimViolationsTotal.WithLabelValues(string(v.Kind), string(ontologyCfg.Validation)).Inc()
+		}
+		if len(violations) > 0 {
+			log.Printf("[router] worker %d: %d ontology violation(s) for conversation %s (mode=%s): %s",
+				workerID, len(violations), convID, ontologyCfg.Validation, domain.Summary(violations))
+		}
+	}
 
 	// Track detected intents in conversation metadata (non-blocking)
 	if len(detectResult.Intents) > 0 && r.marketingTracker != nil {
@@ -522,7 +580,11 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	}
 
 	// Calculate confidence score
-	confidence := CalculateConfidence(difyResp)
+	// Confidence must account for ontology grounding, not retrieval alone:
+	// injected facts produce no retriever_resources, so a retrieval-only score
+	// suppresses exactly the answers the ontology just made correct.
+	confidence := GroundedConfidence(difyResp,
+		evidenceFor(ontology, ontologyCfg, experienceInjected, claimResult.Claims, violations))
 	confidenceF32 := float32(confidence)
 
 	// Track retrieval metrics
@@ -553,6 +615,20 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	// Guardrail evaluation: decide whether to send AI response or trigger handoff
 	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
 	evalResult := r.evaluator.EvaluateWithMode(query, confidence, guardrailCfg, r.triageMode)
+
+	// A contradicted answer is wrong regardless of how well it retrieved, so
+	// enforcement overrides the confidence verdict rather than adjusting it.
+	// The agent receives the reason, not just the fact that they were handed a
+	// conversation the AI could have answered.
+	if ontologyCfg.Enforces() && len(violations) > 0 {
+		evalResult = &guardrail.EvalResult{
+			Decision:   guardrail.DecisionHandoff,
+			Reason:     guardrail.ReasonClaimConflict,
+			Confidence: 0,
+			Detail:     domain.Summary(violations),
+		}
+	}
+
 	metrics.GuardrailDecisionsTotal.WithLabelValues(string(evalResult.Decision), evalResult.Reason).Inc()
 
 	switch evalResult.Decision {
@@ -599,6 +675,13 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 			})
 		}
 	}
+
+	// Recorded last: the reply has already been published, so a slow or failing
+	// insert costs evidence rather than a customer's answer.
+	if len(violations) > 0 {
+		r.ontology.RecordViolations(ctx, convID, config.ProductLineID, ontologyVersion,
+			violations, ontologyCfg.Enforces())
+	}
 }
 
 // handoffBeforeAI routes a message to a human without calling the model.
@@ -613,16 +696,38 @@ func (r *Router) handoffBeforeAI(ctx context.Context, config *RouteConfig, msg *
 	}
 
 	metrics.IntentTriageHandoffTotal.WithLabelValues(string(triage.Class), triage.Reason).Inc()
-	metrics.GuardrailDecisionsTotal.WithLabelValues(string(evalResult.Decision), evalResult.Reason).Inc()
 
 	log.Printf("[router] worker %d: pre-dispatch triage handoff for conversation %s (class=%s, rule=%s, matched=%q)",
 		workerID, convID, triage.Class, triage.Reason, triage.Matched)
+
+	r.handoffWithoutAnswer(ctx, config, msg, convID, workerID, evalResult.Reason, evalResult.MatchedKeyword)
+}
+
+// handoffWithoutAnswer routes a conversation to a person when no AI answer
+// exists to deliver — because triage intercepted the message, or because the
+// model failed.
+//
+// The model-failure path matters more than it looks: before this, an API error
+// or an empty completion returned early, so the customer received nothing at
+// all and the only trace was a log line. The guardrail governs "this answer must
+// not be sent"; it had no answer to "there is no answer". During an outage
+// every conversation now reaches a person, which is the correct behaviour for a
+// customer service system even though it means a busy queue.
+func (r *Router) handoffWithoutAnswer(ctx context.Context, config *RouteConfig,
+	msg *model.StandardMessage, convID string, workerID int, reason, detail string) {
+
+	evalResult := &guardrail.EvalResult{
+		Decision: guardrail.DecisionHandoff,
+		Reason:   reason,
+		Detail:   detail,
+	}
+	metrics.GuardrailDecisionsTotal.WithLabelValues(string(evalResult.Decision), reason).Inc()
 
 	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
 	r.publishHoldingMessage(ctx, config, msg, convID, workerID, guardrailCfg.HoldingMessage)
 	r.publishHandoffEvent(ctx, msg, convID, config.ProductLineID, evalResult, "")
 
-	if err := r.stateManager.TransitionState(ctx, convID, state.StateHumanProcessing, "triage"); err != nil {
+	if err := r.stateManager.TransitionState(ctx, convID, state.StateHumanProcessing, "router"); err != nil {
 		log.Printf("[router] worker %d: failed to transition conversation %s to human_processing: %v",
 			workerID, convID, err)
 	}
@@ -792,7 +897,9 @@ type handoffEvent struct {
 	ConfidenceScore      float64 `json:"confidence_score"`
 	AIResponseSuppressed string  `json:"ai_response_suppressed"`
 	CustomerMessage      string  `json:"customer_message"`
-	Timestamp            string  `json:"timestamp"`
+	// Detail explains an overruled answer to the agent picking the conversation up.
+	Detail    string `json:"detail,omitempty"`
+	Timestamp string `json:"timestamp"`
 }
 
 // publishHandoffEvent publishes a handoff event to the unica:handoff stream.
@@ -805,6 +912,7 @@ func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMes
 		ConfidenceScore:      evalResult.Confidence,
 		AIResponseSuppressed: suppressedAnswer,
 		CustomerMessage:      msg.Data.Content.Text,
+		Detail:               evalResult.Detail,
 		Timestamp:            time.Now().UTC().Format(time.RFC3339),
 	}
 

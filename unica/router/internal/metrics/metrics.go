@@ -112,6 +112,25 @@ var (
 		Help: "Total handoffs triggered by pre-dispatch triage, before calling the AI",
 	}, []string{"class", "reason"})
 
+	// OntologyFactsInjectedTotal counts AI calls that carried a facts block, so
+	// adoption is visible per product line.
+	OntologyFactsInjectedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_ontology_facts_injected_total",
+		Help: "Total AI calls with a domain facts block injected",
+	}, []string{"product_line"})
+
+	// ClaimViolationsTotal counts answers that contradicted the ontology.
+	//
+	// This is the first counter in the service that measures correctness rather
+	// than a proxy for it: retrieval hit rate and confidence say whether
+	// something was found, not whether what the customer was told is true. The
+	// mode label keeps shadow observations separate from enforced ones so the
+	// two can be compared before enforcement is switched on.
+	ClaimViolationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_claim_violations_total",
+		Help: "Total answer claims that contradicted the product line ontology",
+	}, []string{"kind", "mode"})
+
 	// HandoffEventsProcessed counts total handoff events processed.
 	HandoffEventsProcessed = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "router_handoff_events_processed_total",

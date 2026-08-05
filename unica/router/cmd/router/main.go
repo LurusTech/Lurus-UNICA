@@ -17,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/kefu/unica/router/internal/bridge"
+	"github.com/kefu/unica/router/internal/domain"
 	"github.com/kefu/unica/router/internal/experience"
 	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/handoff"
@@ -76,7 +77,16 @@ func main() {
 		TriageMode:    cfg.triageMode,
 	}
 	log.Printf("[router] intent triage mode: %s", cfg.triageMode)
+
 	router := routing.NewRouter(rdb, db, stateManager, difyClient, routeCache, routerConfig)
+
+	if cfg.ontologyEnabled {
+		router.SetOntology(domain.NewStore(db, cfg.ontologyCacheTTL))
+		log.Printf("[router] domain ontology enabled (cache ttl %s); per-product-line opt-in via config_json.ontology",
+			cfg.ontologyCacheTTL)
+	} else {
+		log.Printf("[router] domain ontology disabled by ONTOLOGY_ENABLED")
+	}
 
 	// Wire the acest knowledge integration (experience playbook + external KB)
 	// when configured. Disabled entirely when ACEST_KB_URL is unset; recall
@@ -205,6 +215,11 @@ type config struct {
 	idleTimeout   time.Duration
 	triageMode    guardrail.TriageMode
 
+	// Domain ontology (disabled outright when ontologyEnabled is false; each
+	// product line still has to opt in via config_json).
+	ontologyEnabled  bool
+	ontologyCacheTTL time.Duration
+
 	// acest kb-server integration (disabled when acestURL is empty)
 	acestURL           string
 	acestToken         string
@@ -253,6 +268,16 @@ func loadConfig() config {
 		triageMode = guardrail.DefaultTriageMode
 	}
 	cfg.triageMode = triageMode
+
+	// Domain ontology. Enabled by default because it costs nothing until a
+	// product line opts in; ONTOLOGY_ENABLED=false is the switch for turning it
+	// off everywhere at once during an incident.
+	cfg.ontologyEnabled = envOrDefault("ONTOLOGY_ENABLED", "true") != "false"
+	ontologyTTL, err := time.ParseDuration(envOrDefault("ONTOLOGY_CACHE_TTL", "5m"))
+	if err != nil {
+		ontologyTTL = 5 * time.Minute
+	}
+	cfg.ontologyCacheTTL = ontologyTTL
 
 	// acest knowledge integration
 	cfg.acestURL = strings.TrimRight(os.Getenv("ACEST_KB_URL"), "/")

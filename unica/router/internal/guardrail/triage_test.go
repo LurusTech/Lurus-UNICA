@@ -129,6 +129,7 @@ func TestIsQualitySignal(t *testing.T) {
 		ReasonKeywordMatch,
 		ReasonBlockedTopic,
 		ReasonConfidenceOK,
+		ReasonClaimConflict,
 		"intent_transactional",
 		"intent_emotional",
 	} {
