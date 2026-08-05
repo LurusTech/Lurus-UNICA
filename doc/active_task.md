@@ -1,20 +1,17 @@
-# Active Task: 第 3 期——证据闭环与告警
-
-## Context
-违规证据可见、可复核、可回流；熔断/违规/令牌死信接入现有告警链路。
+# Active Task: 第 4 期——坐席省力 + 售前分诊 + 渠道防呆
 
 ## Step-by-Step Plan
-- [x] 1. 迁移 013（review_status 三态 + CHECK + 复核队列索引）+ pkg/domain
-      违规读/复核方法（WHERE 构造纯函数化并单测；分页补 id 决胜键）
-- [x] 2. admin violations handler（列表过滤分页 + 复核标注 + 审计 + scope）、
-      mux 按子资源分派、/api/v1/violations/ 新入口、9 个测试
-- [x] 3. portal/violations.html 复核队列 + index 卡片：待复核过滤、证据展开、
-      一键三态标注、重开、分页、三种空态；mock 冒烟 51/51
-- [x] 4. Grafana ontology-quality 面板（8 块，指标名逐一核对）+ 告警组
-      unica-answer-quality（熔断跳闸 critical / 违规激增 warning 占位阈值 /
-      令牌刷新耗尽 critical）+ gateway_token_refresh_exhausted_total 指标
-- [ ] 5. 验证：`-race` 全绿；提交推送 CI；unverified 已登记（§3.5.3/3.5.4）
-- [ ] 6. 汇报第 3 期
+- [x] 1. Chatwoot 私有备注增强：修复消费端 HandoffEvent 丢弃 Detail 字段的
+      两端漂移；备注改为中文底稿式（AI 交接摘要 + AI 草稿可改发 +
+      转人工原因中文标签 + 违规明细），buildHandoffNote 纯函数 + 3 组测试
+- [x] 2. 售前分诊零误伤：新增 45 个测试（35 售前 + 10 人工对照）；
+      修复 5 个子串碰撞误伤（315/工商/差评/真人/地址）与 2 个漏拦
+      （账号被盗、省略主语的"要退款"），假设语气防回收（如果/要是/的话）
+- [x] 3. 渠道创建防呆：admin 仅放行动态管线已接入平台（当前小红书），
+      400 说明原因与替代；存量行的改/停/删不受限；portal 下拉禁用标注
+      "（暂未接入）"；4 个测试
+- [ ] 4. 验证：全模块 build/test 已绿；`-race` 运行中；提交推送 CI
+- [ ] 5. 汇报第 4 期
 
 ## Current Status
 - [ ] In Progress（等 -race 与 CI）

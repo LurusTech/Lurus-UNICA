@@ -20,6 +20,33 @@ import (
 // copy should be refreshed or dropped.
 const channelConfigInvalidationChannel = "unica:config_invalidation"
 
+// dynamicallyServedPlatforms lists the platforms whose channel rows are actually
+// picked up and served by the gateway's dynamic channel pipeline.
+//
+// The gateway loads channel configs from the database (channelcfg.Loader) but only
+// wires adapters for the platforms listed here; every other platform is explicitly
+// skipped in the reload loop of unica/gateway/cmd/gateway/main.go. For the rest,
+// database rows are not served at all:
+//   - wechat / taobao / kuaishou: the gateway runs them from static environment
+//     variables and never reads these rows.
+//   - douyin: an adapter package exists but is not registered by the gateway.
+//
+// Creating a row for an unserved platform is therefore a silent no-op, so creation
+// is rejected. When a platform is wired into the gateway loop, add it here too.
+var dynamicallyServedPlatforms = map[string]bool{
+	"xiaohongshu": true,
+}
+
+// unservedPlatformCreateMessage explains why a channel cannot be created for a
+// platform the gateway does not serve from the database.
+const unservedPlatformCreateMessage = "该平台暂未接入后台动态渠道配置（当前支持：小红书）。微信/淘宝/快手请使用网关环境变量静态配置"
+
+// isDynamicallyServedPlatform reports whether the gateway serves channel rows of
+// this platform from the database.
+func isDynamicallyServedPlatform(platform string) bool {
+	return dynamicallyServedPlatforms[platform]
+}
+
 // channelConfigInvalidationMsg is the payload published on channel config changes.
 type channelConfigInvalidationMsg struct {
 	Type          string `json:"type"`
@@ -263,6 +290,13 @@ func (h *ChannelHandler) createChannel(w http.ResponseWriter, r *http.Request) {
 
 	if !channel.IsValidPlatform(req.Platform) {
 		ErrorJSON(w, http.StatusBadRequest, "invalid platform; must be one of: wechat, douyin, xiaohongshu, taobao, kuaishou")
+		return
+	}
+
+	// Only creation is gated. Existing rows of any platform stay editable,
+	// toggleable and deletable so operators can disable or clean up legacy configs.
+	if !isDynamicallyServedPlatform(req.Platform) {
+		ErrorJSON(w, http.StatusBadRequest, unservedPlatformCreateMessage)
 		return
 	}
 

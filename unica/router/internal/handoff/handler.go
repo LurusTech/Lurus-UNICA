@@ -39,7 +39,11 @@ type HandoffEvent struct {
 	ConfidenceScore      float64 `json:"confidence_score"`
 	AIResponseSuppressed string  `json:"ai_response_suppressed"`
 	CustomerMessage      string  `json:"customer_message"`
-	Timestamp            string  `json:"timestamp"`
+	// Detail explains an overruled answer (e.g. which ontology assertion it
+	// contradicted). The router has always published it; this side used to
+	// drop it on deserialization, so the agent never saw the evidence.
+	Detail    string `json:"detail,omitempty"`
+	Timestamp string `json:"timestamp"`
 }
 
 // HandoffHandler processes individual handoff events.
@@ -145,10 +149,11 @@ func (h *HandoffHandler) Handle(ctx context.Context, event *HandoffEvent) error 
 		}
 	}
 
-	// Step 7: Send intent summary as a private note
-	if summary != "" {
-		noteContent := fmt.Sprintf("**AI Handoff Summary**\n\n%s\n\n---\nReason: %s | Confidence: %.2f",
-			summary, event.Reason, event.ConfidenceScore)
+	// Step 7: Send the agent briefing as a private note: intent summary, the
+	// suppressed AI draft (most handoffs carry an answer that was nearly
+	// sendable — editing one beats writing from scratch), and the violation
+	// evidence when the answer was overruled.
+	if noteContent := buildHandoffNote(summary, event); noteContent != "" {
 		if err := h.chatwootClient.AddNote(ctx, *cwConfig, cwConvID, noteContent); err != nil {
 			log.Printf("[handoff] warning: failed to add summary note to Chatwoot conv %d: %v", cwConvID, err)
 			// Non-fatal: continue with message history
@@ -186,6 +191,60 @@ func (h *HandoffHandler) Handle(ctx context.Context, event *HandoffEvent) error 
 		convID, cwConvID, time.Since(start))
 
 	return nil
+}
+
+// reasonLabel translates a handoff reason code into the agent's language. The
+// raw code is still shown alongside it, because codes are what logs, metrics
+// and runbooks grep for.
+func reasonLabel(reason string) string {
+	switch {
+	case reason == "low_confidence":
+		return "置信度不足"
+	case reason == "claim_conflict":
+		return "回答与业务事实冲突，已被拦截"
+	case reason == "keyword_match":
+		return "命中转人工关键词"
+	case reason == "blocked_topic":
+		return "命中敏感话题"
+	case reason == "ai_unavailable":
+		return "AI 服务不可用"
+	case strings.HasPrefix(reason, "intent_"):
+		return "意图分诊判定需人工处理"
+	default:
+		return reason
+	}
+}
+
+// buildHandoffNote assembles the private note an agent reads before replying.
+// The goal is "edit one draft and send", not "reconstruct the conversation":
+// summary first, then the suppressed AI draft, then why it was suppressed.
+func buildHandoffNote(summary string, event *HandoffEvent) string {
+	var b strings.Builder
+
+	if summary != "" {
+		b.WriteString("**AI 交接摘要**\n\n")
+		b.WriteString(summary)
+	}
+
+	if event.AIResponseSuppressed != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("**AI 草稿（确认或修改后可直接发送）**\n\n")
+		b.WriteString(event.AIResponseSuppressed)
+	}
+
+	if b.Len() == 0 {
+		return ""
+	}
+
+	b.WriteString("\n\n---\n")
+	fmt.Fprintf(&b, "转人工原因：%s（%s，置信度 %.2f）", reasonLabel(event.Reason), event.Reason, event.ConfidenceScore)
+	if event.Detail != "" {
+		b.WriteString("\n违规明细：")
+		b.WriteString(event.Detail)
+	}
+	return b.String()
 }
 
 // generateSummaryBestEffort attempts to generate an AI summary with a timeout.

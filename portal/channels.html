@@ -224,11 +224,12 @@
         <label for="f-platform">平台</label>
         <select id="f-platform" required>
           <option value="xiaohongshu">小红书</option>
-          <option value="douyin">抖音</option>
-          <option value="wechat">微信</option>
-          <option value="taobao">淘宝</option>
-          <option value="kuaishou">快手</option>
+          <option value="douyin" disabled>抖音（暂未接入）</option>
+          <option value="wechat" disabled>微信（暂未接入）</option>
+          <option value="taobao" disabled>淘宝（暂未接入）</option>
+          <option value="kuaishou" disabled>快手（暂未接入）</option>
         </select>
+        <div class="hint">仅小红书已接入后台动态渠道配置；微信/淘宝/快手请使用网关环境变量静态配置</div>
       </div>
       <div class="field">
         <label for="f-display-name">显示名称</label>

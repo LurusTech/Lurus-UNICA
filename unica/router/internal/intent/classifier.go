@@ -49,15 +49,24 @@ type Result struct {
 func (r Result) NeedsHuman() bool { return r.Class != Informational }
 
 // escalationMarkers signal complaint, threat or regulatory escalation. These
-// take priority over every other rule.
+// take priority over every other rule, so no entry may be a substring of
+// ordinary shopping vocabulary. Three were: a bare "315" fires on any price or
+// model number carrying those digits ("3150的和2999的哪个更值得买"), a bare
+// "工商" fires on 工商银行 as a payment method, and a bare "差评" fires on a
+// shopper asking how good the reviews are. The hotline (12315), the regulator
+// (工商局) and the threat forms (给差评) keep the signal without the collisions.
 var escalationMarkers = []string{
-	"投诉", "曝光", "12315", "315", "工商", "消协", "消费者协会",
-	"律师", "起诉", "法院", "维权", "差评", "骗子", "欺诈", "坑人",
+	"投诉", "曝光", "12315", "315晚会", "工商局", "工商部门", "消协", "消费者协会",
+	"律师", "起诉", "法院", "维权", "骗子", "欺诈", "坑人",
+	"给差评", "打差评", "写差评", "去差评",
 }
 
-// humanRequestMarkers are explicit requests to speak to a person.
+// humanRequestMarkers are explicit requests to speak to a person. "真人" is
+// listed only in its agent-asking forms: on its own it also matches 真人试穿 and
+// 真人上身图, which are questions about the product, not about who answers.
 var humanRequestMarkers = []string{
-	"转人工", "人工客服", "找人工", "真人", "转接人工",
+	"转人工", "人工客服", "找人工", "转接人工",
+	"真人客服", "是真人吗", "有真人吗", "真人在吗",
 }
 
 // personalMarkers indicate the customer is asking about their own record.
@@ -66,9 +75,12 @@ var personalMarkers = []string{
 }
 
 // personalDataNouns are records the AI has no access to. Combined with a
-// personalMarker they mean a lookup, even when phrased as a question.
+// personalMarker they mean a lookup, even when phrased as a question. 账号 and
+// 账户 belong here because account trouble ("我的账号被盗了", "我的账号登录不上")
+// is a record the AI can neither read nor repair.
 var personalDataNouns = []string{
 	"订单", "快递", "物流", "包裹", "单号", "运单", "进度", "发票", "余额",
+	"账号", "账户",
 }
 
 // intentMarkers are first-person requests for someone to act. Deliberately
@@ -79,10 +91,27 @@ var intentMarkers = []string{
 }
 
 // actionNouns are the operations a customer asks to have performed. Bare "退" is
-// excluded: it matches consultative phrasing like "还能退吗".
+// excluded: it matches consultative phrasing like "还能退吗". Bare "地址" is
+// excluded for the same reason -- "给我发个线下门店的地址" asks where the shop is,
+// which is pre-sales -- so only the record-scoped forms are listed.
 var actionNouns = []string{
-	"退款", "退货", "换货", "退换", "改地址", "地址", "取消", "催发货", "催单",
-	"补发", "理赔", "开发票", "改单", "修改订单",
+	"退款", "退货", "换货", "退换", "改地址", "收货地址", "寄件地址", "地址改",
+	"取消", "催发货", "催单", "补发", "理赔", "开发票", "改单", "修改订单",
+}
+
+// demandPhrases carry their own verb, so they need no separate intent marker:
+// Chinese chat routinely drops the subject ("已经付款了没收到货要退款" for
+// "...我要退款"). They stay behind the same question and hypothetical guards as
+// the intent-marker rule, which is what keeps "要退货的话运费谁出" a consultation.
+var demandPhrases = []string{
+	"要退款", "要退货", "要换货", "要退钱",
+}
+
+// hypotheticalMarkers frame a situation the customer has not entered yet. A
+// shopper weighing a purchase asks "如果要退货运费谁出" before paying, so these
+// neutralise an action request exactly as a question marker does.
+var hypotheticalMarkers = []string{
+	"如果", "要是", "万一", "假如", "的话",
 }
 
 // questionMarkers indicate the message seeks information rather than action.
@@ -105,7 +134,8 @@ var consultVerbs = []string{
 //  2. explicit request for a human  -> Transactional
 //  3. personal marker + record noun -> Transactional, even if phrased as a
 //     question, because the answer requires data the AI cannot see
-//  4. intent marker + action noun, with no question marker -> Transactional
+//  4. intent marker + action noun, or a bare action demand, with neither a
+//     question nor a hypothetical marker -> Transactional
 //  5. otherwise                     -> Informational
 func Classify(message string) Result {
 	msg := strings.ToLower(strings.TrimSpace(message))
@@ -127,15 +157,20 @@ func Classify(message string) Result {
 		}
 	}
 
-	// A question marker or a consultative verb downgrades an action request to a
-	// consultation: the customer is asking whether or how, not asking us to do it.
+	// A question marker, a consultative verb or a hypothetical frame downgrades an
+	// action request to a consultation: the customer is asking whether, how, or
+	// what-if, not asking us to do it.
 	_, asking := firstMatch(msg, questionMarkers)
 	_, consulting := firstMatch(msg, consultVerbs)
-	if !asking && !consulting {
+	_, hypothetical := firstMatch(msg, hypotheticalMarkers)
+	if !asking && !consulting && !hypothetical {
 		if w, ok := firstMatch(msg, intentMarkers); ok {
 			if a, ok := firstMatch(msg, actionNouns); ok {
 				return Result{Class: Transactional, Reason: ReasonActionRequest, Matched: w + "+" + a}
 			}
+		}
+		if d, ok := firstMatch(msg, demandPhrases); ok {
+			return Result{Class: Transactional, Reason: ReasonActionRequest, Matched: d}
 		}
 	}
 
