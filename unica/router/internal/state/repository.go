@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -183,19 +184,53 @@ func (r *Repository) UpdateConversationState(ctx context.Context, id string, new
 }
 
 // CreateMessage inserts a new message record and returns its generated ID.
-func (r *Repository) CreateMessage(ctx context.Context, msg *Message) (string, error) {
+//
+// The second return value reports whether a row was actually written. A message
+// whose platform_msg_id is already stored is a redelivery of the same platform
+// message: nothing is inserted and the existing row's ID is returned with
+// inserted=false. Callers that treat that as an error would drop the message
+// instead, which is worse than storing it twice.
+//
+// ON CONFLICT carries no inference target on purpose. The dedup index is unique,
+// so it can only live on the leaf partitions, and a conflict target may only name
+// a constraint on the partitioned parent. The bare form matches whatever unique
+// index the row's own partition has, which is exactly the one wanted here.
+func (r *Repository) CreateMessage(ctx context.Context, msg *Message) (string, bool, error) {
 	var id string
 	err := r.db.QueryRowContext(ctx,
 		`INSERT INTO messages (conversation_id, direction, sender_type, content_json, platform_msg_id, confidence_score, correlation_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT DO NOTHING
 		 RETURNING id`,
 		msg.ConversationID, msg.Direction, msg.SenderType, msg.ContentJSON,
 		msg.PlatformMsgID, msg.ConfidenceScore, msg.CorrelationID,
 	).Scan(&id)
-	if err != nil {
-		return "", fmt.Errorf("create message: %w", err)
+	switch {
+	case err == nil:
+		return id, true, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", false, fmt.Errorf("create message: %w", err)
 	}
-	return id, nil
+
+	if msg.PlatformMsgID == nil || *msg.PlatformMsgID == "" {
+		// platform_msg_id is the only column under a unique index, and NULL never
+		// conflicts, so reaching here means the schema no longer matches this code.
+		return "", false, fmt.Errorf("create message: insert was skipped but the message carries no platform_msg_id")
+	}
+
+	// The conflict can only have happened in the partition the row would have
+	// landed in, so restricting to the current month lets the planner prune the
+	// other partitions away instead of probing all of them.
+	err = r.db.QueryRowContext(ctx,
+		`SELECT id FROM messages
+		 WHERE platform_msg_id = $1 AND created_at >= date_trunc('month', NOW())
+		 ORDER BY created_at DESC
+		 LIMIT 1`, *msg.PlatformMsgID,
+	).Scan(&id)
+	if err != nil {
+		return "", false, fmt.Errorf("create message: locate existing message %q: %w", *msg.PlatformMsgID, err)
+	}
+	return id, false, nil
 }
 
 // GetMessages retrieves messages for a conversation ordered by creation time.

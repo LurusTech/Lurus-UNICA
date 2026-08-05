@@ -55,4 +55,9 @@ CREATE TABLE messages_2026_04 PARTITION OF messages
     FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');
 
 CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at);
-CREATE UNIQUE INDEX idx_messages_platform_msg ON messages(platform_msg_id) WHERE platform_msg_id IS NOT NULL;
+
+-- The inbound dedup index is NOT declared here. A unique constraint on a
+-- partitioned table must contain every partition key column, and
+-- (platform_msg_id, created_at) would be unique for free: two deliveries of the
+-- same platform message never share a timestamp. Migration 012 builds it per
+-- partition instead, where uniqueness on platform_msg_id alone is legal.

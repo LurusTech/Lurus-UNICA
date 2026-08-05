@@ -312,9 +312,24 @@ func (r *Router) processMessage(ctx context.Context, entry redis.XMessage, worke
 	defer release()
 
 	// Handle inbound message via state manager (creates/finds customer + conversation, stores message)
-	convID, err := r.stateManager.HandleInboundMessage(ctx, &msg)
+	convID, duplicate, err := r.stateManager.HandleInboundMessage(ctx, &msg)
 	if err != nil {
 		log.Printf("[router] worker %d: state manager error for message %s: %v", workerID, entry.ID, err)
+		r.ack(ctx, entry.ID)
+		return
+	}
+
+	// The platform message is already stored, so this delivery is a repeat that
+	// the gateway's Redis dedup missed. Stopping here is what makes the database
+	// index a real backstop: without it the row would be deduplicated but the
+	// customer would still be charged for a second model call and receive a
+	// second answer. The one case this gives up on is a previous delivery that
+	// crashed after storing the message and before answering it — the same trade
+	// the Redis dedup already makes, since it also claims the key up front.
+	if duplicate {
+		log.Printf("[router] worker %d: message %s is a redelivery for conversation %s, skipping",
+			workerID, entry.ID, convID)
+		metrics.DuplicateMessagesTotal.Inc()
 		r.ack(ctx, entry.ID)
 		return
 	}
@@ -835,7 +850,9 @@ func (r *Router) publishAIResponse(ctx context.Context, config *RouteConfig, msg
 		ConfidenceScore: &confidenceF32,
 		CorrelationID:   strPtr(msg.Data.CorrelationID),
 	}
-	if _, err := r.stateManager.CreateMessage(ctx, aiMsg); err != nil {
+	// Outbound messages carry no platform_msg_id, and NULL never conflicts under
+	// the dedup index, so the insert flag holds no information here.
+	if _, _, err := r.stateManager.CreateMessage(ctx, aiMsg); err != nil {
 		log.Printf("[router] worker %d: failed to store AI response message: %v", workerID, err)
 	}
 

@@ -237,4 +237,30 @@ var (
 		Help:    "acest knowledge recall latency (both kinds combined)",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5},
 	})
+
+	// DuplicateMessagesTotal counts inbound messages the database rejected as a
+	// redelivery of a platform message already stored. A non-zero rate means the
+	// gateway's Redis dedup let something through, which is expected: it fails
+	// open on a Redis error and its keys expire.
+	DuplicateMessagesTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "router_messages_duplicate_total",
+		Help: "Total inbound messages skipped as duplicates of an already stored platform message",
+	})
+
+	// PartitionsCreatedTotal counts monthly partitions created by the router.
+	// Under normal operation this advances by a small number once a month; a flat
+	// line for more than a month means provisioning has stopped and the tables
+	// will run dry.
+	PartitionsCreatedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "router_partitions_created_total",
+		Help: "Total monthly partitions created by the router's partition maintainer",
+	})
+
+	// PartitionMaintenanceErrorsTotal counts failed provisioning passes. Alert on
+	// any increase: the failure is silent from the customer's side until the
+	// current month's partition is missing, at which point every message is lost.
+	PartitionMaintenanceErrorsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "router_partition_maintenance_errors_total",
+		Help: "Total failed partition provisioning passes",
+	})
 )

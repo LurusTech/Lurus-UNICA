@@ -154,7 +154,7 @@ POSTGRES_URL=... go run ./cmd/ontology publish -dir ../../deploy/config/ontology
 ```bash
 # 1. 基础设施（PostgreSQL + Redis），或使用 deploy/ 下的 K8s 清单
 # 2. 迁移
-psql $POSTGRES_URL -f unica/router/migrations/001_core_schema.sql   # 001~011 依次执行
+for f in unica/router/migrations/*.sql; do psql $POSTGRES_URL -v ON_ERROR_STOP=1 -f $f; done
 
 # 3. 各服务（每个模块独立 go.mod）
 cd unica/gateway && go build ./... && ./gateway   # 同理 router/admin/reporter
@@ -171,12 +171,40 @@ cd unica/gateway && go build ./... && ./gateway   # 同理 router/admin/reporter
 | `ACEST_KB_URL` / `ACEST_KB_TOKEN` | router | acest 双知识库（可选，见上文） |
 | `INTENT_TRIAGE` | router | 调用 AI 前的意图分诊：`off`（旧关键词行为）/ `shadow`（默认，只记录指标不改判定）/ `on`（分诊决定路由，关键词表退役） |
 | `ONTOLOGY_ENABLED` | router | 领域本体总开关（默认 `true`）。逐产品线在 `config_json.ontology` 里开通，见 [`doc/ontology-schema.md`](doc/ontology-schema.md) |
+| `PARTITION_MONTHS_AHEAD` / `PARTITION_CHECK_INTERVAL` | router | `messages`、`audit_logs` 月分区自动续期（默认提前 3 个月、每 24h 检查）。见下文 |
 | `JWT_SECRET` | admin | 后台鉴权 |
+
+## 分区与保留
+
+`messages` 与 `audit_logs` 按月 RANGE 分区。**分区由 router 自己续期**（启动时一次 + 每 24h），
+不再依赖外部 cron —— 缺分区不是降级而是硬失败：插入直接报
+`no partition of relation ... found for row`，router 会 ack 并丢消息。
+监控 `router_partition_maintenance_errors_total`，任何增长都要告警。
+写 `audit_logs` 的是 admin，续期的是 router —— 只部署 admin 不部署 router 时，
+需要自行跑下面的维护脚本。
+
+入站去重的唯一索引建在**每个叶子分区**上（分区表的唯一约束必须含分区键，
+而 `(platform_msg_id, created_at)` 恒不重复、等于没有约束），因此去重窗口是一个自然月。
+它是 gateway Redis 去重（fail-open + TTL）的持久化兜底；命中时 router 跳过模型调用，
+计入 `router_messages_duplicate_total`。
+
+数据保留仍是显式操作，不放进服务：
+
+```bash
+psql $POSTGRES_URL -f unica/scripts/maintain_partitions.sql   # audit_logs 保留 90 天
+```
 
 ## 测试
 
 ```bash
 cd unica/<module> && go build ./... && go vet ./... && go test ./...
+```
+
+带数据库的集成测试默认跳过，需显式指定一个**可写的测试库**（不复用 `POSTGRES_URL`）：
+
+```bash
+ROUTER_TEST_POSTGRES_URL="postgres://...@localhost:5432/unica_test?sslmode=disable" \
+  go test ./internal/state/ -count=1
 ```
 
 ## 监控

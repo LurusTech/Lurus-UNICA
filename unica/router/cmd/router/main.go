@@ -66,6 +66,12 @@ func main() {
 	}
 	stateManager := state.NewManager(repo, cache, managerConfig)
 
+	// Keep the monthly partitions of messages and audit_logs provisioned ahead of
+	// the clock. Started before the workers: an insert into a month with no
+	// partition fails outright, and the router acks and drops the message.
+	partitions := state.NewPartitionMaintainer(db, cfg.partitionInterval, cfg.partitionMonthsAhead)
+	partitions.Start(ctx)
+
 	// Create routing components
 	routeCache := routing.NewRouteCache(rdb, db, cfg.routeCacheTTL)
 	difyClient := bridge.NewDifyClient()
@@ -189,6 +195,7 @@ func main() {
 
 	// Phase 4: Stop state manager
 	stateManager.Stop()
+	partitions.Stop()
 
 	// Phase 4b: Stop experience collector (best-effort feedback loop)
 	if expCollector != nil {
@@ -214,6 +221,10 @@ type config struct {
 	port          string
 	idleTimeout   time.Duration
 	triageMode    guardrail.TriageMode
+
+	// Monthly partition provisioning for messages and audit_logs.
+	partitionInterval    time.Duration
+	partitionMonthsAhead int
 
 	// Domain ontology (disabled outright when ontologyEnabled is false; each
 	// product line still has to opt in via config_json).
@@ -256,6 +267,20 @@ func loadConfig() config {
 		idleTimeout = 30 * time.Minute
 	}
 	cfg.idleTimeout = idleTimeout
+
+	// Partition provisioning. The defaults are deliberately generous rather than
+	// tunable-by-necessity: three months of headroom means the tables only run dry
+	// after a quarter of downtime, and a daily pass costs one catalog query.
+	partitionInterval, err := time.ParseDuration(envOrDefault("PARTITION_CHECK_INTERVAL", "24h"))
+	if err != nil {
+		partitionInterval = state.DefaultPartitionInterval
+	}
+	cfg.partitionInterval = partitionInterval
+	monthsAhead, err := strconv.Atoi(envOrDefault("PARTITION_MONTHS_AHEAD", "3"))
+	if err != nil || monthsAhead < 1 {
+		monthsAhead = state.DefaultPartitionMonthsAhead
+	}
+	cfg.partitionMonthsAhead = monthsAhead
 
 	// Pre-dispatch intent triage. Defaults to shadow: classifications are
 	// recorded as metrics but every routing decision stays with the legacy rules,

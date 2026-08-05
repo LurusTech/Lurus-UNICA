@@ -113,7 +113,7 @@ func TestHandleInboundMessage_NilMessage(t *testing.T) {
 	cfg := DefaultManagerConfig()
 	m := NewManager(nil, nil, cfg)
 
-	_, err := m.HandleInboundMessage(context.Background(), nil)
+	_, _, err := m.HandleInboundMessage(context.Background(), nil)
 	if err == nil {
 		t.Error("expected error for nil message")
 	}

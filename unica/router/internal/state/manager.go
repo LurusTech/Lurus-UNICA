@@ -75,33 +75,38 @@ func (m *Manager) Stop() {
 
 // HandleInboundMessage processes an inbound message: finds or creates the customer
 // and conversation, stores the message, and returns the conversation ID.
-func (m *Manager) HandleInboundMessage(ctx context.Context, msg *model.StandardMessage) (string, error) {
+//
+// The second return value reports that the platform message was already stored,
+// meaning this is a redelivery the gateway's Redis dedup did not catch — it fails
+// open on a Redis error and its keys expire. The conversation ID is still valid;
+// what the caller should skip is answering the message a second time.
+func (m *Manager) HandleInboundMessage(ctx context.Context, msg *model.StandardMessage) (string, bool, error) {
 	if msg == nil {
-		return "", fmt.Errorf("message must not be nil")
+		return "", false, fmt.Errorf("message must not be nil")
 	}
 
 	platformUserID := msg.Data.PlatformMeta.PlatformUserID
 	channelID := msg.Data.ChannelID
 	if platformUserID == "" || channelID == "" {
-		return "", fmt.Errorf("platform_user_id and channel_id are required")
+		return "", false, fmt.Errorf("platform_user_id and channel_id are required")
 	}
 
 	// Find or create customer
 	customerID, err := m.findOrCreateCustomer(ctx, platformUserID, channelID, "")
 	if err != nil {
-		return "", fmt.Errorf("find/create customer: %w", err)
+		return "", false, fmt.Errorf("find/create customer: %w", err)
 	}
 
 	// Find active conversation or create a new one
 	convID, err := m.findOrCreateConversation(ctx, customerID, channelID, msg.Data.ProductLineID)
 	if err != nil {
-		return "", fmt.Errorf("find/create conversation: %w", err)
+		return "", false, fmt.Errorf("find/create conversation: %w", err)
 	}
 
 	// Store the message
 	contentJSON, err := json.Marshal(msg.Data.Content)
 	if err != nil {
-		return "", fmt.Errorf("marshal content: %w", err)
+		return "", false, fmt.Errorf("marshal content: %w", err)
 	}
 
 	dbMsg := &Message{
@@ -115,13 +120,18 @@ func (m *Manager) HandleInboundMessage(ctx context.Context, msg *model.StandardM
 		dbMsg.PlatformMsgID = strPtr(msg.Data.PlatformMsgID)
 	}
 
-	_, err = m.repo.CreateMessage(ctx, dbMsg)
+	_, inserted, err := m.repo.CreateMessage(ctx, dbMsg)
 	if err != nil {
-		return "", fmt.Errorf("create message: %w", err)
+		return "", false, fmt.Errorf("create message: %w", err)
+	}
+	if !inserted {
+		log.Printf("[state] inbound message %s already stored for conversation %s, treating as redelivery",
+			msg.Data.PlatformMsgID, convID)
+		return convID, true, nil
 	}
 
 	log.Printf("[state] handled inbound message for conversation %s (customer=%s)", convID, customerID)
-	return convID, nil
+	return convID, false, nil
 }
 
 // TransitionState validates and performs a state transition on a conversation,
@@ -350,8 +360,9 @@ func (m *Manager) GetConversation(ctx context.Context, convID string) (*Conversa
 	return m.repo.GetConversation(ctx, convID)
 }
 
-// CreateMessage stores a message in the database and returns the generated ID.
-func (m *Manager) CreateMessage(ctx context.Context, msg *Message) (string, error) {
+// CreateMessage stores a message in the database and returns the generated ID
+// and whether a row was written. See Repository.CreateMessage.
+func (m *Manager) CreateMessage(ctx context.Context, msg *Message) (string, bool, error) {
 	return m.repo.CreateMessage(ctx, msg)
 }
 
