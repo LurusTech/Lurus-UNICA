@@ -1,17 +1,10 @@
-# Active Task: 第 4 期——坐席省力 + 售前分诊 + 渠道防呆
+# Active Task: （无进行中任务）
 
-## Step-by-Step Plan
-- [x] 1. Chatwoot 私有备注增强：修复消费端 HandoffEvent 丢弃 Detail 字段的
-      两端漂移；备注改为中文底稿式（AI 交接摘要 + AI 草稿可改发 +
-      转人工原因中文标签 + 违规明细），buildHandoffNote 纯函数 + 3 组测试
-- [x] 2. 售前分诊零误伤：新增 45 个测试（35 售前 + 10 人工对照）；
-      修复 5 个子串碰撞误伤（315/工商/差评/真人/地址）与 2 个漏拦
-      （账号被盗、省略主语的"要退款"），假设语气防回收（如果/要是/的话）
-- [x] 3. 渠道创建防呆：admin 仅放行动态管线已接入平台（当前小红书），
-      400 说明原因与替代；存量行的改/停/删不受限；portal 下拉禁用标注
-      "（暂未接入）"；4 个测试
-- [ ] 4. 验证：全模块 build/test 已绿；`-race` 运行中；提交推送 CI
-- [ ] 5. 汇报第 4 期
+第 3 期（证据闭环与告警，commit e754f92）与第 4 期（坐席省力 + 售前分诊 +
+渠道防呆，commit 1eba232）均已交付，CI 与 `-race` 全绿。
 
-## Current Status
-- [ ] In Progress（等 -race 与 CI）
+下一增量（第 5 期，最后一期）：部署演练——WSL/预览环境重部署（迁移 013 重放、
+Grafana configmap 重生成）、DeepSeek 模型接入 Dify 供测试（环境变量
+deepseek-api-key，模型 deepseek-v4-flash）、黄金集重跑存新基线、
+portal 三页对真实 admin 联调、模拟多轮对话演练。完成后剩余未验证事项
+只剩"真实客户流量"一类（见 doc/unverified.md）。
