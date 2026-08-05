@@ -205,6 +205,10 @@ psql $POSTGRES_URL -f unica/scripts/maintain_partitions.sql   # audit_logs 保�
 cd unica/<module> && go build ./... && go vet ./... && go test ./...
 ```
 
+**测试全绿不等于验证过。** 哪些能力已交付但还没有证据支持——零真实流量、
+`router.go` 消息处理路径无覆盖、熔断阈值没有数据支撑、`-race` 未跑过等——
+登记在 [`doc/unverified.md`](doc/unverified.md)。先读那个再判断能上线到什么程度。
+
 带数据库的集成测试默认跳过，需显式指定一个**可写的测试库**（不复用 `POSTGRES_URL`）：
 
 ```bash
