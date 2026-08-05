@@ -9,7 +9,7 @@ import (
 // loaded by the test suite rather than by the router: their job is to keep the
 // model honest about being domain-neutral, which is a claim that has to be
 // exercised rather than asserted.
-const exampleDir = "../../../../deploy/config/ontology/examples"
+const exampleDir = "../../../deploy/config/ontology/examples"
 
 func loadExamples(t *testing.T) []*Ontology {
 	t.Helper()

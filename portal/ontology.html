@@ -1,0 +1,994 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>领域本体 - UNICA 统一管理门户</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --text: #1a1d24;
+    --text-muted: #6b7280;
+    --border: #e2e5ea;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --ok: #16a34a;
+    --bad: #dc2626;
+    --warn: #d97706;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+      --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+      --row-hover: #1e222b;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+    --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+    --row-hover: #1e222b;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f8; --surface: #ffffff; --text: #1a1d24; --text-muted: #6b7280;
+    --border: #e2e5ea; --primary: #2563eb; --primary-hover: #1d4ed8;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1200px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  input:disabled, select:disabled, textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  input[type="checkbox"] { width: auto; padding: 0; }
+  textarea { resize: vertical; min-height: 90px; }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+  .hint.warn { color: var(--warn); }
+
+  /* Login screen */
+  #login-view {
+    max-width: 380px; margin: 10vh auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; box-shadow: var(--shadow);
+  }
+  #login-view h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  #login-view p.sub { color: var(--text-muted); margin: 0 0 22px; font-size: 0.88rem; }
+  #login-error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
+  }
+
+  /* App view */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 20px; }
+  .toolbar .field { margin-bottom: 0; min-width: 240px; }
+  .toolbar .spacer { flex: 1; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 24px; box-shadow: var(--shadow); margin-bottom: 20px;
+  }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 4px;
+  }
+  .card h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  .card h3 { margin: 20px 0 8px; font-size: 0.9rem; font-weight: 600; }
+  .card-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 18px; line-height: 1.6; }
+
+  .flow-hint {
+    background: color-mix(in srgb, var(--primary) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+    border-radius: 12px; padding: 12px 16px; font-size: 0.85rem; margin-bottom: 16px;
+    line-height: 1.7; color: var(--text);
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 0.85em; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 5px;
+  }
+
+  textarea.mono {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 0.84rem; line-height: 1.6; min-height: 360px; tab-size: 2;
+    white-space: pre; overflow-wrap: normal; overflow-x: auto;
+  }
+  .actions-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+  .actions-row .spacer { flex: 1; }
+
+  .result-box {
+    margin-top: 14px; border-radius: 10px; padding: 12px 14px; font-size: 0.82rem;
+    line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+    max-height: 260px; overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Courier New", monospace;
+  }
+  .result-box.bad {
+    background: color-mix(in srgb, var(--bad) 10%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+  }
+  .result-box.ok {
+    background: color-mix(in srgb, var(--ok) 10%, transparent); color: var(--ok);
+    border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
+    font-family: inherit;
+  }
+  pre.rendered {
+    margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; font-size: 0.82rem; line-height: 1.6; max-height: 320px; overflow: auto;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Courier New", monospace;
+  }
+  .publish-row {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+    margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border);
+  }
+  .publish-row .field { margin-bottom: 0; flex: 1; min-width: 240px; }
+
+  .table-wrap {
+    border: 1px solid var(--border); border-radius: 12px; overflow-x: auto;
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 620px; }
+  th, td { text-align: left; padding: 11px 16px; font-size: 0.88rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.note { white-space: normal; max-width: 360px; color: var(--text-muted); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row-actions button { padding: 5px 10px; font-size: 0.78rem; }
+  .empty-state { padding: 40px 16px; text-align: center; color: var(--text-muted); }
+  .empty-state a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .empty-state a:hover { text-decoration: underline; }
+
+  .switch-row { display: flex; align-items: center; gap: 10px; }
+  .switch-row label { margin-bottom: 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+  details.advanced {
+    margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px;
+  }
+  details.advanced > summary {
+    cursor: pointer; font-size: 0.85rem; font-weight: 500; color: var(--text-muted);
+    list-style: revert; margin-bottom: 4px;
+  }
+  details.advanced > summary:hover { color: var(--primary); }
+  details.advanced .grid { margin-top: 14px; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  .toast.warn { border-left-color: var(--warn); }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" href="./index.html">← 返回首页</a>
+    <h1>领域本体</h1>
+  </div>
+  <div id="user-info" hidden>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <!-- Login view -->
+  <section id="login-view">
+    <h2>登录</h2>
+    <p class="sub">请使用管理账号登录以管理领域本体</p>
+    <div id="login-error"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
+    </form>
+  </section>
+
+  <!-- App view -->
+  <section id="app-view" hidden>
+    <div class="toolbar">
+      <div class="field">
+        <label for="pl-select">产品线</label>
+        <select id="pl-select"><option value="">请选择产品线</option></select>
+      </div>
+      <div class="spacer"></div>
+      <button id="refresh-btn">刷新</button>
+    </div>
+
+    <div class="card empty-state" id="no-pl-hint">请先在上方选择一条产品线</div>
+
+    <div id="panels" hidden>
+      <!-- Ontology editor -->
+      <div class="card">
+        <div class="card-head">
+          <h2>本体编辑</h2>
+          <span class="pill muted" id="active-pill">未发布</span>
+        </div>
+        <p class="card-sub" id="active-meta">本体声明本产品线的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。</p>
+
+        <div class="flow-hint" id="empty-hint" hidden>
+          该产品线还没有发布过本体。编写指南见仓库中的 <code>doc/ontology-schema.md</code>，
+          建议先从最小可用本体开始，校验通过后再发布。
+        </div>
+
+        <div id="editor-loading" class="loading-text">加载中…</div>
+
+        <div id="editor-body" hidden>
+          <label for="yaml-editor">本体 YAML</label>
+          <textarea id="yaml-editor" class="mono" spellcheck="false"
+            placeholder="product_line: 产品线名称&#10;version: 1&#10;&#10;properties:&#10;  ...&#10;&#10;assertions:&#10;  - ..."></textarea>
+
+          <div class="actions-row">
+            <button class="primary" id="validate-btn">校验</button>
+            <span class="spacer"></span>
+            <span class="hint" id="editor-hint"></span>
+          </div>
+
+          <div class="result-box" id="validate-result" hidden></div>
+
+          <div id="preview-block" hidden>
+            <h3>渲染预览</h3>
+            <pre class="rendered" id="preview-pre"></pre>
+            <div class="hint" id="preview-stats"></div>
+          </div>
+
+          <div class="publish-row">
+            <div class="field">
+              <label for="publish-note">发布备注</label>
+              <input id="publish-note" placeholder="例如：补充退货时效与加急口径" />
+            </div>
+            <button class="primary" id="publish-btn">发布</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Version history -->
+      <div class="card">
+        <div class="card-head">
+          <h2>版本历史</h2>
+        </div>
+        <p class="card-sub">发布后旧版本保留，可随时回滚。回滚只切换生效版本，不会删除任何版本。</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>版本</th>
+                <th>状态</th>
+                <th>备注</th>
+                <th>创建时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="version-tbody">
+              <tr><td colspan="5" class="loading-text">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Switches -->
+      <div class="card">
+        <div class="card-head">
+          <h2>开关</h2>
+        </div>
+        <p class="card-sub">控制本体是否参与回答生成，以及校验的严格程度。</p>
+
+        <div id="config-loading" class="loading-text">加载中…</div>
+
+        <form id="config-form" hidden>
+          <div class="field">
+            <div class="switch-row">
+              <input type="checkbox" id="f-inject-facts" />
+              <label for="f-inject-facts">注入领域事实（inject_facts）</label>
+            </div>
+            <div class="hint">关闭后 AI 回答不再携带本体事实，校验也随之失效。</div>
+          </div>
+
+          <div class="field">
+            <label for="f-validation">回答校验（validation）</label>
+            <select id="f-validation">
+              <option value="off">off — 不校验</option>
+              <option value="shadow">shadow — 只记录</option>
+              <option value="enforce">enforce — 拦截转人工</option>
+            </select>
+            <div class="hint">
+              <strong>off</strong>：不校验，本体只做事实注入。<br />
+              <strong>shadow</strong>：照常回答，只把与本体冲突的回答记录下来，用于上线前观察判定准不准。<br />
+              <strong>enforce</strong>：与本体冲突的回答被拦截并转人工，受下方熔断保护——冲突比例过高时自动停止拦截并告警。
+            </div>
+            <div class="hint warn" id="validation-guard-hint" hidden>
+              未开启「注入领域事实」时无法启用校验：校验依赖注入的事实，已锁定为 off。
+            </div>
+          </div>
+
+          <details class="advanced">
+            <summary>高级：熔断参数</summary>
+            <div class="hint">
+              熔断是 enforce 的上限：滑动窗口内被拦截的比例达到阈值就自动停止拦截并告警，避免一条写错的断言把人工队列打爆。
+              留空即使用默认值。
+            </div>
+            <div class="field switch-row" style="margin-top:14px">
+              <input type="checkbox" id="f-breaker-disabled" />
+              <label for="f-breaker-disabled">关闭熔断（disabled）——让 enforce 无上限拦截</label>
+            </div>
+            <div class="grid">
+              <div class="field">
+                <label for="f-trip-rate">熔断阈值 trip_rate</label>
+                <input id="f-trip-rate" type="number" min="0.01" max="1" step="0.01" placeholder="0.25" />
+                <div class="hint">窗口内被拦截比例达到此值即熔断</div>
+              </div>
+              <div class="field">
+                <label for="f-min-samples">最小样本数 min_samples</label>
+                <input id="f-min-samples" type="number" min="1" step="1" placeholder="20" />
+                <div class="hint">少于这么多样本不作判断</div>
+              </div>
+              <div class="field">
+                <label for="f-window">统计窗口 window</label>
+                <input id="f-window" type="number" min="1" step="1" placeholder="100" />
+                <div class="hint">统计最近多少条已校验回答，不小于最小样本数</div>
+              </div>
+              <div class="field">
+                <label for="f-cooldown">冷却时长 cooldown_seconds</label>
+                <input id="f-cooldown" type="number" min="1" step="1" placeholder="900" />
+                <div class="hint">停止拦截多久后重新评估（秒）</div>
+              </div>
+            </div>
+          </details>
+
+          <div class="actions-row">
+            <button type="submit" class="primary" id="config-submit">保存</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN_KEY = "unica_access_token";
+
+  var state = {
+    productLines: [],
+    currentPL: null,
+    ontology: null,
+    lastValidYaml: null,
+    stashedValidation: null
+  };
+
+  var els = {
+    loginView: document.getElementById("login-view"),
+    appView: document.getElementById("app-view"),
+    loginForm: document.getElementById("login-form"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
+    userInfo: document.getElementById("user-info"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+
+    plSelect: document.getElementById("pl-select"),
+    refreshBtn: document.getElementById("refresh-btn"),
+    noPlHint: document.getElementById("no-pl-hint"),
+    panels: document.getElementById("panels"),
+
+    activePill: document.getElementById("active-pill"),
+    activeMeta: document.getElementById("active-meta"),
+    emptyHint: document.getElementById("empty-hint"),
+    editorLoading: document.getElementById("editor-loading"),
+    editorBody: document.getElementById("editor-body"),
+    yamlEditor: document.getElementById("yaml-editor"),
+    editorHint: document.getElementById("editor-hint"),
+    validateBtn: document.getElementById("validate-btn"),
+    validateResult: document.getElementById("validate-result"),
+    previewBlock: document.getElementById("preview-block"),
+    previewPre: document.getElementById("preview-pre"),
+    previewStats: document.getElementById("preview-stats"),
+    publishNote: document.getElementById("publish-note"),
+    publishBtn: document.getElementById("publish-btn"),
+
+    versionTbody: document.getElementById("version-tbody"),
+
+    configLoading: document.getElementById("config-loading"),
+    configForm: document.getElementById("config-form"),
+    configSubmit: document.getElementById("config-submit"),
+    fInjectFacts: document.getElementById("f-inject-facts"),
+    fValidation: document.getElementById("f-validation"),
+    validationGuardHint: document.getElementById("validation-guard-hint"),
+    fBreakerDisabled: document.getElementById("f-breaker-disabled"),
+    fTripRate: document.getElementById("f-trip-rate"),
+    fMinSamples: document.getElementById("f-min-samples"),
+    fWindow: document.getElementById("f-window"),
+    fCooldown: document.getElementById("f-cooldown"),
+
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, 3200);
+  }
+
+  // ---------- Auth / API ----------
+  function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
+  function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
+
+  function showLogin(message) {
+    clearToken();
+    els.appView.hidden = true;
+    els.userInfo.hidden = true;
+    els.loginView.hidden = false;
+    if (message) {
+      els.loginError.textContent = message;
+      els.loginError.style.display = "block";
+    }
+  }
+
+  function showApp() {
+    els.loginView.hidden = true;
+    els.appView.hidden = false;
+    els.userInfo.hidden = false;
+  }
+
+  // Wraps fetch with Authorization header, JSON parsing, and 401/403 handling.
+  function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    var token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+    return fetch(path, Object.assign({}, options, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          showLogin("登录已过期，请重新登录");
+          throw new Error("unauthorized");
+        }
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
+          }
+          if (!res.ok) {
+            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
+            if (res.status === 403) {
+              msg = "无权限：" + ((data && data.error) || "当前账号不能管理领域本体");
+            }
+            var err = new Error(msg);
+            err.status = res.status;
+            throw err;
+          }
+          return data;
+        });
+      });
+  }
+
+  function reportError(prefix, err) {
+    if (err.message === "unauthorized") return;
+    toast(prefix + ": " + err.message, "error");
+  }
+
+  // ---------- Login ----------
+  els.loginForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    els.loginError.style.display = "none";
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "登录中…";
+
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+
+    fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email, password: password })
+    })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          var data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (e) {}
+          if (!res.ok) {
+            var msg = (data && data.error) || "邮箱或密码错误";
+            throw new Error(msg);
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        if (!data || !data.access_token) throw new Error("登录响应异常");
+        setToken(data.access_token);
+        els.userEmail.textContent = email;
+        showApp();
+        bootstrap();
+      })
+      .catch(function (err) {
+        els.loginError.textContent = err.message || "登录失败，请检查网络";
+        els.loginError.style.display = "block";
+      })
+      .finally(function () {
+        els.loginSubmit.disabled = false;
+        els.loginSubmit.textContent = "登 录";
+      });
+  });
+
+  els.logoutBtn.addEventListener("click", function () {
+    showLogin();
+  });
+
+  // ---------- Bootstrap after login ----------
+  function bootstrap() {
+    loadProductLines();
+  }
+
+  els.refreshBtn.addEventListener("click", function () {
+    if (state.currentPL) {
+      loadOntology();
+      loadConfig();
+    } else {
+      loadProductLines();
+    }
+  });
+
+  function loadProductLines() {
+    return api("/api/v1/product-lines")
+      .then(function (data) {
+        state.productLines = Array.isArray(data) ? data : [];
+        renderProductLineOptions();
+      })
+      .catch(function (err) {
+        reportError("加载产品线失败", err);
+      });
+  }
+
+  function renderProductLineOptions() {
+    if (state.productLines.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无产品线</option>';
+      els.noPlHint.innerHTML = '还没有产品线，先去<a href="./product-lines.html">创建 →</a>';
+      els.noPlHint.hidden = false;
+      els.panels.hidden = true;
+      return;
+    }
+    var opts = state.productLines.map(function (pl) {
+      return '<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
+    });
+    els.plSelect.innerHTML = opts.join("");
+    // Auto-select the first line: this page is meaningless without one.
+    els.plSelect.value = String(state.productLines[0].id);
+    selectProductLine(els.plSelect.value);
+  }
+
+  els.plSelect.addEventListener("change", function () {
+    selectProductLine(els.plSelect.value);
+  });
+
+  function selectProductLine(id) {
+    state.currentPL = findProductLine(id);
+    if (!state.currentPL) {
+      els.panels.hidden = true;
+      els.noPlHint.hidden = false;
+      return;
+    }
+    els.noPlHint.hidden = true;
+    els.panels.hidden = false;
+    resetEditorFeedback();
+    loadOntology();
+    loadConfig();
+  }
+
+  function findProductLine(id) {
+    for (var i = 0; i < state.productLines.length; i++) {
+      if (String(state.productLines[i].id) === String(id)) return state.productLines[i];
+    }
+    return null;
+  }
+
+  function plPath(suffix) {
+    return "/api/v1/product-lines/" + encodeURIComponent(state.currentPL.id) + suffix;
+  }
+
+  // ---------- Ontology load ----------
+  function loadOntology() {
+    els.editorLoading.hidden = false;
+    els.editorLoading.textContent = "加载中…";
+    els.editorBody.hidden = true;
+    els.versionTbody.innerHTML = '<tr><td colspan="5" class="loading-text">加载中…</td></tr>';
+
+    return api(plPath("/ontology"))
+      .then(function (data) {
+        state.ontology = data || {};
+        state.lastValidYaml = null;
+        els.yamlEditor.value = state.ontology.source_yaml || "";
+        els.publishNote.value = "";
+        renderActiveMeta();
+        renderVersions();
+        els.editorLoading.hidden = true;
+        els.editorBody.hidden = false;
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.editorLoading.textContent = "加载失败: " + err.message;
+        els.versionTbody.innerHTML =
+          '<tr><td colspan="5" class="empty-state">' + escapeHtml(err.message) + "</td></tr>";
+        reportError("加载本体失败", err);
+      });
+  }
+
+  function renderActiveMeta() {
+    var o = state.ontology || {};
+    var active = o.active_version || 0;
+    if (active > 0) {
+      els.activePill.className = "pill ok";
+      els.activePill.textContent = "生效中 v" + active;
+      var parts = [];
+      if (o.note) parts.push("备注: " + o.note);
+      if (o.created_at) parts.push("发布于 " + formatDate(o.created_at));
+      els.activeMeta.textContent = parts.join(" · ") || "当前生效版本 v" + active;
+      els.emptyHint.hidden = true;
+    } else {
+      els.activePill.className = "pill muted";
+      els.activePill.textContent = "未发布";
+      els.activeMeta.textContent =
+        "本体声明本产品线的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。";
+      els.emptyHint.hidden = false;
+    }
+  }
+
+  function renderVersions() {
+    var versions = (state.ontology && state.ontology.versions) || [];
+    if (versions.length === 0) {
+      els.versionTbody.innerHTML = '<tr><td colspan="5" class="empty-state">尚无版本，校验通过后发布第一版</td></tr>';
+      return;
+    }
+    els.versionTbody.innerHTML = versions.map(versionRowHtml).join("");
+
+    versions.forEach(function (v) {
+      var btn = document.getElementById("rollback-" + v.version);
+      if (btn) btn.addEventListener("click", function () { rollback(v); });
+    });
+  }
+
+  function versionRowHtml(v) {
+    var badge = v.active
+      ? '<span class="pill ok">生效中</span>'
+      : '<span class="pill muted">历史</span>';
+    var actions = v.active
+      ? '<span class="hint">—</span>'
+      : '<button id="rollback-' + v.version + '">回滚</button>';
+    return (
+      "<tr>" +
+      "<td>v" + escapeHtml(v.version) + "</td>" +
+      "<td>" + badge + "</td>" +
+      '<td class="note">' + (v.note ? escapeHtml(v.note) : "—") + "</td>" +
+      "<td>" + formatDate(v.created_at) + "</td>" +
+      '<td><div class="row-actions">' + actions + "</div></td>" +
+      "</tr>"
+    );
+  }
+
+  // ---------- Validate ----------
+  function resetEditorFeedback() {
+    els.validateResult.hidden = true;
+    els.validateResult.textContent = "";
+    els.previewBlock.hidden = true;
+    els.previewPre.textContent = "";
+    els.previewStats.textContent = "";
+    els.editorHint.textContent = "";
+  }
+
+  els.yamlEditor.addEventListener("input", function () {
+    // Any edit invalidates the previous validation result.
+    if (state.lastValidYaml !== els.yamlEditor.value) resetEditorFeedback();
+  });
+
+  els.validateBtn.addEventListener("click", function () {
+    var yaml = els.yamlEditor.value;
+    if (!yaml.trim()) {
+      toast("本体内容为空", "warn");
+      return;
+    }
+    resetEditorFeedback();
+    els.validateBtn.disabled = true;
+    els.validateBtn.textContent = "校验中…";
+
+    api(plPath("/ontology/validate"), { method: "POST", body: JSON.stringify({ yaml: yaml }) })
+      .then(function (data) {
+        data = data || {};
+        if (data.valid) {
+          state.lastValidYaml = yaml;
+          els.validateResult.className = "result-box ok";
+          els.validateResult.textContent = "校验通过";
+          els.validateResult.hidden = false;
+          els.previewPre.textContent = data.rendered || "";
+          els.previewStats.textContent =
+            "渲染后 " + (data.rendered_chars != null ? data.rendered_chars : (data.rendered || "").length) +
+            " 字符，约 " + (data.estimated_tokens != null ? data.estimated_tokens : "—") + " tokens（估算）";
+          els.previewBlock.hidden = false;
+        } else {
+          state.lastValidYaml = null;
+          els.validateResult.className = "result-box bad";
+          els.validateResult.textContent = data.error || "校验未通过";
+          els.validateResult.hidden = false;
+        }
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.validateResult.className = "result-box bad";
+        els.validateResult.textContent = err.message;
+        els.validateResult.hidden = false;
+        reportError("校验失败", err);
+      })
+      .finally(function () {
+        els.validateBtn.disabled = false;
+        els.validateBtn.textContent = "校验";
+      });
+  });
+
+  // ---------- Publish ----------
+  els.publishBtn.addEventListener("click", function () {
+    var yaml = els.yamlEditor.value;
+    if (!yaml.trim()) {
+      toast("本体内容为空", "warn");
+      return;
+    }
+    var active = (state.ontology && state.ontology.active_version) || 0;
+    var message = active > 0
+      ? "将替换当前生效版本 v" + active + "，确认发布？"
+      : "当前尚无生效版本，发布后立即生效。确认发布？";
+    if (state.lastValidYaml !== yaml) {
+      message = "当前内容尚未通过校验。\n" + message;
+    }
+    if (!confirm(message)) return;
+
+    els.publishBtn.disabled = true;
+    els.publishBtn.textContent = "发布中…";
+
+    api(plPath("/ontology/publish"), {
+      method: "POST",
+      body: JSON.stringify({ yaml: yaml, note: els.publishNote.value.trim() })
+    })
+      .then(function (data) {
+        toast("已发布 v" + ((data && data.version) || "?"), "success");
+        loadOntology();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.validateResult.className = "result-box bad";
+        els.validateResult.textContent = err.message;
+        els.validateResult.hidden = false;
+        els.previewBlock.hidden = true;
+        reportError("发布失败", err);
+      })
+      .finally(function () {
+        els.publishBtn.disabled = false;
+        els.publishBtn.textContent = "发布";
+      });
+  });
+
+  // ---------- Rollback ----------
+  function rollback(v) {
+    var active = (state.ontology && state.ontology.active_version) || 0;
+    var message = active > 0
+      ? "回滚到 v" + v.version + "？当前生效版本 v" + active + " 将被替换。"
+      : "回滚到 v" + v.version + "？该版本将立即生效。";
+    if (!confirm(message)) return;
+
+    api(plPath("/ontology/rollback"), { method: "POST", body: JSON.stringify({ version: v.version }) })
+      .then(function (data) {
+        toast("已回滚到 v" + ((data && data.version) || v.version), "success");
+        loadOntology();
+      })
+      .catch(function (err) {
+        reportError("回滚失败", err);
+      });
+  }
+
+  // ---------- Config ----------
+  function loadConfig() {
+    els.configLoading.hidden = false;
+    els.configLoading.textContent = "加载中…";
+    els.configForm.hidden = true;
+
+    return api(plPath("/ontology-config"))
+      .then(function (cfg) {
+        cfg = cfg || {};
+        var breaker = cfg.breaker || {};
+        els.fInjectFacts.checked = !!cfg.inject_facts;
+        els.fValidation.value = cfg.validation || "off";
+        els.fBreakerDisabled.checked = !!breaker.disabled;
+        els.fTripRate.value = breaker.trip_rate != null ? breaker.trip_rate : "";
+        els.fMinSamples.value = breaker.min_samples != null ? breaker.min_samples : "";
+        els.fWindow.value = breaker.window != null ? breaker.window : "";
+        els.fCooldown.value = breaker.cooldown_seconds != null ? breaker.cooldown_seconds : "";
+        state.stashedValidation = null;
+        syncValidationGuard();
+        els.configLoading.hidden = true;
+        els.configForm.hidden = false;
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.configLoading.textContent = "加载失败: " + err.message;
+        reportError("加载开关失败", err);
+      });
+  }
+
+  // Mirrors the server rule: validation other than "off" requires inject_facts.
+  // The choice is remembered so re-enabling injection restores it instead of
+  // silently leaving the operator on "off".
+  function syncValidationGuard() {
+    var enabled = els.fInjectFacts.checked;
+    els.fValidation.disabled = !enabled;
+    els.validationGuardHint.hidden = enabled;
+    if (!enabled) {
+      if (els.fValidation.value !== "off") state.stashedValidation = els.fValidation.value;
+      els.fValidation.value = "off";
+    } else if (els.fValidation.value === "off" && state.stashedValidation) {
+      els.fValidation.value = state.stashedValidation;
+      state.stashedValidation = null;
+    }
+  }
+
+  els.fInjectFacts.addEventListener("change", syncValidationGuard);
+
+  els.configForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+
+    var tripRate = numberOrNull(els.fTripRate.value);
+    var minSamples = numberOrNull(els.fMinSamples.value);
+    var window_ = numberOrNull(els.fWindow.value);
+    var cooldown = numberOrNull(els.fCooldown.value);
+
+    if (tripRate !== null && (tripRate <= 0 || tripRate > 1)) {
+      toast("熔断阈值 trip_rate 须大于 0 且不超过 1", "error");
+      return;
+    }
+    if (minSamples !== null && minSamples < 1) {
+      toast("最小样本数 min_samples 须为正整数", "error");
+      return;
+    }
+    if (window_ !== null && window_ < 1) {
+      toast("统计窗口 window 须为正整数", "error");
+      return;
+    }
+    if (window_ !== null && minSamples !== null && window_ < minSamples) {
+      toast("统计窗口 window 不能小于最小样本数 min_samples", "error");
+      return;
+    }
+    if (cooldown !== null && cooldown < 1) {
+      toast("冷却时长 cooldown_seconds 须为正整数（秒）", "error");
+      return;
+    }
+
+    var breaker = { disabled: els.fBreakerDisabled.checked };
+    if (tripRate !== null) breaker.trip_rate = tripRate;
+    if (minSamples !== null) breaker.min_samples = minSamples;
+    if (window_ !== null) breaker.window = window_;
+    if (cooldown !== null) breaker.cooldown_seconds = cooldown;
+
+    var payload = {
+      inject_facts: els.fInjectFacts.checked,
+      validation: els.fInjectFacts.checked ? els.fValidation.value : "off",
+      breaker: breaker
+    };
+
+    els.configSubmit.disabled = true;
+    els.configSubmit.textContent = "保存中…";
+
+    api(plPath("/ontology-config"), { method: "PUT", body: JSON.stringify(payload) })
+      .then(function () {
+        toast("开关已保存", "success");
+        loadConfig();
+      })
+      .catch(function (err) {
+        reportError("保存失败", err);
+      })
+      .finally(function () {
+        els.configSubmit.disabled = false;
+        els.configSubmit.textContent = "保存";
+      });
+  });
+
+  function numberOrNull(value) {
+    var s = String(value == null ? "" : value).trim();
+    if (s === "") return null;
+    var n = Number(s);
+    return isNaN(n) ? null : n;
+  }
+
+  // ---------- Utils ----------
+  function formatDate(iso) {
+    if (!iso) return "—";
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString("zh-CN", { hour12: false });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function escapeAttr(str) {
+    return escapeHtml(str);
+  }
+
+  // ---------- Init ----------
+  if (getToken()) {
+    showApp();
+    bootstrap();
+  } else {
+    showLogin();
+  }
+})();
+</script>

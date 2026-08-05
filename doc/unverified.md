@@ -81,6 +81,24 @@ evalset 的置信度现在与 router 完全一致（含 0.90 校验加成档）�
 
 ---
 
+## 三点五、本体运营面（第 2 期新增）
+
+### 3.5.1 admin 本体 API 的 SQL 未在真实数据库上跑过
+handler 测试全部打桩：`SetConfigKey` 的 `jsonb_build_object` 合并语句、
+`GetConfigJSON`、`SourceYAML` 查询从未打过真实 PostgreSQL。
+语法按 13+ 文档写，但一次都没执行过。
+
+**要验证需要**：对任意真实库跑一遍 GET/PUT ontology-config 和 publish/
+rollback/GET ontology 全流程（第 5 期部署演练覆盖）。
+
+### 3.5.2 portal 本体页只对过 mock，没对过真实 admin
+页面对冻结 API 的 mock 全流程冒烟通过，字段名与 handler 逐一核对过，
+但没有和真实 admin + 真实登录态联调过。
+
+**要验证需要**：第 5 期部署后按页面路径走一遍真实发布与回滚。
+
+---
+
 ## 四、环境单点
 
 ### 4.1 数据库只在 PostgreSQL 16.14 上验过

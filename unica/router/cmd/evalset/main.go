@@ -35,7 +35,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/kefu/unica/router/internal/bridge"
-	"github.com/kefu/unica/router/internal/domain"
+	"github.com/kefu/unica/pkg/domain"
 	"github.com/kefu/unica/router/internal/eval"
 	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/intent"

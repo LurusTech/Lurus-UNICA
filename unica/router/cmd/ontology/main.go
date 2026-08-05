@@ -26,7 +26,7 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/kefu/unica/router/internal/domain"
+	"github.com/kefu/unica/pkg/domain"
 )
 
 func main() {

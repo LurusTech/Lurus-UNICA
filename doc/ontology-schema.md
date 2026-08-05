@@ -3,7 +3,12 @@
 本体是一份 YAML，声明"本业务哪些事实是确定的"，让 AI 回答时不再靠常识补全。
 它与行业无关——电商、留学中介、财务代理、房产、同城服务用的是同一套语法。
 
-工具（工作目录 `unica/router`）：
+**日常运维走 portal**：`portal/ontology.html`（管理后台首页 → 领域本体）提供
+编辑、校验、渲染预览（含 token 估算）、发布、版本回滚和 `inject_facts` /
+`validation` / 熔断参数的开关面板，权限复用 AI 配置权限，写操作全部入审计日志。
+对应的 admin API 在 `/api/v1/product-lines/{id}/ontology*`。
+
+CLI 仍可用于批量导入与脚本化（工作目录 `unica/router`）：
 
 ```bash
 go run ./cmd/ontology validate -file 你的本体.yaml   # 检查语法与自洽性，不需要数据库
@@ -14,6 +19,7 @@ POSTGRES_URL=... go run ./cmd/ontology rollback -line 产品线名 -version 2
 ```
 
 `product_line` 必须与数据库 `product_lines.name` 一致。发布后旧版本保留，可随时回滚。
+本体的领域模型与存储代码在 `unica/pkg/domain`（router 与 admin 共用）。
 
 ---
 

@@ -247,6 +247,23 @@ func (s *Store) Versions(ctx context.Context, productLineID string) ([]VersionIn
 	return out, rows.Err()
 }
 
+// SourceYAML returns the authored YAML of one stored version, so an editor
+// loads what a person actually wrote — comments and ordering included — rather
+// than a decompiled approximation of it.
+func (s *Store) SourceYAML(ctx context.Context, productLineID string, version int) (string, error) {
+	var src string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT source_yaml FROM ontology_versions WHERE product_line_id = $1 AND version = $2`,
+		productLineID, version).Scan(&src)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("version %d not found for product line %s", version, productLineID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("load source yaml: %w", err)
+	}
+	return src, nil
+}
+
 // RecordViolations persists what the validator found.
 //
 // Failures are logged and swallowed: a violation record is evidence for later

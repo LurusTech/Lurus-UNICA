@@ -12,10 +12,10 @@ import (
 )
 
 // seedDir is the shipped ontology set, relative to this package.
-const seedDir = "../../../../deploy/config/ontology"
+const seedDir = "../../../deploy/config/ontology"
 
 // cannedPath is the operational source these ontologies were extracted from.
-const cannedPath = "../../../../deploy/config/canned_responses.yaml"
+const cannedPath = "../../../deploy/config/canned_responses.yaml"
 
 func loadSeeds(t *testing.T) []*Ontology {
 	t.Helper()

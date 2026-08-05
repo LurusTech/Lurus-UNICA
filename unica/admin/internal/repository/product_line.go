@@ -23,6 +23,50 @@ func (r *ProductLineRepository) DB() *sql.DB {
 	return r.db
 }
 
+// GetConfigJSON returns the raw config_json blob for one product line, so
+// callers that own a single key inside it can read their block without a
+// model field per key.
+func (r *ProductLineRepository) GetConfigJSON(ctx context.Context, id string) (json.RawMessage, error) {
+	var raw []byte
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(config_json, '{}'::jsonb) FROM product_lines WHERE id = $1`, id).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config_json: %w", err)
+	}
+	return json.RawMessage(raw), nil
+}
+
+// SetConfigKey replaces exactly one top-level key of config_json in a single
+// SQL statement. The merge happens database-side (jsonb ||), so concurrent
+// writers of different keys cannot clobber each other the way a Go-side
+// read-modify-write would.
+func (r *ProductLineRepository) SetConfigKey(ctx context.Context, id, key string, value interface{}) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config value: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE product_lines
+		 SET config_json = COALESCE(config_json, '{}'::jsonb) || jsonb_build_object($2::text, $3::jsonb),
+		     updated_at = NOW()
+		 WHERE id = $1`,
+		id, key, string(data))
+	if err != nil {
+		return fmt.Errorf("failed to update config_json: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to update config_json: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("product line not found: %s", id)
+	}
+	return nil
+}
+
 // Create inserts a new product line.
 func (r *ProductLineRepository) Create(ctx context.Context, name, displayName string, chatwootAccountID *int) (*ProductLine, error) {
 	pl := &ProductLine{}

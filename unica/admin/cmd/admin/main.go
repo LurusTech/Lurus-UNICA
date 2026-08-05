@@ -24,6 +24,7 @@ import (
 	"github.com/kefu/unica/admin/internal/handler"
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
+	"github.com/kefu/unica/pkg/domain"
 )
 
 func main() {
@@ -104,6 +105,10 @@ func main() {
 	defer auditLogger.Close()
 	auditLogHandler := handler.NewAuditLogHandler(auditRepo)
 	log.Println("[admin] audit logger initialized")
+
+	// Ontology editing surface. The store's cache is irrelevant here (admin
+	// reads versions, not the hot path), so a short TTL is fine.
+	ontologyHandler := handler.NewOntologyHandler(domain.NewStore(db, time.Minute), plRepo, auditLogger)
 
 	// Build middleware chain
 	authMW := auth.AuthMiddleware(jwtMgr)
@@ -235,7 +240,19 @@ func main() {
 		}
 		requireManagePL(http.HandlerFunc(plHandler.HandleProductLines)).ServeHTTP(w, r)
 	})))
-	mux.Handle("/api/v1/product-lines/", authMW(requireManagePL(http.HandlerFunc(plHandler.HandleProductLine))))
+	// The ontology sub-resources are policy editing, not product-line
+	// administration, so they are gated by the AI-config permission while the
+	// rest of the subtree keeps requiring the manage-product-lines permission.
+	// Audit for these mutations is written inside the handler: subtree-level
+	// audit middleware would start auditing every product-line request.
+	mux.Handle("/api/v1/product-lines/", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/product-lines/")
+		if len(segments) >= 2 && (segments[1] == "ontology" || segments[1] == "ontology-config") {
+			requireManageAIConfig(http.HandlerFunc(ontologyHandler.Handle)).ServeHTTP(w, r)
+			return
+		}
+		requireManagePL(http.HandlerFunc(plHandler.HandleProductLine)).ServeHTTP(w, r)
+	})))
 
 	// Protected endpoints - Channels (with audit middleware)
 	mux.Handle("/api/v1/channels", authMW(requireManageChannels(channelAuditMW(http.HandlerFunc(channelHandler.HandleChannels)))))

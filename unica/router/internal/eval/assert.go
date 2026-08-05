@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kefu/unica/router/internal/domain"
+	"github.com/kefu/unica/pkg/domain"
 )
 
 // FailureKind classifies why a case failed.
