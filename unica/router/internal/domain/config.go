@@ -36,12 +36,15 @@ type Config struct {
 	InjectFacts bool `json:"inject_facts"`
 	// Validation decides what happens to an answer that contradicts the ontology.
 	Validation ValidationMode `json:"validation"`
+	// Breaker bounds how much suppression enforcement may cause. Omitted means
+	// the defaults, which are on: see BreakerConfig.
+	Breaker *BreakerConfig `json:"breaker,omitempty"`
 }
 
 // DefaultConfig is inert: a deployment that upgrades to this build behaves
 // exactly as it did before until a product line opts in.
 func DefaultConfig() *Config {
-	return &Config{InjectFacts: false, Validation: ValidationOff}
+	return &Config{InjectFacts: false, Validation: ValidationOff, Breaker: DefaultBreakerConfig()}
 }
 
 // Active reports whether the ontology needs to be loaded at all.
@@ -105,6 +108,7 @@ func LoadConfig(configJSON json.RawMessage) *Config {
 		mode = ValidationOff
 	}
 	cfg.Validation = mode
+	cfg.Breaker = cfg.Breaker.normalise()
 
 	// Measured against a live model: with facts injected the model emitted claim
 	// tags on 88% of answers; without injection, on 2%. The tag vocabulary is

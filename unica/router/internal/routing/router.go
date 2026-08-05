@@ -56,6 +56,7 @@ type Router struct {
 	evaluator         *guardrail.Evaluator
 	triageMode        guardrail.TriageMode
 	ontology          *domain.Store
+	breaker           *domain.Breaker
 	marketingTracker  *marketing.Tracker
 	surveyHandler     *survey.Handler
 	consumerGroup     string
@@ -118,6 +119,7 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		chatwootForwarder: cwForwarder,
 		evaluator:         guardrail.NewEvaluator(),
 		triageMode:        triageMode,
+		breaker:           domain.NewBreaker(),
 		marketingTracker:  mktTracker,
 		surveyHandler:     surveyH,
 		consumerGroup:     config.ConsumerGroup,
@@ -631,11 +633,36 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
 	evalResult := r.evaluator.EvaluateWithMode(query, confidence, guardrailCfg, r.triageMode)
 
+	// Enforcement is bounded by the breaker: one wrong assertion in an ontology
+	// suppresses every correct answer that touches it, so unbounded enforcement
+	// turns an authoring mistake into a queue of handoffs that grows with
+	// traffic. The window is fed on every checked answer, including under shadow
+	// mode, so a product line whose rate is already implausible never gets to
+	// enforce a single message.
+	enforcing := ontologyCfg.Enforces()
+	if ontology != nil && ontologyCfg.Validates() {
+		if enforcing {
+			allowed, tripped := r.breaker.Allow(config.ProductLineID, ontologyCfg.Breaker)
+			if tripped {
+				metrics.OntologyBreakerTripsTotal.WithLabelValues(config.ProductLineID).Inc()
+			}
+			if !allowed {
+				enforcing = false
+				if len(violations) > 0 {
+					metrics.OntologyBreakerBypassedTotal.WithLabelValues(config.ProductLineID).Inc()
+				}
+			}
+		}
+		r.breaker.Record(config.ProductLineID, len(violations) > 0, ontologyCfg.Breaker)
+		metrics.OntologyBreakerOpen.WithLabelValues(config.ProductLineID).
+			Set(boolToFloat(r.breaker.Open(config.ProductLineID)))
+	}
+
 	// A contradicted answer is wrong regardless of how well it retrieved, so
 	// enforcement overrides the confidence verdict rather than adjusting it.
 	// The agent receives the reason, not just the fact that they were handed a
 	// conversation the AI could have answered.
-	if ontologyCfg.Enforces() && len(violations) > 0 {
+	if enforcing && len(violations) > 0 {
 		evalResult = &guardrail.EvalResult{
 			Decision:   guardrail.DecisionHandoff,
 			Reason:     guardrail.ReasonClaimConflict,

@@ -63,6 +63,36 @@ func TestLoadConfig_ReadsBothSwitches(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_BreakerDefaultsOn: the breaker only ever relaxes enforcement a
+// customer opted into, so a product line that has never heard of it still gets
+// one. A config that switched enforcement on without a bound would let a single
+// mis-authored assertion suppress every answer that touches it.
+func TestLoadConfig_BreakerDefaultsOn(t *testing.T) {
+	cfg := LoadConfig(json.RawMessage(`{"ontology":{"inject_facts":true,"validation":"enforce"}}`))
+	if cfg.Breaker == nil {
+		t.Fatal("enforcement was configured with no breaker")
+	}
+	if cfg.Breaker.Disabled {
+		t.Error("the breaker defaulted to disabled")
+	}
+	if cfg.Breaker.TripRate != DefaultBreakerTripRate {
+		t.Errorf("TripRate = %v, want %v", cfg.Breaker.TripRate, DefaultBreakerTripRate)
+	}
+}
+
+func TestLoadConfig_BreakerOverrides(t *testing.T) {
+	cfg := LoadConfig(json.RawMessage(`{"ontology":{"validation":"enforce","breaker":{"trip_rate":0.5,"min_samples":5,"window":50,"cooldown_seconds":60}}}`))
+	if cfg.Breaker.TripRate != 0.5 || cfg.Breaker.MinSamples != 5 ||
+		cfg.Breaker.Window != 50 || cfg.Breaker.CooldownSeconds != 60 {
+		t.Errorf("breaker overrides not read: %+v", cfg.Breaker)
+	}
+
+	off := LoadConfig(json.RawMessage(`{"ontology":{"validation":"enforce","breaker":{"disabled":true}}}`))
+	if !off.Breaker.Disabled {
+		t.Error("an explicit opt-out was not honoured")
+	}
+}
+
 // TestLoadConfig_UnknownModeFailsClosed covers the direction a typo must not
 // take: an unrecognised mode disables enforcement rather than enabling it, and
 // says so in the log.

@@ -238,6 +238,29 @@ var (
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5},
 	})
 
+	// OntologyBreakerOpen is 1 while enforcement is switched off for a product
+	// line because too large a share of answers was being suppressed.
+	OntologyBreakerOpen = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "router_ontology_breaker_open",
+		Help: "1 while ontology enforcement is disabled by the circuit breaker",
+	}, []string{"product_line"})
+
+	// OntologyBreakerTripsTotal counts how often enforcement was switched off.
+	// Alert on any increase: a trip means the product line's ontology is
+	// contradicting its own model often enough to be the more likely fault.
+	OntologyBreakerTripsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_ontology_breaker_trips_total",
+		Help: "Total times the breaker disabled ontology enforcement",
+	}, []string{"product_line"})
+
+	// OntologyBreakerBypassedTotal counts contradicted answers that were sent to
+	// the customer anyway because the breaker was open. This is the price of the
+	// breaker, stated as a number rather than left implicit.
+	OntologyBreakerBypassedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_ontology_breaker_bypassed_total",
+		Help: "Total contradicted answers delivered because enforcement was disabled by the breaker",
+	}, []string{"product_line"})
+
 	// DuplicateMessagesTotal counts inbound messages the database rejected as a
 	// redelivery of a platform message already stored. A non-zero rate means the
 	// gateway's Redis dedup let something through, which is expected: it fails

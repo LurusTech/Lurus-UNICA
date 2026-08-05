@@ -96,6 +96,14 @@ func GroundedConfidence(resp *bridge.DifyResponse, ev GroundingEvidence) float64
 	return grounded
 }
 
+// boolToFloat renders a boolean as a Prometheus gauge value.
+func boolToFloat(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // evidenceFor builds the grounding summary for one answer.
 func evidenceFor(ontology *domain.Ontology, cfg *domain.Config, experienceInjected bool,
 	claims []domain.Claim, violations []domain.Violation) GroundingEvidence {

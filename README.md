@@ -147,6 +147,11 @@ POSTGRES_URL=... go run ./cmd/ontology publish -dir ../../deploy/config/ontology
 两个独立开关写在 `product_lines.config_json.ontology`：`inject_facts`（注入事实）与
 `validation`（`off`/`shadow`/`enforce`）。**默认都关**，升级不改变任何现有行为。
 
+`enforce` 带熔断：本体写错一条断言会让每一条碰到它的正确回答都被压下转人工，
+所以最近窗口内被拦比例超过 25% 就自动停止拦截并告警（`breaker` 块可调，默认开）。
+熔断态不是安全态，是拿"发出可能有误的回答"换"人工队列不被打爆"，
+代价记在 `router_ontology_breaker_bypassed_total` 里。
+
 编写指南见 [`doc/ontology-schema.md`](doc/ontology-schema.md)。
 
 ## 快速开始
