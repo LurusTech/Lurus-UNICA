@@ -78,11 +78,6 @@ evalset 的置信度现在与 router 完全一致（含 0.90 校验加成档）�
 状态每进程独立，N 个副本各判各的。临界比例时可能有的副本在拦、有的没拦。
 从未跑过一个以上的 router 实例。
 
-### 3.4 `-race` 已在 WSL 首跑全绿，CI 首跑待确认
-2026-08-05 在 WSL (go1.23.4/linux) 对 pkg/router/admin/gateway/reporter 全部
-`go test -race ./...` 通过，零数据竞争——原"从未跑过"已解决。
-`.github/workflows/ci.yml` 会在每次 push 重复它，**工作流本身尚未跑通过一次**，
-首次全绿后删除本条。
 
 ---
 
