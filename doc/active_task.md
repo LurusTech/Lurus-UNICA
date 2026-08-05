@@ -70,8 +70,24 @@
 ## Current Status
 - [x] Ready for Review
 
+## 追加：`UpdateAppConfig` 端点修正（已完成）
+`PUT /apps/{id}` 其实是应用**改名**接口，真实 Dify 0.15.3 返回
+400 `Missing required parameter ... name`——补上 `name` 也不会改提示词。
+正确接口是 `POST /apps/{id}/model-config`，且整体替换配置对象，
+因此改成先读回当前对象、只替换提示词与变量声明再写回（配置存成 map 而非结构体，
+否则每次写入都会把没建模的字段静默重置）。router 与 admin 两处同样的错误调用都修了。
+
+顺带修掉两个"修了机制仍然没用"的洞：
+- 旧 `DefaultSystemPrompt` 不引用任何变量，Go provision 出来的应用永远收不到本体事实；
+  换成实测过的模板，并让 `UpdateAppConfig` 补齐 `user_input_form` 里的 6 个注入变量
+  （Dify 会静默丢弃未声明的 input）。
+- 提示词里的 `{{product_line}}` 渲染出来是 UUID——router 传的是产品线 ID。
+  改为 provision 时静态替换产品线名（一应用一产品线，本来就是常量）。
+
+验证：`go test ./internal/bridge/ -run LiveDify` 打真实 console，
+先快照配置、结束恢复；黄金集重跑仍 60/60，标签率 92%，0 违规。
+
 ## 本期未做（与上一增量一致，仍在等外部条件）
-- `dify_admin.go` 的 `UpdateAppConfig` 端点修正（照 `deploy/dify-preview/configure_apps.py`）
 - `validation: shadow` 跑真实流量，取覆盖率 / 误报率 / 标签发射率
 - 用真实对话日志重写黄金集，本体由业务方编写（打破当前测试集的循环）
 - `messages` 的保留策略尚未议定，`maintain_partitions.sql` 里留了位置没有启用

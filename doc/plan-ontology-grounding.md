@@ -63,8 +63,9 @@ P2 的具体形态：
 原方案要求 Dify 返回 `{answer, claims[], ...}` JSON。**否决**，理由：
 
 - `bridge/dify.go:97` 用 `response_mode: blocking`，返回的 `Answer` 是纯文本。改 JSON 要在
-  Dify 应用编排里重配输出格式；而 `dify_admin.go` 的 `UpdateAppConfig` 对真实 Dify 0.15.3 返回 400
-  （已记录在 `doc/active_task.md`），提示词只能手工改，3 条产品线要逐个改，且无法回滚。
+  Dify 应用编排里重配输出格式，逐条产品线改且无法回滚。
+  （当时 `dify_admin.go` 的 `UpdateAppConfig` 对真实 Dify 0.15.3 还返回 400，连批量改都做不到；
+  该缺陷后来已修，但这条决策的其余理由不受影响。）
 - JSON 无优雅降级：模型吐坏 JSON → 整条消息作废，客户收不到任何东西。
 - 团队已有 `[INTENT:xxx]` 约定（`marketing/detector.go:12`），提示词里加一行同构指令成本极低。
 

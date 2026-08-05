@@ -64,14 +64,14 @@ go run ./cmd/evalset -intent-triage on -inject-facts=false -save-baseline base.j
 go run ./cmd/evalset -intent-triage on -inject-facts=true  -baseline base.json        # 实验组
 ```
 
-## 已知问题
+## 这套环境暴露过的问题（均已修）
 
-- **`configure_apps.py` 用的是 `POST /console/api/apps/{id}/model-config`**，
-  而 `router/internal/bridge/dify_admin.go` 的 `UpdateAppConfig` 用 `PUT /apps/{id}` 只传 `pre_prompt`，
-  真实 Dify 0.15.3 返回 400。正确做法是整个 model_config 对象一起提交——部分更新不被接受。
-  修 `dify_admin.go` 时照 `configure_apps.py` 改。
-- **迁移 001 的最后一条语句在 PostgreSQL 上必然失败**：
-  `CREATE UNIQUE INDEX idx_messages_platform_msg ON messages(platform_msg_id)` 建在分区表上，
-  而唯一索引必须包含分区键 `created_at`。结果是**入站消息去重的唯一索引根本不存在**。
-- **迁移 001 只建了 2026-03 与 2026-04 两个 messages 分区**，之后的月份没有分区，
-  写入直接报 `no partition of relation "messages" found for row`。需要补分区或改用默认分区 + 定期滚动。
+- **Dify 应用配置只能整体提交**：`POST /console/api/apps/{id}/model-config`。
+  原先 `dify_admin.go` 往 `PUT /apps/{id}` 发 `{"pre_prompt": ...}`，那是应用**改名**接口，
+  真实 Dify 0.15.3 返回 400 `Missing required parameter ... name`，即便补上 `name` 也不会改提示词。
+  现在两边都是先读回当前对象、只改提示词与变量声明再整体写回。
+  可用真实 console 验证：`go test ./internal/bridge/ -run LiveDify`（见该测试头部的环境变量）。
+- **迁移 001 最后一条语句必然失败**：唯一索引建在分区表上却不含分区键 `created_at`，
+  所以入站去重索引在任何环境都不存在。现由 `012` 在每个叶子分区上建。
+- **分区枯竭**：`messages` 只到 2026-04、`audit_logs` 只到 2026-06，当月写入直接失败。
+  现由 router 自动续期，见根 README 的「分区与保留」。

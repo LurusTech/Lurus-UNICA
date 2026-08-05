@@ -9,8 +9,8 @@
 #   docker compose up -d
 #
 # Dify is pinned to 0.15.3 deliberately: it is the version the router's bridge
-# code was written and tested against, including the known UpdateAppConfig
-# behaviour recorded in doc/active_task.md.
+# code was written and tested against, including the console API shapes that
+# bridge.UpdateAppConfig depends on.
 
 name: unica-dify
 

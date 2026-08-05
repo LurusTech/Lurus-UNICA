@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Configure the model provider and each UNICA app's prompt in Dify.
 
-This replaces the manual console work that doc/active_task.md recorded as a
-blocker: router/internal/bridge/dify_admin.go pushes prompt changes with
-`PUT /apps/{id}`, which a real Dify 0.15.3 rejects with 400. The working endpoint
-is `POST /console/api/apps/{id}/model-config`, which takes the whole model_config
-object rather than a single field — that is why the partial update fails.
+The endpoint is `POST /console/api/apps/{id}/model-config`, which replaces the
+whole model_config object rather than accepting a single field. This script is
+where that was worked out; bridge.UpdateAppConfig in the router and admin now
+uses the same endpoint, reading the current object first so a prompt change does
+not reset everything else.
+
+Unlike those, this script writes the object from scratch, because it also pins
+the provider, the model and the low temperature that make the ontology worth
+injecting at all.
 
 The prompt written here deliberately contains no policy numbers. It references
 {{facts_context}}, which the router fills from the product line's ontology, so a
@@ -41,7 +45,11 @@ CONTEXT_VARS = [
     ("product_line", "产品线"),
 ]
 
-PRE_PROMPT = """你是{{product_line}}的在线客服。用简体中文、简洁专业地回答客户问题。
+# {product_line_name} is substituted here, per app, rather than left as a Dify
+# variable: one app serves one product line, and the router's product_line input
+# carries the product line ID, so {{product_line}} rendered a UUID into the
+# prompt. Same template as bridge.DefaultSystemPrompt in the router and admin.
+PRE_PROMPT = """你是{product_line_name}的在线客服。用简体中文、简洁专业地回答客户问题。
 
 【本业务确定性事实】
 {{facts_context}}
@@ -94,7 +102,7 @@ def configure_provider(token):
     print(f"provider {PROVIDER} configured")
 
 
-def model_config():
+def model_config(product_line_name):
     return {
         "model": {
             "provider": PROVIDER,
@@ -104,7 +112,7 @@ def model_config():
             # only worth injecting if the model then sticks to it.
             "completion_params": {"temperature": 0.3, "max_tokens": 1024},
         },
-        "pre_prompt": PRE_PROMPT,
+        "pre_prompt": PRE_PROMPT.replace("{product_line_name}", product_line_name),
         "prompt_type": "simple",
         "user_input_form": [
             {"paragraph": {"label": label, "variable": var, "required": False, "default": ""}}
@@ -138,8 +146,8 @@ def main():
     with open(apps_path, encoding="utf-8") as fh:
         apps = json.load(fh)
 
-    cfg = model_config()
     for name, binding in apps.items():
+        cfg = model_config(name)
         request("POST", f"/apps/{binding['app_id']}/model-config", token=token, body=cfg)
         print(f"{name:<12} model-config updated -> {PROVIDER}/{MODEL}")
 

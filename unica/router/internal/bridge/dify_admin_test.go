@@ -139,34 +139,95 @@ func TestCreateApp_Success(t *testing.T) {
 	}
 }
 
-func TestUpdateAppConfig_Success(t *testing.T) {
+// TestUpdateAppConfig_ReadsModifiesWrites pins the endpoint contract a real Dify
+// 0.15.3 enforces: the prompt is set through POST /apps/{id}/model-config with
+// the whole configuration object, and everything the caller did not mean to
+// change has to survive the round trip.
+func TestUpdateAppConfig_ReadsModifiesWrites(t *testing.T) {
+	var written AppModelConfig
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("expected PUT, got %s", r.Method)
-		}
-		if r.URL.Path != "/apps/app-001" {
-			t.Errorf("expected /apps/app-001, got %s", r.URL.Path)
-		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apps/app-001":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":"app-001","model_config":{
+				"pre_prompt": "old prompt",
+				"prompt_type": "simple",
+				"user_input_form": [{"text-input":{"variable":"operator_field","label":"Custom","required":false}}],
+				"model": {"provider":"deepseek","name":"deepseek-chat","completion_params":{"temperature":0.3}},
+				"retriever_resource": {"enabled": true}
+			}}`))
 
-		var req AppConfigUpdateRequest
-		json.NewDecoder(r.Body).Decode(&req)
-		if !strings.Contains(req.PrePrompt, "customer service") {
-			t.Errorf("expected system prompt to contain 'customer service', got %q", req.PrePrompt)
-		}
+		case r.Method == http.MethodPost && r.URL.Path == "/apps/app-001/model-config":
+			if err := json.NewDecoder(r.Body).Decode(&written); err != nil {
+				t.Errorf("decode written config: %v", err)
+			}
+			w.Write([]byte(`{"result":"success"}`))
 
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
 	}))
 	defer server.Close()
 
-	client := NewDifyAdminClient(DifyAdminConfig{
-		BaseURL:    server.URL,
-		AdminToken: "admin-token",
-	})
-
-	err := client.UpdateAppConfig(context.Background(), "app-001", DefaultSystemPrompt("ProductA"))
-	if err != nil {
+	client := NewDifyAdminClient(DifyAdminConfig{BaseURL: server.URL, AdminToken: "admin-token"})
+	if err := client.UpdateAppConfig(context.Background(), "app-001", DefaultSystemPrompt("ProductA")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if prompt, _ := written["pre_prompt"].(string); !strings.Contains(prompt, "ProductA") {
+		t.Errorf("pre_prompt was not replaced, got %q", prompt)
+	}
+
+	// Fields the caller never mentioned must come back untouched: the update
+	// endpoint replaces the whole object, so anything dropped here is silently
+	// reset in Dify.
+	if written["model"] == nil {
+		t.Error("model was dropped from the written config")
+	}
+	if rr, _ := written["retriever_resource"].(map[string]interface{}); rr == nil || rr["enabled"] != true {
+		t.Errorf("retriever_resource was not preserved, got %v", written["retriever_resource"])
+	}
+
+	declared := map[string]bool{}
+	form, _ := written["user_input_form"].([]interface{})
+	for _, item := range form {
+		for _, spec := range item.(map[string]interface{}) {
+			if name, ok := spec.(map[string]interface{})["variable"].(string); ok {
+				declared[name] = true
+			}
+		}
+	}
+	if !declared["operator_field"] {
+		t.Error("an operator-defined variable was dropped from user_input_form")
+	}
+	for _, v := range ContextVariables {
+		if !declared[v.Name] {
+			t.Errorf("context variable %q was not declared; Dify would drop the router's input", v.Name)
+		}
+	}
+}
+
+// TestUpdateAppConfig_RefusesAdvancedPromptMode: in advanced mode pre_prompt is
+// ignored, so writing it would report success and change nothing.
+func TestUpdateAppConfig_RefusesAdvancedPromptMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Error("config was written despite advanced prompt mode")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"app-001","model_config":{"prompt_type":"advanced"}}`))
+	}))
+	defer server.Close()
+
+	client := NewDifyAdminClient(DifyAdminConfig{BaseURL: server.URL, AdminToken: "admin-token"})
+	err := client.UpdateAppConfig(context.Background(), "app-001", "prompt")
+	if err == nil {
+		t.Fatal("expected an error for an app in advanced prompt mode")
+	}
+	if !strings.Contains(err.Error(), "advanced prompt mode") {
+		t.Errorf("error does not name the cause: %v", err)
 	}
 }
 
@@ -252,8 +313,19 @@ func TestDefaultSystemPrompt(t *testing.T) {
 	if strings.Contains(prompt, "{product_line_name}") {
 		t.Errorf("expected placeholder to be replaced, got: %s", prompt)
 	}
-	if !strings.Contains(prompt, "customer service AI assistant") {
-		t.Errorf("expected prompt to contain template text, got: %s", prompt)
+
+	// The prompt has to reference the variables the router fills, or the
+	// injected ontology facts never reach the model and the whole grounding
+	// path is inert.
+	for _, v := range []string{"facts_context", "experience_context", "knowledge_context"} {
+		if !strings.Contains(prompt, "{{"+v+"}}") {
+			t.Errorf("prompt does not reference {{%s}}; the router's input would be unused", v)
+		}
+	}
+
+	// Rule 5 is what produces the [FACT:...] tags the answer validator parses.
+	if !strings.Contains(prompt, "[FACT:") {
+		t.Error("prompt does not ask for claim tags; validation would have nothing to check")
 	}
 }
 

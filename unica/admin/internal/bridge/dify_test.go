@@ -73,20 +73,25 @@ func TestDifyBridge_GetAppConfig_EmptyAppID(t *testing.T) {
 	}
 }
 
+// TestDifyBridge_UpdateSystemPrompt pins the endpoint a real Dify 0.15.3
+// enforces: the prompt goes to POST /apps/{id}/model-config with the whole
+// configuration object, read back first so nothing else is reset.
 func TestDifyBridge_UpdateSystemPrompt(t *testing.T) {
+	var written map[string]interface{}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("expected PUT, got %s", r.Method)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apps/app-123":
+			w.Write([]byte(`{"id":"app-123","model_config":{
+				"pre_prompt":"old","prompt_type":"simple","user_input_form":[],
+				"model":{"provider":"deepseek","name":"deepseek-chat"}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/apps/app-123/model-config":
+			json.NewDecoder(r.Body).Decode(&written)
+			w.Write([]byte(`{"result":"success"}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
 		}
-
-		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
-		if body["pre_prompt"] != "New system prompt" {
-			t.Errorf("unexpected prompt: %v", body["pre_prompt"])
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"result":"success"}`))
 	}))
 	defer server.Close()
 
@@ -95,9 +100,38 @@ func TestDifyBridge_UpdateSystemPrompt(t *testing.T) {
 		AdminToken: "test-token",
 	})
 
-	err := b.UpdateSystemPrompt(context.Background(), "app-123", "New system prompt")
-	if err != nil {
+	if err := b.UpdateSystemPrompt(context.Background(), "app-123", "New system prompt"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if written["pre_prompt"] != "New system prompt" {
+		t.Errorf("unexpected prompt: %v", written["pre_prompt"])
+	}
+	if written["model"] == nil {
+		t.Error("model was dropped from the written config")
+	}
+	form, _ := written["user_input_form"].([]interface{})
+	if len(form) != len(contextVariables) {
+		t.Errorf("expected the %d router context variables to be declared, got %d",
+			len(contextVariables), len(form))
+	}
+}
+
+func TestDifyBridge_UpdateSystemPrompt_RefusesAdvancedMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Error("config was written despite advanced prompt mode")
+		}
+		w.Write([]byte(`{"id":"app-123","model_config":{"prompt_type":"advanced"}}`))
+	}))
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, AdminToken: "test-token"})
+	err := b.UpdateSystemPrompt(context.Background(), "app-123", "New system prompt")
+	if err == nil {
+		t.Fatal("expected an error for an app in advanced prompt mode")
+	}
+	if !strings.Contains(err.Error(), "advanced prompt mode") {
+		t.Errorf("error does not name the cause: %v", err)
 	}
 }
 
@@ -269,11 +303,14 @@ func TestDifyBridge_CreateChatApp_Success(t *testing.T) {
 				t.Errorf("did not expect workspace_id in request (default workspace deviation)")
 			}
 			json.NewEncoder(w).Encode(DifyAppCreated{ID: "app-001", Name: "UNICA-Acme", Mode: "chat"})
-		case r.Method == http.MethodPut && r.URL.Path == "/apps/app-001":
+		case r.Method == http.MethodGet && r.URL.Path == "/apps/app-001":
+			// A freshly created app already carries a config with a null prompt.
+			w.Write([]byte(`{"id":"app-001","model_config":{"pre_prompt":null,"prompt_type":"simple","user_input_form":[]}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/apps/app-001/model-config":
 			var req map[string]interface{}
 			json.NewDecoder(r.Body).Decode(&req)
 			sawPrePrompt, _ = req["pre_prompt"].(string)
-			w.Write([]byte(`{}`))
+			w.Write([]byte(`{"result":"success"}`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
