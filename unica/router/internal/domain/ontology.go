@@ -134,13 +134,7 @@ func (r Range) Display(value string) string {
 // claim may quote either form. A model that reads 未拆封 in the injected context
 // will naturally write 未拆封 in its tag, and that has to validate.
 func (r Range) Canonical(value string) string {
-	trimmed := strings.TrimSpace(value)
-	for id, label := range r.Labels {
-		if strings.EqualFold(strings.TrimSpace(label), trimmed) {
-			return id
-		}
-	}
-	return trimmed
+	return canonicalLabel(r.Labels, value)
 }
 
 // Property is a declared attribute (owl:DatatypeProperty).
@@ -416,13 +410,7 @@ func (o *Ontology) dimensionMatches(dim, want, got string) bool {
 }
 
 func (d Dimension) canonical(value string) string {
-	trimmed := strings.TrimSpace(value)
-	for id, label := range d.Labels {
-		if strings.EqualFold(strings.TrimSpace(label), trimmed) {
-			return id
-		}
-	}
-	return trimmed
+	return canonicalLabel(d.Labels, value)
 }
 
 // ResolveScopeValue finds which dimension a bare scope qualifier belongs to, so
@@ -687,7 +675,7 @@ func (o *Ontology) validateAssertions() error {
 			}
 		}
 
-		for _, propName := range sortedKeys(a.Values) {
+		for _, propName := range sortedMapKeys(a.Values) {
 			values := a.Values[propName]
 			prop, ok := o.Properties[propName]
 			if !ok {
@@ -728,6 +716,20 @@ func (o *Ontology) checkNoCycle(start string) error {
 	return nil
 }
 
+// canonicalLabel maps a customer-facing label back to its stored identifier.
+// Ranges and dimensions carry the same identifier→label map, and a claim may
+// quote either form, so both resolve it the same way. A value that matches no
+// label is returned trimmed, which is what an already-canonical identifier is.
+func canonicalLabel(labels map[string]string, value string) string {
+	trimmed := strings.TrimSpace(value)
+	for id, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), trimmed) {
+			return id
+		}
+	}
+	return trimmed
+}
+
 func containsFold(list []string, value string) bool {
 	for _, v := range list {
 		if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(value)) {
@@ -738,15 +740,6 @@ func containsFold(list []string, value string) bool {
 }
 
 func joinValues(values []string) string { return strings.Join(values, "\x00") }
-
-func sortedKeys(m map[string]StringList) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
 
 func sortedMapKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))

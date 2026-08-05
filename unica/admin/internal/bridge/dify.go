@@ -11,8 +11,9 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
+
+	"github.com/kefu/unica/pkg/difyapp"
 )
 
 // DifyBridgeConfig holds connection parameters for the Dify APIs.
@@ -119,35 +120,6 @@ func (b *DifyBridge) APIBaseURL() string {
 	return b.config.APIBaseURL
 }
 
-// DefaultSystemPrompt returns the system prompt for a product line's chat app.
-//
-// It contains no policy numbers on purpose. Everything specific to the business
-// arrives at call time through {{facts_context}}, which the router renders from
-// that product line's ontology, so a policy change never means editing a prompt
-// in Dify.
-//
-// Kept in step with the same template in unica/router/internal/bridge/dify_admin.go.
-func DefaultSystemPrompt(productLineName string) string {
-	const template = `你是{product_line_name}的在线客服。用简体中文、简洁专业地回答客户问题。
-
-【本业务确定性事实】
-{{facts_context}}
-
-【历史经验】
-{{experience_context}}
-
-【参考知识】
-{{knowledge_context}}
-
-回答规则：
-1. 上述"确定性事实"优先级最高，与其他信息冲突时以它为准，不得改写、换算或推测。
-2. 事实中列为"不提供"的服务，客户问及时必须明确告知不支持，不要含糊带过，也不要用行业常识替客户补一个答案。
-3. 若某项事实按情形不同（如按商品类别、服务阶段、客户类型分档），回答时必须说明适用情形，不得只给一个数字。
-4. 确定性事实中没有的具体数值（价格、参数、库存、个人订单进度），不要编造，请客户提供具体信息或转人工。
-5. 每引用一条确定性事实，在该句末尾附加标签 [FACT:属性名=取值]；若该事实分情形，写作 [FACT:情形.属性名=取值]。标签不会展示给客户。`
-	return strings.Replace(template, "{product_line_name}", productLineName, 1)
-}
-
 // Login authenticates against the Dify console API with an admin email/password and
 // returns an access token that can be passed to the other provisioning methods.
 func (b *DifyBridge) Login(ctx context.Context, email, password string) (string, error) {
@@ -227,7 +199,7 @@ func (b *DifyBridge) CreateChatApp(ctx context.Context, token, name string) (*Di
 	// Setting the system prompt requires a configured model provider, which usually
 	// does not exist yet at provisioning time. Treat failure as non-fatal: the prompt
 	// can be configured later in the Dify console or via the AI-config API.
-	prompt := DefaultSystemPrompt(name)
+	prompt := difyapp.DefaultSystemPrompt(name)
 	if err := b.updateSystemPromptWithToken(ctx, resp.ID, prompt, token); err != nil {
 		log.Printf("[dify-bridge] WARN: default system prompt not applied for app_id=%s (configure it in Dify after adding a model provider): %v", resp.ID, err)
 	} else {
@@ -352,7 +324,7 @@ func (b *DifyBridge) updateSystemPromptWithToken(ctx context.Context, appID, pro
 
 	cfg["pre_prompt"] = prompt
 	cfg["prompt_type"] = "simple"
-	cfg["user_input_form"] = withContextVariables(cfg["user_input_form"])
+	cfg["user_input_form"] = difyapp.WithContextVariables(cfg["user_input_form"])
 
 	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPost, "/apps/"+appID+"/model-config", cfg, token); err != nil {
 		return fmt.Errorf("update system prompt: %w", err)
@@ -362,59 +334,9 @@ func (b *DifyBridge) updateSystemPromptWithToken(ctx context.Context, appID, pro
 }
 
 // contextVariables are the app variables the router passes in the chat-messages
-// `inputs` map. Dify silently drops an input the app has not declared, so an app
-// provisioned without these can never receive the ontology facts or the recalled
-// knowledge, however well the prompt is written.
-//
-// Kept in step with unica/router/internal/bridge/dify_admin.go.
-var contextVariables = []struct{ Name, Label string }{
-	{"facts_context", "确定性事实"},
-	{"experience_context", "历史经验"},
-	{"knowledge_context", "参考知识"},
-	{"customer_name", "客户标识"},
-	{"channel", "渠道"},
-	{"product_line", "产品线"},
-}
-
-// withContextVariables returns the app's input form with any missing router
-// context variable appended. Existing entries are preserved: an operator may
-// have added their own, and a form rewritten wholesale would drop them.
-func withContextVariables(existing interface{}) []interface{} {
-	form, _ := existing.([]interface{})
-
-	declared := make(map[string]bool, len(form))
-	for _, item := range form {
-		entry, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		// Each entry is keyed by its control type: paragraph, text-input, select.
-		for _, spec := range entry {
-			field, ok := spec.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if name, ok := field["variable"].(string); ok {
-				declared[name] = true
-			}
-		}
-	}
-
-	for _, v := range contextVariables {
-		if declared[v.Name] {
-			continue
-		}
-		form = append(form, map[string]interface{}{
-			"paragraph": map[string]interface{}{
-				"variable": v.Name,
-				"label":    v.Label,
-				"required": false,
-				"default":  "",
-			},
-		})
-	}
-	return form
-}
+// `inputs` map. The list lives in difyapp because the router provisions the same
+// apps and must declare the same set.
+var contextVariables = difyapp.ContextVariables
 
 // ListKnowledgeDocuments lists documents in a Dify dataset (knowledge base).
 func (b *DifyBridge) ListKnowledgeDocuments(ctx context.Context, datasetID string, apiKey string) (*KnowledgeListResponse, error) {

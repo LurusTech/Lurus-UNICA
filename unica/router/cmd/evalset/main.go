@@ -1,10 +1,12 @@
 // Command evalset scores the golden question set against a live Dify deployment
 // and reports answer-quality pass rates per product line and category.
 //
-// It replays the exact decision path the router uses — same Dify call, same
-// confidence heuristic, same guardrail evaluation, same intent-tag stripping — so
-// the score reflects what a customer would actually receive rather than an
-// idealised approximation.
+// It replays the router's decision path through the same JudgeAnswer entry
+// point the live pipeline uses — same tag stripping, same validation, same
+// confidence heuristic, same guardrail evaluation — so the score reflects what
+// a customer would actually receive rather than an idealised approximation,
+// and the two callers cannot drift apart. Two divergences are deliberate and
+// declared in scoreCase: no breaker, and validation capped at shadow.
 //
 // This is a manually run tool, not a CI gate: it needs a reachable Dify and real
 // product-line credentials. Typical use:
@@ -37,7 +39,6 @@ import (
 	"github.com/kefu/unica/router/internal/eval"
 	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/intent"
-	"github.com/kefu/unica/router/internal/marketing"
 	"github.com/kefu/unica/router/internal/routing"
 )
 
@@ -291,7 +292,16 @@ func runCases(cases []eval.Case, configs map[string]lineConfig, concurrency int,
 	return outcomes
 }
 
-// scoreCase replays one customer message end to end and scores the result.
+// scoreCase replays one customer message end to end and scores the result,
+// judging the answer through the router's own JudgeAnswer.
+//
+// Two divergences from the live pipeline are deliberate:
+//   - No breaker (nil): cases must be judged independently of each other, and
+//     a breaker fed in replay order would make outcomes depend on the shuffle.
+//   - Validation is capped at shadow whatever the line's config says: the
+//     golden set judges answer content, and enforcement would replace the very
+//     answers the run exists to measure with handoffs. The validator's opinion
+//     is reported separately as grounding diagnostics.
 func scoreCase(client *bridge.DifyClient, cfg lineConfig, c eval.Case, timeout time.Duration,
 	triageMode guardrail.TriageMode) eval.Outcome {
 
@@ -324,29 +334,32 @@ func scoreCase(client *bridge.DifyClient, cfg lineConfig, c eval.Case, timeout t
 		return eval.Outcome{Case: c, Err: err.Error()}
 	}
 
-	// Score the customer-facing text: both tag protocols are stripped before
-	// delivery, so neither may count towards or against an assertion.
-	claimResult := domain.ParseClaims(resp.Answer)
-	answer := marketing.DetectIntents(claimResult.CleanedAnswer).CleanedAnswer
-
-	// Mirror the router: an answer grounded in injected facts is not low
-	// confidence merely because it needed no retrieval.
-	confidence := routing.GroundedConfidence(resp, routing.GroundingEvidence{
+	validation := domain.ValidationOff
+	if cfg.ontology != nil {
+		validation = domain.ValidationShadow
+	}
+	judgement := routing.JudgeAnswer(routing.JudgeInput{
+		Query:        c.Query,
+		Resp:         resp,
+		Ontology:     cfg.ontology,
+		OntologyCfg:  &domain.Config{InjectFacts: cfg.facts != "", Validation: validation},
+		GuardrailCfg: cfg.guardrail,
+		TriageMode:   triageMode,
+		// Injection is what the run forced, not what config_json says.
 		FactsInjected: cfg.facts != "",
-	})
-	decision := guardrail.NewEvaluator().EvaluateWithMode(c.Query, confidence, cfg.guardrail, triageMode)
-	handoff := decision.Decision == guardrail.DecisionHandoff
+		ProductLineID: c.ProductLine,
+	}, guardrail.NewEvaluator(), nil)
 
-	outcome := eval.Evaluate(c, answer, handoff)
+	outcome := eval.Evaluate(c, judgement.Answer,
+		judgement.Result.Decision == guardrail.DecisionHandoff)
 
-	// Validation runs for diagnostics only and never changes pass or fail. The
+	// Validation ran for diagnostics only and never changes pass or fail. The
 	// golden set judges answer content; this is a second, independent opinion,
 	// and the disagreements between the two are what say whether enforcing would
 	// be safe.
 	if cfg.ontology != nil {
-		violations := domain.Validate(cfg.ontology, claimResult.Claims, answer)
-		grounding := eval.Grounding{Claims: len(claimResult.Claims)}
-		for _, v := range violations {
+		grounding := eval.Grounding{Claims: len(judgement.Claims)}
+		for _, v := range judgement.Violations {
 			grounding.Violations = append(grounding.Violations,
 				fmt.Sprintf("[%s] %s", v.Kind, v.Message))
 		}

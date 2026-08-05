@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'feat/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: ${{ matrix.module }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # unica/pkg has no external dependencies and therefore no go.sum of
+          # its own; key its cache on the workspace sum file instead.
+          - module: unica/pkg
+            cache_path: unica/go.work.sum
+          - module: unica/router
+            cache_path: unica/router/go.sum
+          - module: unica/admin
+            cache_path: unica/admin/go.sum
+          - module: unica/gateway
+            cache_path: unica/gateway/go.sum
+          - module: unica/reporter
+            cache_path: unica/reporter/go.sum
+          - module: deploy/alertmanager/webhook-adapter
+            cache_path: deploy/alertmanager/webhook-adapter/go.sum
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Highest go directive in the repo: unica/go.work requires 1.24.0.
+          # The individual modules declare 1.22 - 1.23.0 and build fine with it.
+          go-version: '1.24.x'
+          cache-dependency-path: ${{ matrix.cache_path }}
+
+      - name: Build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      # The race detector needs cgo and a C toolchain. ubuntu-latest ships gcc
+      # with CGO_ENABLED=1 by default; it is set explicitly here because this
+      # step is the reason the workflow exists.
+      # Database-backed tests skip themselves while ROUTER_TEST_POSTGRES_URL is
+      # unset, so no service containers are provisioned.
+      - name: Test (race detector)
+        working-directory: ${{ matrix.module }}
+        env:
+          CGO_ENABLED: 1
+        run: go test -race ./...

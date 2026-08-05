@@ -44,18 +44,44 @@ type RouterConfig struct {
 	TriageMode guardrail.TriageMode
 }
 
+// Narrow views of the Router's heavyweight dependencies, so the message
+// processing path can be exercised in tests without a database or a live model
+// behind it. The concrete types (*state.Manager, *bridge.DifyClient,
+// *RouteCache, *domain.Store) satisfy them; production wiring is unchanged.
+type conversationStore interface {
+	HandleInboundMessage(ctx context.Context, msg *model.StandardMessage) (string, bool, error)
+	TransitionState(ctx context.Context, convID string, newState state.ConversationState, actor string) error
+	GetConversation(ctx context.Context, convID string) (*state.Conversation, error)
+	UpdateConversationMetadata(ctx context.Context, convID string, metadataJSON json.RawMessage) error
+	CreateMessage(ctx context.Context, msg *state.Message) (string, bool, error)
+}
+
+type difyChatter interface {
+	Chat(ctx context.Context, cfg bridge.DifyConfig, query string, userID string, convID string, inputs map[string]string) (*bridge.DifyResponse, error)
+}
+
+type routeResolver interface {
+	GetRoute(ctx context.Context, channelID string) (*RouteConfig, error)
+}
+
+type ontologySource interface {
+	Active(ctx context.Context, productLineID string) (*domain.Ontology, int, error)
+	RecordViolations(ctx context.Context, conversationID, productLineID string,
+		ontologyVersion int, violations []domain.Violation, enforced bool)
+}
+
 // Router consumes inbound messages, resolves routes, calls AI, and publishes responses.
 type Router struct {
 	rdb               *redis.Client
-	stateManager      *state.Manager
-	difyClient        *bridge.DifyClient
-	routeCache        *RouteCache
+	stateManager      conversationStore
+	difyClient        difyChatter
+	routeCache        routeResolver
 	convLock          *ConvLock
 	acest             *AcestIntegration
 	chatwootForwarder *ChatwootForwarder
 	evaluator         *guardrail.Evaluator
 	triageMode        guardrail.TriageMode
-	ontology          *domain.Store
+	ontology          ontologySource
 	breaker           *domain.Breaker
 	marketingTracker  *marketing.Tracker
 	surveyHandler     *survey.Handler
@@ -110,11 +136,8 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		triageMode = guardrail.DefaultTriageMode
 	}
 
-	return &Router{
+	r := &Router{
 		rdb:               rdb,
-		stateManager:      stateManager,
-		difyClient:        difyClient,
-		routeCache:        routeCache,
 		convLock:          NewConvLock(rdb),
 		chatwootForwarder: cwForwarder,
 		evaluator:         guardrail.NewEvaluator(),
@@ -127,12 +150,29 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		workers:           config.Workers,
 		stopCh:            make(chan struct{}),
 	}
+	// Assign the interface fields only from non-nil concrete pointers: a nil
+	// *state.Manager stored into a non-nil interface value would defeat every
+	// `!= nil` guard downstream.
+	if stateManager != nil {
+		r.stateManager = stateManager
+	}
+	if difyClient != nil {
+		r.difyClient = difyClient
+	}
+	if routeCache != nil {
+		r.routeCache = routeCache
+	}
+	return r
 }
 
 // SetOntology wires the domain ontology store. Leaving it unset disables the
 // feature outright, which is the deployment-level kill switch; per-product-line
 // adoption is a separate decision made in config_json.
 func (r *Router) SetOntology(store *domain.Store) {
+	if store == nil {
+		// Keep the interface nil so downstream `!= nil` guards stay meaningful.
+		return
+	}
 	r.ontology = store
 }
 
@@ -446,7 +486,9 @@ func (r *Router) setDifyConvID(ctx context.Context, convID string, difyConvID st
 	}
 }
 
-// callDifyAndPublish calls the Dify AI API and publishes the response to the outbound stream.
+// callDifyAndPublish calls the Dify AI API, judges the answer, and publishes
+// the outcome. The judgement itself lives in JudgeAnswer, shared with the
+// offline golden-set replay; everything here is the live plumbing around it.
 func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int) {
 	// Extract text query from the message content
 	query := msg.Data.Content.Text
@@ -469,16 +511,58 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		}
 	}
 
-	userID := msg.Data.PlatformMeta.PlatformUserID
-	if userID == "" {
-		userID = msg.Data.CustomerID
+	ac := r.prepareAIContext(ctx, config, msg, convID, workerID, query)
+	difyResp, difyDuration, ok := r.callDify(ctx, config, msg, convID, workerID, query, ac)
+	if !ok {
+		return
 	}
 
-	// Look up existing Dify conversation ID for multi-turn context
-	difyConvID := r.getDifyConvID(ctx, convID)
+	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
+	judgement := JudgeAnswer(JudgeInput{
+		Query:              query,
+		Resp:               difyResp,
+		Ontology:           ac.ontology,
+		OntologyCfg:        ac.ontologyCfg,
+		GuardrailCfg:       guardrailCfg,
+		TriageMode:         r.triageMode,
+		FactsInjected:      ac.factsInjected,
+		ExperienceInjected: ac.experienceInjected,
+		ProductLineID:      config.ProductLineID,
+	}, r.evaluator, r.breaker)
+
+	r.recordJudgement(ctx, config, convID, workerID, ac, &judgement, difyResp)
+	r.deliverJudgement(ctx, config, msg, convID, workerID, query, ac, &judgement,
+		difyResp, difyDuration, guardrailCfg.HoldingMessage)
+}
+
+// aiCallContext is what the pre-call preparation stage decided: the inputs the
+// model will receive and the ontology state the judgement stage needs.
+type aiCallContext struct {
+	inputs             map[string]string
+	userID             string
+	difyConvID         string
+	ontology           *domain.Ontology
+	ontologyVersion    int
+	ontologyCfg        *domain.Config
+	factsInjected      bool
+	experienceInjected bool
+}
+
+// prepareAIContext assembles the Dify inputs for one message: customer
+// identity, the multi-turn session, recalled experience/knowledge, and the
+// ontology facts block.
+func (r *Router) prepareAIContext(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, query string) *aiCallContext {
+	ac := &aiCallContext{
+		userID: msg.Data.PlatformMeta.PlatformUserID,
+		// Look up existing Dify conversation ID for multi-turn context
+		difyConvID: r.getDifyConvID(ctx, convID),
+	}
+	if ac.userID == "" {
+		ac.userID = msg.Data.CustomerID
+	}
 
 	// Build conversation inputs for Dify
-	inputs := map[string]string{
+	ac.inputs = map[string]string{
 		"customer_name": msg.Data.PlatformMeta.PlatformUserID,
 		"channel":       msg.Data.ChannelID,
 		"product_line":  msg.Data.ProductLineID,
@@ -487,15 +571,14 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	// Recall experience/knowledge context from the acest kb-server and inject
 	// it as Dify app variables. Fail-open: on error or timeout the inputs are
 	// simply absent and the Dify app proceeds without them.
-	var experienceInjected bool
 	if r.acest != nil {
 		experienceCtx, knowledgeCtx := r.recallKnowledge(ctx, query)
 		if experienceCtx != "" {
-			inputs["experience_context"] = experienceCtx
-			experienceInjected = true
+			ac.inputs["experience_context"] = experienceCtx
+			ac.experienceInjected = true
 		}
 		if knowledgeCtx != "" {
-			inputs["knowledge_context"] = knowledgeCtx
+			ac.inputs["knowledge_context"] = knowledgeCtx
 		}
 	}
 
@@ -504,31 +587,35 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	// opt-in per product line and both fail open — a product line that has not
 	// adopted the feature, or whose ontology cannot be loaded, proceeds exactly
 	// as it did before.
-	ontologyCfg := domain.LoadConfig(config.ConfigJSON)
-	var ontology *domain.Ontology
-	var ontologyVersion int
-	if r.ontology != nil && ontologyCfg.Active() {
+	ac.ontologyCfg = domain.LoadConfig(config.ConfigJSON)
+	if r.ontology != nil && ac.ontologyCfg.Active() {
 		var err error
-		ontology, ontologyVersion, err = r.ontology.Active(ctx, config.ProductLineID)
+		ac.ontology, ac.ontologyVersion, err = r.ontology.Active(ctx, config.ProductLineID)
 		if err != nil {
 			log.Printf("[router] worker %d: ontology unavailable for product line %s: %v",
 				workerID, config.ProductLineID, err)
 		}
 	}
-	if ontology != nil && ontologyCfg.InjectFacts {
-		if facts := domain.Render(ontology); facts != "" {
-			inputs["facts_context"] = facts
+	if ac.ontology != nil && ac.ontologyCfg.InjectFacts {
+		ac.factsInjected = true
+		if facts := domain.Render(ac.ontology); facts != "" {
+			ac.inputs["facts_context"] = facts
 			metrics.OntologyFactsInjectedTotal.WithLabelValues(config.ProductLineID).Inc()
 		}
 	}
+	return ac
+}
 
-	// Call Dify API
+// callDify performs the model call and turns its two failure modes — an API
+// error and an empty answer — into handoffs, because "there is no answer" must
+// still route the customer to a person. Returns ok=false when no judgeable
+// answer exists.
+func (r *Router) callDify(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, query string, ac *aiCallContext) (*bridge.DifyResponse, time.Duration, bool) {
 	difyStart := time.Now()
-	difyCfg := bridge.DifyConfig{
+	difyResp, err := r.difyClient.Chat(ctx, bridge.DifyConfig{
 		BaseURL: config.DifyBaseURL,
 		APIKey:  config.DifyAPIKey,
-	}
-	difyResp, err := r.difyClient.Chat(ctx, difyCfg, query, userID, difyConvID, inputs)
+	}, query, ac.userID, ac.difyConvID, ac.inputs)
 	difyDuration := time.Since(difyStart)
 	metrics.DifyCallDuration.Observe(difyDuration.Seconds())
 
@@ -537,7 +624,7 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		metrics.DifyErrorsTotal.WithLabelValues("api_call").Inc()
 		r.handoffWithoutAnswer(ctx, config, msg, convID, workerID,
 			guardrail.ReasonAIUnavailable, "AI 服务调用失败："+err.Error())
-		return
+		return nil, difyDuration, false
 	}
 
 	if difyResp.Answer == "" {
@@ -545,36 +632,26 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		metrics.DifyErrorsTotal.WithLabelValues("empty_answer").Inc()
 		r.handoffWithoutAnswer(ctx, config, msg, convID, workerID,
 			guardrail.ReasonAIUnavailable, "AI 返回了空回复")
-		return
+		return nil, difyDuration, false
 	}
+	return difyResp, difyDuration, true
+}
 
-	// Strip [FACT:...] claim tags before anything else reads the answer. This
-	// runs regardless of configuration: a tag that reaches a customer is a defect
-	// even when nobody is checking the claims it carries.
-	claimResult := domain.ParseClaims(difyResp.Answer)
-	difyResp.Answer = claimResult.CleanedAnswer
-
-	// Marketing intent detection: parse [INTENT:xxx] tags and strip from customer-facing answer
-	detectResult := marketing.DetectIntents(difyResp.Answer)
-	difyResp.Answer = detectResult.CleanedAnswer
-
-	// Check the answer against the ontology. Shadow mode records and counts but
-	// decides nothing; only enforce overrides the guardrail below.
-	var violations []domain.Violation
-	if ontology != nil && ontologyCfg.Validates() {
-		violations = domain.Validate(ontology, claimResult.Claims, difyResp.Answer)
-		for _, v := range violations {
-			metrics.ClaimViolationsTotal.WithLabelValues(string(v.Kind), string(ontologyCfg.Validation)).Inc()
-		}
-		if len(violations) > 0 {
-			log.Printf("[router] worker %d: %d ontology violation(s) for conversation %s (mode=%s): %s",
-				workerID, len(violations), convID, ontologyCfg.Validation, domain.Summary(violations))
-		}
+// recordJudgement emits the observability and bookkeeping side effects of one
+// judged answer: metrics, logs, marketing intents, the Dify session, and the
+// retrieval-hit flag the reporter reads.
+func (r *Router) recordJudgement(ctx context.Context, config *RouteConfig, convID string, workerID int, ac *aiCallContext, j *Judgement, difyResp *bridge.DifyResponse) {
+	for _, v := range j.Violations {
+		metrics.ClaimViolationsTotal.WithLabelValues(string(v.Kind), string(ac.ontologyCfg.Validation)).Inc()
+	}
+	if len(j.Violations) > 0 {
+		log.Printf("[router] worker %d: %d ontology violation(s) for conversation %s (mode=%s): %s",
+			workerID, len(j.Violations), convID, ac.ontologyCfg.Validation, domain.Summary(j.Violations))
 	}
 
 	// Track detected intents in conversation metadata (non-blocking)
-	if len(detectResult.Intents) > 0 && r.marketingTracker != nil {
-		if err := r.marketingTracker.TrackIntents(ctx, convID, config.ProductLineID, detectResult.Intents); err != nil {
+	if len(j.Intents) > 0 && r.marketingTracker != nil {
+		if err := r.marketingTracker.TrackIntents(ctx, convID, config.ProductLineID, j.Intents); err != nil {
 			log.Printf("[router] worker %d: failed to track marketing intents for %s: %v", workerID, convID, err)
 		}
 	}
@@ -595,14 +672,6 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		}
 		r.setDifyConvID(ctx, convID, difyResp.ConversationID, msgCount)
 	}
-
-	// Calculate confidence score
-	// Confidence must account for ontology grounding, not retrieval alone:
-	// injected facts produce no retriever_resources, so a retrieval-only score
-	// suppresses exactly the answers the ontology just made correct.
-	confidence := GroundedConfidence(difyResp,
-		evidenceFor(ontology, ontologyCfg, experienceInjected, claimResult.Claims, violations))
-	confidenceF32 := float32(confidence)
 
 	// Track retrieval metrics
 	if len(difyResp.RetrieverResources) > 0 {
@@ -627,62 +696,37 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	// Track token usage metrics
 	metrics.DifyTokensTotal.WithLabelValues("prompt").Add(float64(difyResp.Metadata.Usage.PromptTokens))
 	metrics.DifyTokensTotal.WithLabelValues("completion").Add(float64(difyResp.Metadata.Usage.CompletionTokens))
-	metrics.DifyConfidenceScore.Observe(confidence)
+	metrics.DifyConfidenceScore.Observe(j.Confidence)
 
-	// Guardrail evaluation: decide whether to send AI response or trigger handoff
-	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
-	evalResult := r.evaluator.EvaluateWithMode(query, confidence, guardrailCfg, r.triageMode)
-
-	// Enforcement is bounded by the breaker: one wrong assertion in an ontology
-	// suppresses every correct answer that touches it, so unbounded enforcement
-	// turns an authoring mistake into a queue of handoffs that grows with
-	// traffic. The window is fed on every checked answer, including under shadow
-	// mode, so a product line whose rate is already implausible never gets to
-	// enforce a single message.
-	enforcing := ontologyCfg.Enforces()
-	if ontology != nil && ontologyCfg.Validates() {
-		if enforcing {
-			allowed, tripped := r.breaker.Allow(config.ProductLineID, ontologyCfg.Breaker)
-			if tripped {
-				metrics.OntologyBreakerTripsTotal.WithLabelValues(config.ProductLineID).Inc()
-			}
-			if !allowed {
-				enforcing = false
-				if len(violations) > 0 {
-					metrics.OntologyBreakerBypassedTotal.WithLabelValues(config.ProductLineID).Inc()
-				}
-			}
-		}
-		r.breaker.Record(config.ProductLineID, len(violations) > 0, ontologyCfg.Breaker)
+	if j.BreakerTripped {
+		metrics.OntologyBreakerTripsTotal.WithLabelValues(config.ProductLineID).Inc()
+	}
+	if j.BreakerBypassed {
+		metrics.OntologyBreakerBypassedTotal.WithLabelValues(config.ProductLineID).Inc()
+	}
+	if ac.ontology != nil && ac.ontologyCfg.Validates() {
 		metrics.OntologyBreakerOpen.WithLabelValues(config.ProductLineID).
 			Set(boolToFloat(r.breaker.Open(config.ProductLineID)))
 	}
 
-	// A contradicted answer is wrong regardless of how well it retrieved, so
-	// enforcement overrides the confidence verdict rather than adjusting it.
-	// The agent receives the reason, not just the fact that they were handed a
-	// conversation the AI could have answered.
-	if enforcing && len(violations) > 0 {
-		evalResult = &guardrail.EvalResult{
-			Decision:   guardrail.DecisionHandoff,
-			Reason:     guardrail.ReasonClaimConflict,
-			Confidence: 0,
-			Detail:     domain.Summary(violations),
-		}
-	}
+	metrics.GuardrailDecisionsTotal.WithLabelValues(string(j.Result.Decision), j.Result.Reason).Inc()
+}
 
-	metrics.GuardrailDecisionsTotal.WithLabelValues(string(evalResult.Decision), evalResult.Reason).Inc()
-
-	switch evalResult.Decision {
+// deliverJudgement acts on the verdict: publish the answer or hand the
+// conversation to a person, feed the experience loop, and persist violation
+// evidence last.
+func (r *Router) deliverJudgement(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, query string, ac *aiCallContext, j *Judgement, difyResp *bridge.DifyResponse, difyDuration time.Duration, holdingMessage string) {
+	switch j.Result.Decision {
 	case guardrail.DecisionSend:
 		// Normal flow: publish AI response to outbound stream
-		r.publishAIResponse(ctx, config, msg, convID, workerID, difyResp.Answer, confidenceF32, difyResp.Metadata.Usage.TotalTokens, len(difyResp.RetrieverResources), difyDuration)
+		r.publishAIResponse(ctx, config, msg, convID, workerID, j.Answer, float32(j.Confidence),
+			difyResp.Metadata.Usage.TotalTokens, len(difyResp.RetrieverResources), difyDuration)
 
 		// Feed the delivered answer back into the experience KB as a success
 		// sample (asynchronous, lossy by design).
 		r.submitExperience(bridge.Experience{
 			UserQuery:         query,
-			AssistantResponse: difyResp.Answer,
+			AssistantResponse: j.Answer,
 			Success:           true,
 			ToolsUsed:         retrievalDatasets(difyResp),
 			SessionID:         convID,
@@ -691,10 +735,10 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	case guardrail.DecisionHandoff:
 		// Handoff flow: send holding message, publish handoff event, transition state
 		log.Printf("[router] worker %d: guardrail triggered handoff for conversation %s (reason=%s, confidence=%.3f, keyword=%s)",
-			workerID, convID, evalResult.Reason, evalResult.Confidence, evalResult.MatchedKeyword)
+			workerID, convID, j.Result.Reason, j.Result.Confidence, j.Result.MatchedKeyword)
 
-		r.publishHoldingMessage(ctx, config, msg, convID, workerID, guardrailCfg.HoldingMessage)
-		r.publishHandoffEvent(ctx, msg, convID, config.ProductLineID, evalResult, difyResp.Answer)
+		r.publishHoldingMessage(ctx, config, msg, convID, workerID, holdingMessage)
+		r.publishHandoffEvent(ctx, msg, convID, config.ProductLineID, j.Result, j.Answer)
 
 		// Transition conversation to human_processing
 		if err := r.stateManager.TransitionState(ctx, convID, state.StateHumanProcessing, "guardrail"); err != nil {
@@ -706,12 +750,12 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		// blocked-topic interception suppresses an answer that may have been
 		// entirely correct; recording it as a failure would teach the experience
 		// KB that the question is unanswerable and degrade future recall.
-		if guardrail.IsQualitySignal(evalResult.Reason) {
+		if guardrail.IsQualitySignal(j.Result.Reason) {
 			r.submitExperience(bridge.Experience{
 				UserQuery:         query,
-				AssistantResponse: difyResp.Answer,
+				AssistantResponse: j.Answer,
 				Success:           false,
-				Error:             fmt.Sprintf("handoff: %s (confidence=%.3f)", evalResult.Reason, evalResult.Confidence),
+				Error:             fmt.Sprintf("handoff: %s (confidence=%.3f)", j.Result.Reason, j.Result.Confidence),
 				ToolsUsed:         retrievalDatasets(difyResp),
 				SessionID:         convID,
 			})
@@ -719,10 +763,13 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	}
 
 	// Recorded last: the reply has already been published, so a slow or failing
-	// insert costs evidence rather than a customer's answer.
-	if len(violations) > 0 {
-		r.ontology.RecordViolations(ctx, convID, config.ProductLineID, ontologyVersion,
-			violations, ontologyCfg.Enforces())
+	// insert costs evidence rather than a customer's answer. Enforced reflects
+	// what actually happened to this answer — with the breaker open it stays
+	// false even under ValidationEnforce, so the evidence table never claims a
+	// suppression that did not occur.
+	if len(j.Violations) > 0 {
+		r.ontology.RecordViolations(ctx, convID, config.ProductLineID, ac.ontologyVersion,
+			j.Violations, j.Enforced)
 	}
 }
 

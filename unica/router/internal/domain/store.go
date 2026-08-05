@@ -113,63 +113,11 @@ func (s *Store) Invalidate(productLineID string) {
 	s.mu.Unlock()
 }
 
-// Publish stores a new ontology version and makes it the active one.
-//
-// The deactivate and insert run in one transaction because the partial unique
-// index permits only one active row: without the transaction a concurrent import
-// would fail on the index rather than queue behind it.
-func (s *Store) Publish(ctx context.Context, productLineID string, o *Ontology, sourceYAML, note string) (version int, err error) {
-	if err := o.Validate(); err != nil {
-		return 0, fmt.Errorf("refusing to publish an invalid ontology: %w", err)
-	}
-	compiled, err := o.Compile()
-	if err != nil {
-		return 0, err
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("begin: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
-				log.Printf("[domain] rollback failed: %v", rbErr)
-			}
-		}
-	}()
-
-	var next sql.NullInt64
-	if err = tx.QueryRowContext(ctx,
-		`SELECT MAX(version) FROM ontology_versions WHERE product_line_id = $1`,
-		productLineID).Scan(&next); err != nil {
-		return 0, fmt.Errorf("read current version: %w", err)
-	}
-	version = int(next.Int64) + 1
-
-	if _, err = tx.ExecContext(ctx,
-		`UPDATE ontology_versions SET active = FALSE WHERE product_line_id = $1 AND active`,
-		productLineID); err != nil {
-		return 0, fmt.Errorf("deactivate previous version: %w", err)
-	}
-
-	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO ontology_versions (product_line_id, version, source_yaml, compiled, active, note)
-		 VALUES ($1, $2, $3, $4, TRUE, NULLIF($5, ''))`,
-		productLineID, version, sourceYAML, compiled, note); err != nil {
-		return 0, fmt.Errorf("insert version %d: %w", version, err)
-	}
-
-	if err = tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
-	}
-
-	s.Invalidate(productLineID)
-	return version, nil
-}
-
-// Rollback reactivates an earlier version.
-func (s *Store) Rollback(ctx context.Context, productLineID string, version int) (err error) {
+// withTx runs fn inside a transaction, rolling back on any error and committing
+// otherwise. A rollback failure is logged rather than returned: fn's error is
+// the one that explains what went wrong, and ErrTxDone only says the transaction
+// had already ended.
+func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -182,28 +130,87 @@ func (s *Store) Rollback(ctx context.Context, productLineID string, version int)
 		}
 	}()
 
-	if _, err = tx.ExecContext(ctx,
-		`UPDATE ontology_versions SET active = FALSE WHERE product_line_id = $1 AND active`,
-		productLineID); err != nil {
-		return fmt.Errorf("deactivate current version: %w", err)
+	if err = fn(tx); err != nil {
+		return err
 	}
-
-	res, err := tx.ExecContext(ctx,
-		`UPDATE ontology_versions SET active = TRUE WHERE product_line_id = $1 AND version = $2`,
-		productLineID, version)
-	if err != nil {
-		return fmt.Errorf("activate version %d: %w", version, err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if affected == 0 {
-		return fmt.Errorf("product line %s has no ontology version %d", productLineID, version)
-	}
-
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// Publish stores a new ontology version and makes it the active one.
+//
+// The deactivate and insert run in one transaction because the partial unique
+// index permits only one active row: without the transaction a concurrent import
+// would fail on the index rather than queue behind it.
+func (s *Store) Publish(ctx context.Context, productLineID string, o *Ontology, sourceYAML, note string) (int, error) {
+	if err := o.Validate(); err != nil {
+		return 0, fmt.Errorf("refusing to publish an invalid ontology: %w", err)
+	}
+	compiled, err := o.Compile()
+	if err != nil {
+		return 0, err
+	}
+
+	var version int
+	err = s.withTx(ctx, func(tx *sql.Tx) error {
+		var next sql.NullInt64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT MAX(version) FROM ontology_versions WHERE product_line_id = $1`,
+			productLineID).Scan(&next); err != nil {
+			return fmt.Errorf("read current version: %w", err)
+		}
+		version = int(next.Int64) + 1
+
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ontology_versions SET active = FALSE WHERE product_line_id = $1 AND active`,
+			productLineID); err != nil {
+			return fmt.Errorf("deactivate previous version: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO ontology_versions (product_line_id, version, source_yaml, compiled, active, note)
+			 VALUES ($1, $2, $3, $4, TRUE, NULLIF($5, ''))`,
+			productLineID, version, sourceYAML, compiled, note); err != nil {
+			return fmt.Errorf("insert version %d: %w", version, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	s.Invalidate(productLineID)
+	return version, nil
+}
+
+// Rollback reactivates an earlier version.
+func (s *Store) Rollback(ctx context.Context, productLineID string, version int) error {
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ontology_versions SET active = FALSE WHERE product_line_id = $1 AND active`,
+			productLineID); err != nil {
+			return fmt.Errorf("deactivate current version: %w", err)
+		}
+
+		res, err := tx.ExecContext(ctx,
+			`UPDATE ontology_versions SET active = TRUE WHERE product_line_id = $1 AND version = $2`,
+			productLineID, version)
+		if err != nil {
+			return fmt.Errorf("activate version %d: %w", version, err)
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("rows affected: %w", err)
+		}
+		if affected == 0 {
+			return fmt.Errorf("product line %s has no ontology version %d", productLineID, version)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	s.Invalidate(productLineID)

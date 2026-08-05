@@ -2,7 +2,6 @@ package routing
 
 import (
 	"github.com/kefu/unica/router/internal/bridge"
-	"github.com/kefu/unica/router/internal/domain"
 )
 
 // Confidence levels assigned when an answer's support comes from the ontology
@@ -14,9 +13,10 @@ const (
 	confidenceVerified = 0.90
 
 	// confidenceGrounded is used when deterministic facts were supplied and the
-	// answer contradicted none of them, but made no checkable claim either.
-	// Weaker than verified — absence of contradiction is not proof — yet still
-	// above a default threshold, because the model had the facts in front of it.
+	// answer was not proven to contradict them, but earned no verified boost
+	// either. Weaker than verified — absence of contradiction is not proof —
+	// yet still above a default threshold, because the model had the facts in
+	// front of it.
 	confidenceGrounded = 0.75
 
 	// confidenceExperience is used when recalled experience notes were supplied
@@ -30,9 +30,10 @@ const (
 	// integration pointless.
 	confidenceExperience = 0.72
 
-	// confidenceContradicted is used when the answer conflicts with the
-	// ontology. Retrieval quality is irrelevant at that point: the answer is
-	// wrong however well it was sourced.
+	// confidenceContradicted is what an enforcement override reports as the
+	// suppressed answer's confidence (see JudgeAnswer). It is not produced by
+	// GroundedConfidence: contradictions are handled by enforcement, never by
+	// down-scoring.
 	confidenceContradicted = 0.0
 )
 
@@ -42,13 +43,14 @@ type GroundingEvidence struct {
 	FactsInjected bool
 	// ExperienceInjected reports whether recalled experience notes were supplied.
 	ExperienceInjected bool
-	// Checked reports whether claims were actually validated. False in shadow
-	// mode's absence and when validation is disabled, in which case Violations
-	// carries no information.
+	// Checked reports whether claims were actually validated. False when
+	// validation is off, in which case Violations carries no information.
 	Checked bool
 	// Claims is how many checkable claims the answer made.
 	Claims int
-	// Violations is how many of them, or of the denial scan, failed.
+	// Violations is how many of them, or of the denial scan, failed. It never
+	// lowers the score below what validation-off would give; it only forfeits
+	// the verified boost, whose meaning the answer no longer satisfies.
 	Violations int
 }
 
@@ -71,16 +73,22 @@ type GroundingEvidence struct {
 //	0.70 (default)  accept retrieval, recalled experience, or facts
 //	0.75            require deterministic facts; experience alone is not enough
 //	0.80            require facts *and* claims that were checked and held
+//
+// Contradictions deliberately do NOT lower the score. Suppressing a
+// contradicted answer is enforcement, and enforcement lives behind the
+// ValidationEnforce switch and the breaker (see JudgeAnswer). Routing the
+// penalty through the score instead would suppress answers via the
+// low_confidence path — invisible to the breaker, active even under shadow
+// mode, and written back to the experience knowledge base as a failed sample —
+// each of which breaks a stated contract of those mechanisms. A violating
+// answer therefore scores exactly what it would have scored with validation
+// off; the one thing it forfeits is the verified boost.
 func GroundedConfidence(resp *bridge.DifyResponse, ev GroundingEvidence) float64 {
 	retrieval := CalculateConfidence(resp)
 
-	if ev.Checked && ev.Violations > 0 {
-		return confidenceContradicted
-	}
-
 	grounded := 0.0
 	switch {
-	case ev.FactsInjected && ev.Checked && ev.Claims > 0:
+	case ev.FactsInjected && ev.Checked && ev.Claims > 0 && ev.Violations == 0:
 		grounded = confidenceVerified
 	case ev.FactsInjected:
 		grounded = confidenceGrounded
@@ -102,17 +110,4 @@ func boolToFloat(b bool) float64 {
 		return 1
 	}
 	return 0
-}
-
-// evidenceFor builds the grounding summary for one answer.
-func evidenceFor(ontology *domain.Ontology, cfg *domain.Config, experienceInjected bool,
-	claims []domain.Claim, violations []domain.Violation) GroundingEvidence {
-
-	return GroundingEvidence{
-		FactsInjected:      ontology != nil && cfg.InjectFacts,
-		ExperienceInjected: experienceInjected,
-		Checked:            ontology != nil && cfg.Validates(),
-		Claims:             len(claims),
-		Violations:         len(violations),
-	}
 }

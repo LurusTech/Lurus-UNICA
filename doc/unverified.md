@@ -33,32 +33,32 @@
 
 ---
 
-## 二、router.go 的消息处理路径没有测试覆盖
+## 二、判定链路（原 2.1/2.2 已修，遗留两条新的未验证）
 
-### 2.1 `handleMessage` / `callDifyAndPublish` 无任何测试
-`internal/routing/router_test.go` 只覆盖了配置结构体、常量和构造函数。
-主处理链路需要 Redis Streams + Dify，没有用 miniredis 或打桩。
+原 2.1（主链路无测试）与 2.2（evalset 重实现判定链路且已漂移）已解决：
+判定链路抽成了 `internal/routing/judge.go` 的共同入口，router 与 evalset
+都走它；`internal/routing` 用 miniredis + Dify 打桩覆盖了重复投递跳过、
+enforce 强制转人工、熔断打开后放行三条主链路。evalset 与 router 仅剩两处
+**声明式**差异（无熔断、校验封顶 shadow），写在 `scoreCase` 的注释里。
 
-直接后果——本期新增的两处接线**只有依赖被测过，接线本身没有**：
+修复过程中发现并修掉一处被证伪的设计：**违规曾把置信度直接压到 0**，
+借 `low_confidence` 转人工——熔断拦不住这条通道（跳闸后违规回答照样被压下，
+`bypassed` 指标记了"放行"实则没放）、shadow 模式因此并非只影子、
+冲突还被误记为失败经验样本。现在冲突不降分，压制只发生在受熔断约束的
+enforce 覆盖里（`grounding.go` / `judge.go` 注释与测试钉住新契约）。
 
-- 重复投递跳过（`if duplicate { ack; return }`）
-- 熔断接线（`Allow` / `Record` 的调用顺序、`enforcing` 变量、三个指标）
+### 2.1（新）语义修正只被推理与单元测试支撑，未经真实流量观察
+熔断"跳闸后违规回答发给客户"的行为此前在线上从未真正发生过（旧通道拦着）。
+修正后它会真的发生——这正是设计意图，但其真实代价从未被观察。
 
-熔断的状态机本身有 14 个单元测试钉死；被测的是 `domain.Breaker`，不是 router 怎么用它。
+**要验证需要**：enforce + 熔断跳闸的真实场次，对照
+`router_ontology_breaker_bypassed_total` 与客诉/改答率。
 
-**要验证需要**：给 `internal/routing` 引入 miniredis + Dify 打桩，
-至少覆盖：重复投递、熔断打开时不拦截、熔断关闭时拦截。
+### 2.2（新）黄金集旧基线不可比
+evalset 的置信度现在与 router 完全一致（含 0.90 校验加成档）。
+在旧语义下保存的 `-save-baseline` 文件与新跑分不可直接 diff。
 
-### 2.2 `cmd/evalset` 重实现了判定链路，不经过 router.go
-黄金集 60/60 是这么算出来的：evalset 自己调 `GroundedConfidence`、
-自己调 `EvaluateWithMode`、自己调 `domain.Validate`。
-**它证明的是这些组件正确，不是 router 把它们接对了。**
-
-而且已经开始漂移：evalset 里**没有熔断**，router 里有。
-以后往判定链路里加东西，两边会越差越远。
-
-**要验证需要**：让 evalset 复用 router 的判定函数（把那段抽成一个共同入口），
-或者接受漂移但在 evalset 里显式标注"此处与 router 不同"。
+**要验证需要**：重跑一次黄金集并保存新基线，旧基线归档作废。
 
 ---
 
@@ -78,12 +78,11 @@
 状态每进程独立，N 个副本各判各的。临界比例时可能有的副本在拦、有的没拦。
 从未跑过一个以上的 router 实例。
 
-### 3.4 `-race` 从未跑过
-本机 Windows 无 gcc、WSL 无 Go，`go test -race` 跑不起来。
-并发测试（8 goroutine × 200 次混合调用）只跑通了加锁路径，**没有证明无数据竞争**。
-
-**要验证需要**：任意 Linux 环境 `cd unica/router && go test ./... -race`。
-这一条对整个仓库都成立，不只是熔断。
+### 3.4 `-race` 已在 WSL 首跑全绿，CI 首跑待确认
+2026-08-05 在 WSL (go1.23.4/linux) 对 pkg/router/admin/gateway/reporter 全部
+`go test -race ./...` 通过，零数据竞争——原"从未跑过"已解决。
+`.github/workflows/ci.yml` 会在每次 push 重复它，**工作流本身尚未跑通过一次**，
+首次全绿后删除本条。
 
 ---
 

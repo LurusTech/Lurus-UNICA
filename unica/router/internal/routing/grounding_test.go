@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/kefu/unica/router/internal/bridge"
-	"github.com/kefu/unica/router/internal/domain"
 	"github.com/kefu/unica/router/internal/guardrail"
 )
 
@@ -72,17 +71,34 @@ func TestGroundedConfidence_VerifiedClaimsScoreHighest(t *testing.T) {
 	}
 }
 
-// TestGroundedConfidence_ContradictionOverridesEverything covers the direction
-// that matters most: an answer that conflicts with the ontology is wrong however
-// well it retrieved.
-func TestGroundedConfidence_ContradictionOverridesEverything(t *testing.T) {
-	perfectRetrieval := respWithScores(1.0, 1.0, 1.0)
+// TestGroundedConfidence_ViolationsForfeitOnlyTheVerifiedBoost pins the
+// enforcement boundary: a violating answer scores exactly what it would have
+// scored with validation off, no more and no less. More would hand out the
+// verified boost to an answer whose claims did not hold; less would suppress
+// answers through the low_confidence path, which the breaker cannot stop and
+// which shadow mode promises not to do. Suppression is the enforcement
+// override's job (see JudgeAnswer), never the score's.
+func TestGroundedConfidence_ViolationsForfeitOnlyTheVerifiedBoost(t *testing.T) {
+	cases := []*bridge.DifyResponse{
+		respWithScores(),
+		respWithScores(0.2),
+		respWithScores(1.0, 1.0, 1.0),
+	}
+	for _, resp := range cases {
+		violating := GroundedConfidence(resp, GroundingEvidence{
+			FactsInjected: true, Checked: true, Claims: 2, Violations: 1,
+		})
+		unchecked := GroundedConfidence(resp, GroundingEvidence{FactsInjected: true})
+		if math.Abs(violating-unchecked) > 0.0001 {
+			t.Errorf("a violating answer scored %v, want the validation-off score %v", violating, unchecked)
+		}
 
-	got := GroundedConfidence(perfectRetrieval, GroundingEvidence{
-		FactsInjected: true, Checked: true, Claims: 2, Violations: 1,
-	})
-	if got != confidenceContradicted {
-		t.Errorf("a contradicted answer scored %v, want %v", got, confidenceContradicted)
+		verified := GroundedConfidence(resp, GroundingEvidence{
+			FactsInjected: true, Checked: true, Claims: 2,
+		})
+		if violating > verified-0.0001 && verified > unchecked {
+			t.Errorf("violations did not forfeit the verified boost: violating=%v verified=%v", violating, verified)
+		}
 	}
 }
 
@@ -159,31 +175,5 @@ func TestGroundedConfidence_FactsOutrankExperience(t *testing.T) {
 	}
 }
 
-func TestEvidenceFor(t *testing.T) {
-	ontology := &domain.Ontology{ProductLine: "T"}
-	claims := []domain.Claim{{Property: "p", Value: "1"}}
-	violations := []domain.Violation{{Kind: domain.ViolationRange}}
-
-	off := evidenceFor(ontology, domain.DefaultConfig(), false, claims, violations)
-	if off.FactsInjected || off.Checked {
-		t.Error("the default config must produce no grounding evidence")
-	}
-
-	cfg := &domain.Config{InjectFacts: true, Validation: domain.ValidationEnforce}
-	on := evidenceFor(ontology, cfg, false, claims, violations)
-	if !on.FactsInjected || !on.Checked || on.Claims != 1 || on.Violations != 1 {
-		t.Errorf("evidence not gathered: %+v", on)
-	}
-
-	// No ontology means no grounding, whatever the configuration says.
-	none := evidenceFor(nil, cfg, false, claims, violations)
-	if none.FactsInjected || none.Checked {
-		t.Errorf("a product line without an ontology must produce no evidence: %+v", none)
-	}
-
-	// Experience recall is independent of the ontology and must survive its absence.
-	recall := evidenceFor(nil, domain.DefaultConfig(), true, nil, nil)
-	if !recall.ExperienceInjected || recall.FactsInjected || recall.Checked {
-		t.Errorf("experience-only evidence not gathered: %+v", recall)
-	}
-}
+// The evidence-gathering rules that used to live in a standalone helper are
+// now part of JudgeAnswer and are covered by judge_test.go.
