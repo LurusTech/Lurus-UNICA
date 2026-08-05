@@ -1,0 +1,120 @@
+# Example ontology: a study-abroad agency (留学中介).
+#
+# Not a shipped product line — this directory holds worked examples for
+# customers authoring their own ontology, and the test suite loads them to prove
+# the model is not shaped around retail.
+#
+# What this example exercises that a retail ontology does not:
+#
+#   - a conditioning axis that is not product class. Refund rates depend on how
+#     far an application has progressed, so `服务阶段` is declared as a dimension
+#     and assertions are scoped by it. An answer that quotes one refund rate
+#     without naming the stage is wrong for two of the three stages, and the
+#     ambiguity check catches it for the same reason it catches a single warranty
+#     figure quoted for a line with two tiers.
+#   - date and percent value types.
+#   - denials that matter commercially rather than operationally: promising an
+#     admission outcome is the industry's classic mis-selling claim, and no
+#     agency can honour it.
+
+product_line: 启航留学
+version: 1
+
+classes:
+  服务套餐:
+    label: 服务套餐
+  基础套餐:
+    label: 基础申请套餐
+    subclass_of: 服务套餐
+  全包套餐:
+    label: 全程无忧套餐
+    subclass_of: 服务套餐
+
+disjoint:
+  - [基础套餐, 全包套餐]
+
+dimensions:
+  服务阶段:
+    label: 服务阶段
+    values: [signed, submitted, delivered]
+    labels:
+      signed: 已签约未提交材料
+      submitted: 已提交材料
+      delivered: 已递交院校
+
+properties:
+  服务费:
+    label: 服务费
+    domain: 服务套餐
+    range: {type: money, unit: yuan}
+    functional: true
+
+  申请院校数上限:
+    label: 可申请院校数
+    domain: 服务套餐
+    range: {type: integer, unit: 所}
+    functional: true
+
+  # No `requires` here: the stage is the scope, not a companion fact, so an
+  # unqualified rate is caught by the ambiguity check instead.
+  退费比例:
+    label: 退费比例
+    range: {type: percent}
+    functional: true
+
+  雅思最低要求:
+    label: 雅思最低分
+    range: {type: decimal, min: 0, max: 9}
+    functional: true
+
+  秋季入学申请截止:
+    label: 秋季入学申请截止日
+    range: {type: date}
+    functional: true
+
+  签证办理周期:
+    label: 签证办理周期
+    range: {type: enum, unit: week, values: ["4-8"], labels: {"4-8": "4 到 8"}}
+    functional: true
+
+  服务热线:
+    label: 服务热线
+    range: {type: enum, values: ["400-600-0088"]}
+    functional: true
+
+assertions:
+  - class: 基础套餐
+    values:
+      服务费: 12000
+      申请院校数上限: 5
+
+  - class: 全包套餐
+    values:
+      服务费: 38000
+      申请院校数上限: 12
+
+  # Facts that hold regardless of package, conditioned only on stage.
+  - scope: {服务阶段: signed}
+    values: {退费比例: 80}
+
+  - scope: {服务阶段: submitted}
+    values: {退费比例: 50}
+
+  - scope: {服务阶段: delivered}
+    values: {退费比例: 0}
+
+  - values:
+      雅思最低要求: 6.5
+      秋季入学申请截止: "2026-10-15"
+      签证办理周期: "4-8"
+      服务热线: "400-600-0088"
+
+denies:
+  - term: 保录取
+    note: 录取结果由院校决定，任何机构都无法承诺；我们承诺的是申请材料质量与递交时效
+  - term: 代写文书
+    note: 我们提供文书指导与润色，不代写，代写会被院校判定学术不诚信
+  - term: 包签证
+    note: 签证由使领馆审批，我们负责材料准备与模拟面签
+  - term: 退全款
+    note: 退费比例按服务阶段计算，最高 80%

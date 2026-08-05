@@ -1,0 +1,105 @@
+# Example ontology: a bookkeeping and tax agency (财务代理).
+#
+# This is the case the class hierarchy fits best without any stretching:
+# taxpayer category *is* a class, and VAT rates differ by it exactly the way a
+# warranty differs by product type. The value of the ambiguity check is higher
+# here than in retail — quoting "增值税率 3%" to a general taxpayer is a
+# filing error, not a disappointment.
+#
+# It also exercises a second conditioning axis (业务类型) crossed with the class
+# axis, which is the shape a single hierarchy cannot express: a general taxpayer
+# has three rates depending on what they sell.
+
+product_line: 明道财税
+version: 1
+
+classes:
+  纳税人:
+    label: 纳税人
+  小规模纳税人:
+    label: 小规模纳税人
+    subclass_of: 纳税人
+  一般纳税人:
+    label: 一般纳税人
+    subclass_of: 纳税人
+
+disjoint:
+  - [小规模纳税人, 一般纳税人]
+
+dimensions:
+  业务类型:
+    label: 业务类型
+    values: [goods, services, transport]
+    labels:
+      goods: 销售货物
+      services: 现代服务
+      transport: 交通运输
+
+properties:
+  增值税率:
+    label: 增值税率
+    domain: 纳税人
+    range: {type: percent}
+    functional: true
+
+  月度申报截止日:
+    label: 月度申报截止日
+    range: {type: integer, unit: 日, values: ["15"]}
+    functional: true
+
+  代理记账年费:
+    label: 代理记账年费
+    domain: 纳税人
+    range: {type: money, unit: yuan}
+    functional: true
+
+  逾期申报滞纳金日利率:
+    label: 逾期申报滞纳金（每日）
+    range: {type: percent, max: 1}
+    functional: true
+
+  小规模季度免税额度:
+    label: 小规模纳税人季度免税额度
+    domain: 小规模纳税人
+    range: {type: money, unit: yuan, values: ["300000"]}
+    functional: true
+
+  服务热线:
+    label: 服务热线
+    range: {type: enum, values: ["400-800-0166"]}
+    functional: true
+
+assertions:
+  # One rate for small-scale taxpayers regardless of what they sell.
+  - class: 小规模纳税人
+    values:
+      增值税率: 3
+      代理记账年费: 3600
+      小规模季度免税额度: 300000
+
+  # Three rates for general taxpayers, crossed with business type. This is the
+  # combination a single class hierarchy cannot express without inventing a class
+  # per pairing.
+  - scope: {class: 一般纳税人, 业务类型: goods}
+    values: {增值税率: 13}
+  - scope: {class: 一般纳税人, 业务类型: services}
+    values: {增值税率: 6}
+  - scope: {class: 一般纳税人, 业务类型: transport}
+    values: {增值税率: 9}
+
+  - class: 一般纳税人
+    values:
+      代理记账年费: 7200
+
+  - values:
+      月度申报截止日: 15
+      逾期申报滞纳金日利率: 0.05
+      服务热线: "400-800-0166"
+
+denies:
+  - term: 包过审
+    note: 税务审核由税务机关决定，我们负责账务合规与申报及时
+  - term: 做两套账
+    note: 属违法行为，我们不提供
+  - term: 零申报避税
+    note: 长期零申报会触发税务预警，应据实申报

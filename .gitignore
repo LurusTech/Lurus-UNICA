@@ -33,6 +33,8 @@ tmp/
 # Environment files (preview credentials)
 .env
 .env.*
+# Templates carry no real credentials and must ship with the compose files.
+!.env.example
 
 # evalset run artifacts. The pass/fail baseline (doc/eval-baseline.json) IS
 # committed — it is the reference every later run is compared against; only the

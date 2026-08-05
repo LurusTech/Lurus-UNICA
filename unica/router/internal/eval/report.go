@@ -23,6 +23,57 @@ type LineReport struct {
 	Outcomes    []Outcome               `json:"outcomes"`
 }
 
+// GroundingSummary aggregates what the validator saw across a run.
+//
+// The two disagreement lists are the point. The golden set and the validator are
+// independent judges of the same answers, so where they differ is the only
+// evidence available about whether enforcement would be safe:
+//
+//   - FlaggedButPassed: the validator objected to an answer the golden set
+//     accepted. Under enforce these become suppressed correct answers.
+//   - FailedButClean: the golden set rejected an answer the validator waved
+//     through. These are the errors enforcement would not have caught.
+//
+// Neither list is a pure error rate, and FailedButClean in particular has three
+// possible readings, only one of which blames the validator:
+//
+//   - the ontology declares nothing about what the case asserts (coverage gap);
+//   - the answer is genuinely wrong in a way no constraint expresses;
+//   - the golden assertion is wrong and the validator was right to stay quiet.
+//
+// The third is not hypothetical: a live run failed an answer for containing
+// 无理由 when the answer correctly said 拆封后不支持无理由退货. Read the entries,
+// do not just count them.
+type GroundingSummary struct {
+	// Cases is how many answers were checked at all.
+	Cases int `json:"cases"`
+	// WithTags is how many of them carried at least one [FACT:] tag.
+	WithTags int `json:"with_tags"`
+	// Claims is the total number of tags emitted.
+	Claims int `json:"claims"`
+
+	ViolationsByKind map[string]int `json:"violations_by_kind,omitempty"`
+
+	FlaggedButPassed []string `json:"flagged_but_passed,omitempty"`
+	FailedButClean   []string `json:"failed_but_clean,omitempty"`
+
+	// NotScored counts checked answers whose content was never judged, because
+	// the guardrail handed the conversation off before the assertions ran. They
+	// cannot appear in either disagreement list, and reporting them separately
+	// stops an empty list from reading as agreement.
+	NotScored int `json:"not_scored,omitempty"`
+}
+
+// TagRate is the share of checked answers that emitted at least one claim tag.
+// A low rate means the precise half of validation is mostly idle, however well
+// the prompt is written.
+func (g GroundingSummary) TagRate() float64 {
+	if g.Cases == 0 {
+		return 0
+	}
+	return float64(g.WithTags) / float64(g.Cases)
+}
+
 // Report is the full run result across all product lines.
 type Report struct {
 	Lines   []LineReport `json:"lines"`
@@ -30,6 +81,9 @@ type Report struct {
 	Passed  int          `json:"passed"`
 	Failed  int          `json:"failed"`
 	Errored int          `json:"errored"`
+
+	// Grounding is present when the run injected facts.
+	Grounding *GroundingSummary `json:"grounding,omitempty"`
 }
 
 // BuildReport aggregates raw outcomes into a per-line, per-category report.
@@ -74,7 +128,55 @@ func BuildReport(outcomes []Outcome) Report {
 		rep.Failed += lr.Failed
 		rep.Errored += lr.Errored
 	}
+	rep.Grounding = summariseGrounding(outcomes)
 	return rep
+}
+
+func summariseGrounding(outcomes []Outcome) *GroundingSummary {
+	summary := GroundingSummary{ViolationsByKind: map[string]int{}}
+
+	for _, o := range outcomes {
+		if o.Errored() || o.Grounding == nil {
+			continue
+		}
+		summary.Cases++
+		summary.Claims += o.Grounding.Claims
+		if o.Grounding.Claims > 0 {
+			summary.WithTags++
+		}
+		for _, v := range o.Grounding.Violations {
+			summary.ViolationsByKind[violationKind(v)]++
+		}
+
+		switch {
+		case o.Handoff:
+			// Content assertions are skipped on handoff, so there is no verdict
+			// to compare the validator against.
+			summary.NotScored++
+		case o.Grounding.Flagged() && o.Passed():
+			summary.FlaggedButPassed = append(summary.FlaggedButPassed, o.Case.ID)
+		case !o.Grounding.Flagged() && !o.Passed():
+			summary.FailedButClean = append(summary.FailedButClean, o.Case.ID)
+		}
+	}
+
+	if summary.Cases == 0 {
+		return nil
+	}
+	sort.Strings(summary.FlaggedButPassed)
+	sort.Strings(summary.FailedButClean)
+	return &summary
+}
+
+// violationKind extracts the leading "[kind] " marker domain.Summary writes.
+func violationKind(formatted string) string {
+	if !strings.HasPrefix(formatted, "[") {
+		return "unknown"
+	}
+	if end := strings.Index(formatted, "]"); end > 1 {
+		return formatted[1:end]
+	}
+	return "unknown"
 }
 
 // PassRate returns passed / scorable, where scorable excludes errored cases so a
@@ -180,10 +282,57 @@ func (r Report) Text(verbose bool) string {
 		}
 	}
 
+	if r.Grounding != nil {
+		b.WriteString(r.Grounding.Text(verbose))
+	}
+
 	fmt.Fprintf(&b, "\nTOTAL  %d/%d  (%.1f%%)", r.Passed, r.Total-r.Errored, r.PassRate()*100)
 	if r.Errored > 0 {
 		fmt.Fprintf(&b, "   [%d errored]", r.Errored)
 	}
 	b.WriteString("\n")
+	return b.String()
+}
+
+// Text renders the validator's side of a run: how much of it actually engaged,
+// what it objected to, and where it disagreed with the golden set.
+func (g GroundingSummary) Text(verbose bool) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "\nONTOLOGY  %d case(s) checked  |  tags on %d (%.0f%%)  |  %d claim(s)\n",
+		g.Cases, g.WithTags, g.TagRate()*100, g.Claims)
+
+	if len(g.ViolationsByKind) == 0 {
+		b.WriteString("    no violations\n")
+	} else {
+		kinds := make([]string, 0, len(g.ViolationsByKind))
+		for k := range g.ViolationsByKind {
+			kinds = append(kinds, k)
+		}
+		sort.Strings(kinds)
+		for _, k := range kinds {
+			fmt.Fprintf(&b, "    %-26s %d\n", k, g.ViolationsByKind[k])
+		}
+	}
+
+	// The two judges disagreeing is the only available measure of whether
+	// enforcement would suppress correct answers or miss wrong ones.
+	fmt.Fprintf(&b, "    %-26s %d\n", "flagged-but-passed", len(g.FlaggedButPassed))
+	fmt.Fprintf(&b, "    %-26s %d\n", "failed-but-clean", len(g.FailedButClean))
+	if g.NotScored > 0 {
+		fmt.Fprintf(&b, "    %-26s %d  (handed off; content never judged)\n",
+			"not-comparable", g.NotScored)
+	}
+
+	if verbose {
+		if len(g.FlaggedButPassed) > 0 {
+			fmt.Fprintf(&b, "      would be suppressed under enforce: %s\n",
+				strings.Join(g.FlaggedButPassed, " "))
+		}
+		if len(g.FailedButClean) > 0 {
+			fmt.Fprintf(&b, "      enforce would not have caught:     %s\n",
+				strings.Join(g.FailedButClean, " "))
+		}
+	}
 	return b.String()
 }

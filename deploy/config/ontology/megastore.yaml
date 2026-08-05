@@ -1,0 +1,102 @@
+# Domain ontology for the MegaStore product line.
+#
+# Facts of record come from deploy/config/canned_responses.yaml; a consistency
+# test fails the build if the two drift apart. This file is the import format —
+# the router reads the compiled row in ontology_versions, not this file.
+#
+# Import:  go run ./cmd/ontology import -dir ../../deploy/config/ontology
+#
+# Closed world is in force (the default): a property that is not declared below
+# means MegaStore does not offer that capability at all, and the renderer denies
+# it out loud rather than staying silent.
+
+product_line: MegaStore
+version: 1
+
+classes:
+  GeneralProduct:
+    label: 商品
+
+properties:
+  return_window_days:
+    label: 无理由退货窗口
+    domain: GeneralProduct
+    range: {type: integer, unit: day, values: ["7"]}
+    functional: true
+
+  refund_arrival_days:
+    label: 退款到账时间
+    domain: GeneralProduct
+    range: {type: integer, unit: workday, values: ["3"]}
+    functional: true
+
+  warranty_months:
+    label: 质保期
+    domain: GeneralProduct
+    range: {type: integer, unit: month, values: ["12"]}
+    functional: true
+
+  shipping_standard_days:
+    label: 标准快递时效
+    domain: GeneralProduct
+    range: {type: enum, unit: workday, values: ["3-5"]}
+    functional: true
+
+  shipping_express_days:
+    label: 加急快递时效
+    domain: GeneralProduct
+    range: {type: enum, unit: workday, values: ["1-2"]}
+    functional: true
+
+  shipping_express_fee_yuan:
+    label: 加急运费
+    domain: GeneralProduct
+    range: {type: integer, unit: yuan, values: ["15"]}
+    functional: true
+
+  return_process_requirement:
+    label: 退货流程
+    domain: GeneralProduct
+    range: {type: enum, values: [联系客服, 寄回商品]}
+    min_cardinality: 1
+
+  payment_method:
+    label: 支付方式
+    domain: GeneralProduct
+    range: {type: enum, values: [微信支付, 支付宝, 银行卡]}
+    min_cardinality: 1
+
+  hotline:
+    label: 客服热线
+    domain: GeneralProduct
+    range: {type: enum, values: ["400-100-0001"]}
+    functional: true
+
+  service_hours:
+    label: 服务时间
+    domain: GeneralProduct
+    range: {type: enum, values: ["周一至周五 9:00-18:00"]}
+    functional: true
+
+# No return_precondition is declared: MegaStore's 7-day window is unconditional.
+# Under closed world, a claim that returns require unopened packaging is a
+# violation rather than an unverifiable statement.
+assertions:
+  - class: GeneralProduct
+    values:
+      return_window_days: 7
+      refund_arrival_days: 3
+      warranty_months: 12
+      shipping_standard_days: "3-5"
+      shipping_express_days: "1-2"
+      shipping_express_fee_yuan: 15
+      return_process_requirement: [联系客服, 寄回商品]
+      payment_method: [微信支付, 支付宝, 银行卡]
+      hotline: "400-100-0001"
+      service_hours: "周一至周五 9:00-18:00"
+
+denies:
+  - term: 货到付款
+    note: 请使用微信支付、支付宝或银行卡
+  - term: 分期付款
+  - term: 冷链配送

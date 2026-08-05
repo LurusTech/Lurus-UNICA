@@ -1,0 +1,132 @@
+# Domain ontology for the FreshMart product line.
+#
+# The most consequential file of the three: FreshMart has NO no-questions-asked
+# return policy and NO warranty, while both sibling lines have both. Those two
+# absences are the single most likely wrong answer the system can give, because
+# a 7-day return window is the default assumption in Chinese e-commerce and the
+# model will supply it unprompted.
+#
+# Closed world plus the explicit denials below are what stop that: the property
+# is simply not declared, so any claim about it is a violation, and the injected
+# context states the absence out loud instead of leaving a gap to fill.
+
+product_line: FreshMart
+version: 1
+
+classes:
+  FreshProduct:
+    label: 生鲜商品
+
+properties:
+  quality_claim_window_hours:
+    label: 质量问题申报窗口
+    domain: FreshProduct
+    range: {type: integer, unit: hour, values: ["24"]}
+    functional: true
+
+  return_precondition:
+    label: 退款前置条件
+    domain: FreshProduct
+    range:
+      type: enum
+      values: [quality_defect, photo_evidence]
+      # Identifiers stay machine-comparable; the labels are what a customer reads.
+      labels: {quality_defect: 质量问题, photo_evidence: 拍照取证}
+    min_cardinality: 1
+
+  refund_arrival_hours:
+    label: 退款到账时间
+    domain: FreshProduct
+    range: {type: integer, unit: hour, values: ["24"]}
+    functional: true
+
+  shipping_method:
+    label: 配送方式
+    domain: FreshProduct
+    range: {type: enum, values: [冷链配送]}
+    functional: true
+
+  shipping_local:
+    label: 同城时效
+    domain: FreshProduct
+    range: {type: enum, values: [同城当日达]}
+    functional: true
+
+  shipping_remote:
+    label: 外地时效
+    domain: FreshProduct
+    range: {type: enum, values: [外地次日达]}
+    functional: true
+
+  express_hours:
+    label: 加急时效
+    domain: FreshProduct
+    # Stored in the unit the answer should use: the model copies the rendered
+    # value verbatim, so "120分钟" in the ontology becomes "120分钟" to a customer
+    # where the canned response says 2 小时.
+    range: {type: integer, unit: hour, values: ["2"]}
+    functional: true
+
+  express_scope:
+    label: 加急适用范围
+    domain: FreshProduct
+    range: {type: enum, values: [限同城]}
+    functional: true
+
+  express_fee_yuan:
+    label: 加急配送费
+    domain: FreshProduct
+    range: {type: integer, unit: yuan, values: ["10"]}
+    functional: true
+
+  payment_method:
+    label: 支付方式
+    domain: FreshProduct
+    range: {type: enum, values: [微信支付, 支付宝, 银行卡, 货到付款]}
+    min_cardinality: 1
+
+  freshness:
+    label: 新鲜度保证
+    domain: FreshProduct
+    range: {type: enum, values: [当日采购]}
+    functional: true
+
+  hotline:
+    label: 客服热线
+    domain: FreshProduct
+    range: {type: enum, values: ["400-200-0002"]}
+    functional: true
+
+  service_hours:
+    label: 服务时间
+    domain: FreshProduct
+    range: {type: enum, values: ["每天 7:00-22:00"]}
+    functional: true
+
+# Deliberately absent: return_window_days, warranty_months. Their absence is the
+# assertion, not an omission.
+assertions:
+  - class: FreshProduct
+    values:
+      quality_claim_window_hours: 24
+      return_precondition: [quality_defect, photo_evidence]
+      refund_arrival_hours: 24
+      shipping_method: 冷链配送
+      shipping_local: 同城当日达
+      shipping_remote: 外地次日达
+      express_hours: 2
+      express_scope: 限同城
+      express_fee_yuan: 10
+      payment_method: [微信支付, 支付宝, 银行卡, 货到付款]
+      freshness: 当日采购
+      hotline: "400-200-0002"
+      service_hours: "每天 7:00-22:00"
+
+denies:
+  - term: 无理由退货
+    note: 生鲜商品不适用，质量问题请在签收后 24 小时内拍照联系客服，审核通过全额退款
+  - term: 质保
+    note: 生鲜商品无质保概念，质量问题走 24 小时申报
+  - term: 分期付款
+  - term: 顺丰
+    note: 生鲜使用冷链配送

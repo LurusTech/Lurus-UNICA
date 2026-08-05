@@ -1,0 +1,154 @@
+# Domain ontology for the TechZone product line.
+#
+# The only line with a conditional return policy (15 days, unopened only) and a
+# split warranty (phones 12 months, accessories 6). Both are routinely flattened
+# by the model: the precondition gets dropped, and the two warranty tiers get
+# merged into one number.
+#
+# The class hierarchy exists for exactly that second reason — warranty_months is
+# asserted on the subclasses, not on the parent, so the most specific assertion
+# decides. Phone and Accessory are declared disjoint so an answer cannot apply
+# one tier's rules to the other.
+
+product_line: TechZone
+version: 1
+
+classes:
+  DigitalProduct:
+    label: 数码产品
+  Phone:
+    label: 手机
+    subclass_of: DigitalProduct
+  Accessory:
+    label: 配件
+    subclass_of: DigitalProduct
+
+disjoint:
+  - [Phone, Accessory]
+
+properties:
+  return_window_days:
+    label: 无理由退货窗口
+    domain: DigitalProduct
+    range: {type: integer, unit: day, values: ["15"]}
+    functional: true
+    # Quoting 15 days without the precondition is accurate and still misleading:
+    # a customer who has opened the box will act on a policy that does not cover
+    # them. The two facts must travel together.
+    requires: [return_precondition]
+
+  return_precondition:
+    label: 退货前置条件
+    domain: DigitalProduct
+    range:
+      type: enum
+      values: [unopened]
+      labels: {unopened: 未拆封}
+    min_cardinality: 1
+
+  post_open_remedy:
+    label: 拆封后的救济途径
+    domain: DigitalProduct
+    range: {type: enum, values: [保修]}
+    functional: true
+
+  return_process_requirement:
+    label: 退货流程要求
+    domain: DigitalProduct
+    range: {type: enum, values: [保留完整包装, 检测通过后退款]}
+    min_cardinality: 1
+
+  # Not pinned to a single value: the two subclasses carry different tiers, and
+  # the bounds only reject implausible ones.
+  warranty_months:
+    label: 保修期
+    domain: DigitalProduct
+    range: {type: integer, unit: month, min: 1, max: 36}
+    functional: true
+
+  shipping_carrier:
+    label: 承运商
+    domain: DigitalProduct
+    range: {type: enum, values: [顺丰]}
+    functional: true
+
+  shipping_standard_days:
+    label: 标准快递时效
+    domain: DigitalProduct
+    range: {type: enum, unit: workday, values: ["2-3"]}
+    functional: true
+
+  shipping_express:
+    label: 加急时效
+    domain: DigitalProduct
+    range: {type: enum, values: [次日达]}
+    functional: true
+
+  # An enum, not a number: TechZone has no fixed express fee, and pinning the
+  # only legal answer to 到付 is what rejects a figure borrowed from a sibling
+  # line (MegaStore 15 元 / FreshMart 10 元).
+  shipping_express_fee:
+    label: 加急运费
+    domain: DigitalProduct
+    range: {type: enum, values: [到付]}
+    functional: true
+
+  installment_periods:
+    label: 分期期数
+    domain: DigitalProduct
+    range: {type: integer, unit: period, values: ["6", "12", "24"]}
+    min_cardinality: 1
+
+  payment_method:
+    label: 支付方式
+    domain: DigitalProduct
+    range: {type: enum, values: [微信支付, 支付宝, 银行卡]}
+    min_cardinality: 1
+
+  tech_support:
+    label: 技术支持方式
+    domain: DigitalProduct
+    range: {type: enum, values: [快速入门指南, 远程协助]}
+    min_cardinality: 1
+
+  hotline:
+    label: 技术支持热线
+    domain: DigitalProduct
+    range: {type: enum, values: ["400-300-0003"]}
+    functional: true
+
+  service_hours:
+    label: 服务时间
+    domain: DigitalProduct
+    range: {type: enum, values: ["周一至周日 9:00-21:00"]}
+    functional: true
+
+assertions:
+  - class: DigitalProduct
+    values:
+      return_window_days: 15
+      return_precondition: [unopened]
+      post_open_remedy: 保修
+      return_process_requirement: [保留完整包装, 检测通过后退款]
+      shipping_carrier: 顺丰
+      shipping_standard_days: "2-3"
+      shipping_express: 次日达
+      shipping_express_fee: 到付
+      installment_periods: [6, 12, 24]
+      payment_method: [微信支付, 支付宝, 银行卡]
+      tech_support: [快速入门指南, 远程协助]
+      hotline: "400-300-0003"
+      service_hours: "周一至周日 9:00-21:00"
+
+  - class: Phone
+    values:
+      warranty_months: 12
+
+  - class: Accessory
+    values:
+      warranty_months: 6
+
+denies:
+  - term: 货到付款
+    note: 请使用微信支付、支付宝、银行卡，大额订单可分期
+  - term: 冷链配送

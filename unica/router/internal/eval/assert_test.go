@@ -74,8 +74,10 @@ func TestEvaluate_MustNotContain(t *testing.T) {
 	}
 }
 
-// TestEvaluate_MustDeny pins the closed-world assertion semantics: a capability
-// the product line does not offer must not be presented as available.
+// TestEvaluate_MustDeny pins how a closed-world violation surfaces as a scoring
+// failure: a capability the product line does not offer must not be presented as
+// available. The negation semantics it relies on are tested in internal/domain,
+// alongside the IsAffirmed implementation both callers now share.
 func TestEvaluate_MustDeny(t *testing.T) {
 	c := newCase(t, Expect{MustDeny: []string{"货到付款"}})
 
@@ -116,18 +118,6 @@ func TestEvaluate_MustDeny_NegationInsideTerm(t *testing.T) {
 	}
 	if o := Evaluate(c, "生鲜商品不提供无理由退货，但质量问题24小时内可全额退款。", false); hasKind(o, FailAffirmedDenied) {
 		t.Error("a properly negated 无理由 mention must pass")
-	}
-}
-
-// TestIsAffirmed_AcceptedLimitation documents a known false negative rather than
-// leaving it undiscovered. Negation is detected at sentence granularity, so an
-// unrelated negation in the same sentence masks an affirmation. Cases that need
-// precision use must_not_match instead. Change this test only deliberately.
-func TestIsAffirmed_AcceptedLimitation(t *testing.T) {
-	const answer = "我们支持货到付款，配送时不收额外费用。"
-	if isAffirmed(answer, "货到付款") {
-		t.Fatal("behaviour changed: distant negation is now handled — tighten or remove " +
-			"the limitation note in assert.go and update this test deliberately")
 	}
 }
 
@@ -184,26 +174,6 @@ func TestEvaluate_UnexpectedHandoffReportsOnlyMismatch(t *testing.T) {
 	o := Evaluate(c, "正在为您转接人工客服，请稍候...", true)
 	if len(o.Failures) != 1 || o.Failures[0].Kind != FailHandoffMismatch {
 		t.Errorf("expected exactly one handoff_mismatch, got %v", kinds(o))
-	}
-}
-
-func TestSentenceAround(t *testing.T) {
-	const answer = "标准快递3-5个工作日。加急1-2个工作日，需加15元。"
-	const term = "15元"
-
-	idx := strings.Index(answer, term)
-	got := sentenceAround(answer, idx, len(term))
-	const want = "加急1-2个工作日，需加15元"
-	if got != want {
-		t.Errorf("sentenceAround = %q, want %q", got, want)
-	}
-}
-
-func TestSentenceAround_NoDelimiters(t *testing.T) {
-	const answer = "支持货到付款"
-	idx := strings.Index(answer, "货到付款")
-	if got := sentenceAround(answer, idx, len("货到付款")); got != answer {
-		t.Errorf("sentenceAround = %q, want whole answer %q", got, answer)
 	}
 }
 
