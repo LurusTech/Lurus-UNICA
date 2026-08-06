@@ -46,6 +46,10 @@ type AIConfigHandler struct {
 	// dataset is nil when no dataset key is configured, which is the only
 	// distinction the knowledge endpoints need between "unavailable" and "ready".
 	dataset *difyapp.DatasetClient
+	// indexingTechnique rides along with every document create. A workspace
+	// whose model provider has no embedding model must run "economy"; sending
+	// "high_quality" there makes Dify reject the upload outright.
+	indexingTechnique string
 }
 
 // NewAIConfigHandler creates a new AI config handler. datasetAPIBaseURL is the
@@ -59,12 +63,17 @@ func NewAIConfigHandler(
 	rdb *redis.Client,
 	datasetAPIBaseURL string,
 	datasetAPIKey string,
+	indexingTechnique string,
 ) *AIConfigHandler {
+	if indexingTechnique != "economy" {
+		indexingTechnique = "high_quality"
+	}
 	h := &AIConfigHandler{
-		configRepo: configRepo,
-		plRepo:     plRepo,
-		difyBridge: difyBridge,
-		rdb:        rdb,
+		configRepo:        configRepo,
+		plRepo:            plRepo,
+		difyBridge:        difyBridge,
+		rdb:               rdb,
+		indexingTechnique: indexingTechnique,
 	}
 	if datasetAPIKey != "" {
 		h.dataset = difyapp.NewDatasetClient(datasetAPIBaseURL, datasetAPIKey)
@@ -554,7 +563,8 @@ func (h *AIConfigHandler) uploadFromMultipart(w http.ResponseWriter, r *http.Req
 
 	// The body is fully consumed by the parse above, so the size limit can no
 	// longer fire from here on.
-	result, err := h.dataset.CreateDocumentByFile(r.Context(), datasetID, filename, file, difyapp.DocumentOptions{ProcessRule: defaultProcessRule})
+	result, err := h.dataset.CreateDocumentByFile(r.Context(), datasetID, filename, file,
+		difyapp.DocumentOptions{IndexingTechnique: h.indexingTechnique, ProcessRule: defaultProcessRule})
 	if err != nil {
 		writeDatasetError(w, "failed to upload knowledge document", err)
 		return nil, err
@@ -579,7 +589,8 @@ func (h *AIConfigHandler) uploadFromJSON(w http.ResponseWriter, r *http.Request,
 		return nil, nil
 	}
 
-	result, err := h.dataset.CreateDocumentByText(r.Context(), datasetID, name, text, difyapp.DocumentOptions{ProcessRule: defaultProcessRule})
+	result, err := h.dataset.CreateDocumentByText(r.Context(), datasetID, name, text,
+		difyapp.DocumentOptions{IndexingTechnique: h.indexingTechnique, ProcessRule: defaultProcessRule})
 	if err != nil {
 		writeDatasetError(w, "failed to upload knowledge document", err)
 		return nil, err

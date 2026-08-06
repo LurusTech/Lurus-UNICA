@@ -108,7 +108,7 @@ func newKnowledgeFixture(t *testing.T, respond http.HandlerFunc) (*AIConfigHandl
 		DifyAgentID:   &agentID,
 		DifyDatasetID: &datasetID,
 	}}
-	h := NewAIConfigHandler(nil, pls, nil, nil, fake.server.URL+"/v1", "dataset-key-123")
+	h := NewAIConfigHandler(nil, pls, nil, nil, fake.server.URL+"/v1", "dataset-key-123", "economy")
 	return h, fake, pls
 }
 
@@ -228,8 +228,10 @@ func TestAIConfigHandler_UploadKnowledgeFile(t *testing.T) {
 		t.Fatalf("unexpected upstream call: %s %s", call.Method, call.Path)
 	}
 	parts := parseMultipart(t, call)
-	if got := parts["data"]; !strings.Contains(got, "high_quality") {
-		t.Errorf("settings part not sent: %q", got)
+	// "economy" is the fixture's configured technique, not the default, so this
+	// pins that the configured value is what travels.
+	if got := parts["data"]; !strings.Contains(got, "economy") {
+		t.Errorf("configured indexing technique not sent: %q", got)
 	}
 	if got := parts["file"]; !strings.Contains(got, "return window is 7 days") {
 		t.Errorf("file content not forwarded: %q", got)
@@ -416,7 +418,7 @@ func TestAIConfigHandler_KnowledgeScopeForbidden(t *testing.T) {
 func TestAIConfigHandler_KnowledgeWithoutDatasetKey(t *testing.T) {
 	datasetID := "ds-1"
 	pls := &fakeAIConfigPLs{pl: &repository.ProductLine{ID: "pl-1", Name: "TestLine", DifyDatasetID: &datasetID}}
-	h := NewAIConfigHandler(nil, pls, nil, nil, "http://dify.invalid/v1", "")
+	h := NewAIConfigHandler(nil, pls, nil, nil, "http://dify.invalid/v1", "", "")
 
 	cases := []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/ai-config/pl-1/knowledge"},

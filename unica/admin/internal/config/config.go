@@ -26,6 +26,11 @@ type Config struct {
 	// key does not work here and a dataset key does not work for chat. Empty
 	// disables knowledge base management rather than failing at startup.
 	DifyDatasetAPIKey string
+	// DifyIndexingTechnique is the indexing mode sent with document creates.
+	// "high_quality" needs an embedding model configured in the Dify workspace;
+	// a deployment without one (the model provider offers no embeddings) must
+	// run "economy", or Dify rejects every upload with provider_not_initialize.
+	DifyIndexingTechnique string
 	// ChatwootBaseURL is the Chatwoot deployment root (e.g. "http://chatwoot:3000").
 	ChatwootBaseURL string
 	// ChatwootPlatformToken authenticates the Chatwoot Platform API, the only API
@@ -54,7 +59,8 @@ func Load() *Config {
 		DifyAPIBaseURL:    envOrDefault("DIFY_API_BASE_URL", "http://dify:5001/v1"),
 		DifyAdminEmail:    envOrDefault("DIFY_ADMIN_EMAIL", ""),
 		DifyAdminPassword: envOrDefault("DIFY_ADMIN_PASSWORD", ""),
-		DifyDatasetAPIKey: envOrDefault("DIFY_DATASET_API_KEY", ""),
+		DifyDatasetAPIKey:     envOrDefault("DIFY_DATASET_API_KEY", ""),
+		DifyIndexingTechnique: envOrDefault("DIFY_INDEXING_TECHNIQUE", "high_quality"),
 
 		ChatwootBaseURL:       envOrDefault("CHATWOOT_BASE_URL", ""),
 		ChatwootPlatformToken: envOrDefault("CHATWOOT_PLATFORM_TOKEN", ""),

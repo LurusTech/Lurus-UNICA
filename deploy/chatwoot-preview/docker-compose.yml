@@ -87,6 +87,10 @@ services:
       # stored per product line are rejected by the dataset endpoints; leaving
       # this empty disables knowledge base management instead of failing.
       DIFY_DATASET_API_KEY: "${DIFY_DATASET_API_KEY:-}"
+      # "high_quality" needs an embedding model configured in the Dify
+      # workspace; a deployment whose model provider has no embeddings (e.g.
+      # DeepSeek-only) must set "economy" or every knowledge upload is refused.
+      DIFY_INDEXING_TECHNIQUE: "${DIFY_INDEXING_TECHNIQUE:-high_quality}"
       # Chatwoot deployment onboarding provisions tenants in, reached inside the
       # compose network so no public hop is involved.
       CHATWOOT_BASE_URL: "http://rails:3000"

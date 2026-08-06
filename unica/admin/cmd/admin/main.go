@@ -98,7 +98,7 @@ func main() {
 	plHandler := handler.NewProductLineHandler(plRepo, difyBridge, cfg.DifyAdminEmail, cfg.DifyAdminPassword)
 	channelHandler := handler.NewChannelHandler(channelRepo, aesKey, cfg.GatewayHost, rdb)
 	aiConfigHandler := handler.NewAIConfigHandler(aiConfigRepo, plRepo, difyBridge, rdb,
-		cfg.DifyAPIBaseURL, cfg.DifyDatasetAPIKey)
+		cfg.DifyAPIBaseURL, cfg.DifyDatasetAPIKey, cfg.DifyIndexingTechnique)
 	if cfg.DifyDatasetAPIKey == "" {
 		log.Println("[admin] WARNING: DIFY_DATASET_API_KEY not set, knowledge base management disabled")
 	}
