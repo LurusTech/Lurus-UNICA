@@ -18,7 +18,7 @@
       ai-config/knowledge 扩成完整增删查并补产品线越权校验与审计；修复 router 知识管道
       两处根因（数据集端点误用应用级 key；indexing-status 误用 document_id，实际按
       batch——迁移补 batch 列）；假服务单测全绿
-- [ ] 2. portal：knowledge.html 知识库页（列表/上传/删除/索引状态轮询）；客户视图
+- [x] 2. portal：knowledge.html 知识库页（列表/上传/删除/索引状态轮询）；客户视图
       （前端解 JWT，单线账号锁定产品线选择并隐藏切换，多开行为保持）
 - [ ] 3. 一键开户：POST /api/v1/customers 编排（建产品线→开通 Dify→建账号+按线赋角色→
       Chatwoot 平台 API 建 account/用户/绑定/API 收件箱→写 config_json.chatwoot；
@@ -27,7 +27,11 @@
       知识库上传→索引→问答接地 + portal 走查；结论写回 unverified 清单
 
 ## Current Status
-- [ ] In Progress（第 1 期已完成并通过评审闸门；第 2 期进行中。分支 feat/customer-self-service）
+- [ ] In Progress（第 1、2 期已完成并通过评审闸门；第 3 期进行中。分支 feat/customer-self-service）
+- 第 2 期要点：portal 新增 knowledge.html（列表/搜索/分页、文件+文本上传、删除、
+  按 batch 轮询索引进度带退避与代数守卫）；六页统一 JWT 解码助手，非超管单线账号
+  锁定产品线选择；首页按角色隐藏 产品线管理/本体 卡（本体暂不下放为既定决策）；
+  上传响应跨切线守卫、恰好 15MB 的边界预检、只读空状态文案已按评审修正
 - 第 1 期要点：新增 DIFY_DATASET_API_KEY（数据集级密钥，缺失时 503/明确报错）；
   admin ai-config/knowledge 现为 列表/上传(文件+文本)/删除/按 batch 查状态；
   上传请求单独放宽读写期限（服务器全局 10s 超时对 15MB 上传不够）；

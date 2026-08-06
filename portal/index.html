@@ -180,6 +180,8 @@
     padding: 20px;
   }
   a:focus-visible, button:focus-visible { outline: 2px solid var(--primary); }
+  /* .card sets display:flex, which would otherwise beat the UA rule for [hidden]. */
+  [hidden] { display: none !important; }
 </style>
 
 <header>
@@ -194,16 +196,22 @@
   </div>
 
   <div class="cards">
-    <a class="card" href="./product-lines.html">
+    <a class="card" id="card-product-lines" href="./product-lines.html">
       <div class="icon">🗂️</div>
       <h3>产品线管理</h3>
       <p>创建产品线，初始化 AI 与知识库绑定。</p>
       <span class="go">进入管理 →</span>
     </a>
-    <a class="card" href="./ontology.html">
+    <a class="card" id="card-ontology" href="./ontology.html">
       <div class="icon">🧩</div>
       <h3>领域本体</h3>
       <p>政策事实的编辑、校验、发布与回滚。</p>
+      <span class="go">进入管理 →</span>
+    </a>
+    <a class="card" href="./knowledge.html">
+      <div class="icon">📚</div>
+      <h3>知识库</h3>
+      <p>上传与维护产品线知识库文档，跟踪索引进度。</p>
       <span class="go">进入管理 →</span>
     </a>
     <a class="card" href="./violations.html">
@@ -297,6 +305,75 @@
           clearTimeout(timer);
           return false;
         });
+    }
+
+    // ---------- Account-aware entries ----------
+    // This hub needs no login. When a token happens to be present we hide the
+    // entries the account cannot use; without a token the hub is unchanged.
+    var TOKEN_KEY = "unica_access_token";
+    // Mirrors the server permission matrix: manage_product_lines is granted to
+    // super_admin only. Strict === true keeps inherited keys out.
+    var MANAGE_PRODUCT_LINES_ROLES = { super_admin: true };
+
+    function readToken() {
+      // Storage access can throw under restrictive privacy settings.
+      try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+    }
+
+    // Read-only decode of the access token payload. The server remains the
+    // authority; a token that cannot be decoded yields null and changes nothing.
+    function decodeClaims(token) {
+      if (!token || typeof token !== "string") return null;
+      var parts = token.split(".");
+      if (parts.length !== 3) return null;
+      try {
+        var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        while (b64.length % 4 !== 0) b64 += "=";
+        var claims = JSON.parse(atob(b64));
+        return claims && typeof claims === "object" ? claims : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function claimRoles(claims) {
+      var roles = [];
+      if (!claims) return roles;
+      if (typeof claims.role === "string" && claims.role) roles.push(claims.role);
+      if (Array.isArray(claims.roles)) {
+        for (var i = 0; i < claims.roles.length; i++) {
+          if (typeof claims.roles[i] === "string") roles.push(claims.roles[i]);
+        }
+      }
+      return roles;
+    }
+
+    function hasRole(claims, name) {
+      var roles = claimRoles(claims);
+      for (var i = 0; i < roles.length; i++) {
+        if (roles[i] === name) return true;
+      }
+      return false;
+    }
+
+    function canManageProductLines(claims) {
+      var roles = claimRoles(claims);
+      for (var i = 0; i < roles.length; i++) {
+        if (MANAGE_PRODUCT_LINES_ROLES[roles[i]] === true) return true;
+      }
+      return false;
+    }
+
+    function hideCard(id) {
+      var el = document.getElementById(id);
+      if (el) el.hidden = true;
+    }
+
+    var accountClaims = decodeClaims(readToken());
+    if (accountClaims) {
+      if (!canManageProductLines(accountClaims)) hideCard("card-product-lines");
+      // Ontology authoring stays with the operator account for now.
+      if (!hasRole(accountClaims, "super_admin")) hideCard("card-ontology");
     }
   })();
 </script>

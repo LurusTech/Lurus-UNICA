@@ -480,6 +480,46 @@
   function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
   function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
 
+  // ---------- Account claims ----------
+  // Read-only decode of the access token payload. The server remains the
+  // authority on scoping; a token that cannot be decoded yields null so the
+  // page keeps its unscoped behaviour instead of failing.
+  function decodeClaims(token) {
+    if (!token || typeof token !== "string") return null;
+    var parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4 !== 0) b64 += "=";
+      var claims = JSON.parse(atob(b64));
+      return claims && typeof claims === "object" ? claims : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isSuperAdmin(claims) {
+    if (!claims) return false;
+    if (claims.role === "super_admin") return true;
+    var roles = claims.roles;
+    if (!Array.isArray(roles)) return false;
+    for (var i = 0; i < roles.length; i++) {
+      if (roles[i] === "super_admin") return true;
+    }
+    return false;
+  }
+
+  // A non-super-admin bound to exactly one product line has nothing to pick:
+  // returns that id so the selector can be locked, null in every other case.
+  function scopedProductLineId() {
+    var claims = decodeClaims(getToken());
+    if (!claims || isSuperAdmin(claims)) return null;
+    var ids = claims.product_line_ids;
+    if (!Array.isArray(ids) || ids.length !== 1) return null;
+    var id = ids[0];
+    return (id === null || id === undefined || id === "") ? null : String(id);
+  }
+
   function showLogin(message) {
     clearToken();
     els.appView.hidden = true;
@@ -620,6 +660,10 @@
     });
     els.plSelect.innerHTML = opts.join("");
     // Auto-select the first line: this page is meaningless without one.
+    // An account scoped to that same single line gets the selector locked on it.
+    var scopedId = scopedProductLineId();
+    els.plSelect.disabled = !!scopedId && state.productLines.length === 1 &&
+      String(state.productLines[0].id) === scopedId;
     els.plSelect.value = String(state.productLines[0].id);
     selectProductLine(els.plSelect.value);
   }

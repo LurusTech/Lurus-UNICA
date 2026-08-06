@@ -294,7 +294,7 @@
   var TOKEN_KEY = "unica_access_token";
   var DIFY_CONSOLE_BASE = "http://100.122.83.20:3402";
 
-  var state = { productLines: [], editingId: null, provisioningIds: {}, aiConfigPL: null };
+  var state = { productLines: [], editingId: null, provisioningIds: {}, aiConfigPL: null, canManagePL: true };
 
   var els = {
     loginView: document.getElementById("login-view"),
@@ -349,6 +349,43 @@
   function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
   function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
   function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
+
+  // ---------- Account claims ----------
+  // Read-only decode of the access token payload. The server remains the
+  // authority on scoping; a token that cannot be decoded yields null so the
+  // page keeps its unscoped behaviour instead of failing.
+  function decodeClaims(token) {
+    if (!token || typeof token !== "string") return null;
+    var parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4 !== 0) b64 += "=";
+      var claims = JSON.parse(atob(b64));
+      return claims && typeof claims === "object" ? claims : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isSuperAdmin(claims) {
+    if (!claims) return false;
+    if (claims.role === "super_admin") return true;
+    var roles = claims.roles;
+    if (!Array.isArray(roles)) return false;
+    for (var i = 0; i < roles.length; i++) {
+      if (roles[i] === "super_admin") return true;
+    }
+    return false;
+  }
+
+  // manage_product_lines is a super-admin permission on the server, and every
+  // mutation on this page needs it. Undecodable token -> keep the full UI.
+  function canManageProductLines() {
+    var claims = decodeClaims(getToken());
+    if (!claims) return true;
+    return isSuperAdmin(claims);
+  }
 
   function showLogin(message) {
     clearToken();
@@ -467,8 +504,14 @@
   }
 
   function renderProductLines() {
+    // Without manage_product_lines the server refuses every mutation here, so
+    // the account gets a read-only view rather than buttons that would 403.
+    state.canManagePL = canManageProductLines();
+    els.createBtn.hidden = !state.canManagePL;
     if (state.productLines.length === 0) {
-      els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无产品线，点击“新建产品线”开始</td></tr>';
+      els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' +
+        (state.canManagePL ? "暂无产品线，点击“新建产品线”开始" : "暂无产品线") +
+        "</td></tr>";
       return;
     }
     els.tbody.innerHTML = state.productLines.map(rowHtml).join("");
@@ -497,8 +540,13 @@
       ? '<span class="pill ok">已挂载</span>'
       : '<span class="pill muted">未挂载</span>';
     var pending = !!state.provisioningIds[pl.id];
-    var provisionBtnHtml = '<button id="provision-' + pl.id + '"' + (pending ? " disabled" : "") + '>' +
-      (pending ? '<span class="spinner"></span>初始化中…' : "初始化 AI 与知识库") + "</button>";
+    // Edit / delete / provision all require manage_product_lines; AI 参数 and the
+    // knowledge-base link do not, so a scoped account keeps those.
+    var canManage = state.canManagePL;
+    var provisionBtnHtml = canManage
+      ? '<button id="provision-' + pl.id + '"' + (pending ? " disabled" : "") + '>' +
+        (pending ? '<span class="spinner"></span>初始化中…' : "初始化 AI 与知识库") + "</button>"
+      : "";
     var openKbBtnHtml = pl.dify_dataset_id
       ? '<button id="openkb-' + pl.id + '">打开知识库</button>'
       : "";
@@ -509,11 +557,11 @@
       "<td>" + bindPill + "</td>" +
       "<td>" + formatDate(pl.created_at) + "</td>" +
       '<td><div class="row-actions">' +
-      '<button id="edit-' + pl.id + '">编辑</button>' +
+      (canManage ? '<button id="edit-' + pl.id + '">编辑</button>' : "") +
       '<button id="aicfg-' + pl.id + '">AI 参数</button>' +
       provisionBtnHtml +
       openKbBtnHtml +
-      '<button class="danger" id="del-' + pl.id + '">删除</button>' +
+      (canManage ? '<button class="danger" id="del-' + pl.id + '">删除</button>' : "") +
       "</div></td>" +
       "</tr>"
     );

@@ -320,6 +320,46 @@
   function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
   function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
 
+  // ---------- Account claims ----------
+  // Read-only decode of the access token payload. The server remains the
+  // authority on scoping; a token that cannot be decoded yields null so the
+  // page keeps its unscoped behaviour instead of failing.
+  function decodeClaims(token) {
+    if (!token || typeof token !== "string") return null;
+    var parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4 !== 0) b64 += "=";
+      var claims = JSON.parse(atob(b64));
+      return claims && typeof claims === "object" ? claims : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isSuperAdmin(claims) {
+    if (!claims) return false;
+    if (claims.role === "super_admin") return true;
+    var roles = claims.roles;
+    if (!Array.isArray(roles)) return false;
+    for (var i = 0; i < roles.length; i++) {
+      if (roles[i] === "super_admin") return true;
+    }
+    return false;
+  }
+
+  // A non-super-admin bound to exactly one product line has nothing to pick:
+  // returns that id so the selector can be locked, null in every other case.
+  function scopedProductLineId() {
+    var claims = decodeClaims(getToken());
+    if (!claims || isSuperAdmin(claims)) return null;
+    var ids = claims.product_line_ids;
+    if (!Array.isArray(ids) || ids.length !== 1) return null;
+    var id = ids[0];
+    return (id === null || id === undefined || id === "") ? null : String(id);
+  }
+
   function showLogin(message) {
     clearToken();
     els.appView.hidden = true;
@@ -435,11 +475,22 @@
   }
 
   function renderProductLineOptions() {
-    var opts = ['<option value="">全部产品线</option>'];
+    // Locked only when the claims name one line and the server returned that
+    // same single line; anything else keeps the normal "all lines" selector.
+    var scopedId = scopedProductLineId();
+    var locked = !!scopedId && state.productLines.length === 1 &&
+      String(state.productLines[0].id) === scopedId;
+
+    var opts = locked ? [] : ['<option value="">全部产品线</option>'];
     state.productLines.forEach(function (pl) {
       opts.push('<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>");
     });
     els.plSelect.innerHTML = opts.join("");
+    els.plSelect.disabled = locked;
+    if (locked) {
+      els.plSelect.value = scopedId;
+      state.currentPL = scopedId;
+    }
 
     var formOpts = state.productLines.map(function (pl) {
       return '<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";

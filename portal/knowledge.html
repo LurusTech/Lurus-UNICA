@@ -1,0 +1,1101 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库 - UNICA 统一管理门户</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --text: #1a1d24;
+    --text-muted: #6b7280;
+    --border: #e2e5ea;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --ok: #16a34a;
+    --bad: #dc2626;
+    --warn: #d97706;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+      --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+      --row-hover: #1e222b;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
+    --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
+    --row-hover: #1e222b;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f8; --surface: #ffffff; --text: #1a1d24; --text-muted: #6b7280;
+    --border: #e2e5ea; --primary: #2563eb; --primary-hover: #1d4ed8;
+    --row-hover: #f0f2f5;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1200px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  input:disabled, select:disabled, textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--primary); outline-offset: 2px;
+  }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  textarea { min-height: 200px; resize: vertical; line-height: 1.6; }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+
+  /* Login screen */
+  #login-view {
+    max-width: 380px; margin: 10vh auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; box-shadow: var(--shadow);
+  }
+  #login-view h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  #login-view p.sub { color: var(--text-muted); margin: 0 0 22px; font-size: 0.88rem; }
+  #login-error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
+  }
+
+  /* App view */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 8px; }
+  .toolbar .field { margin-bottom: 0; min-width: 220px; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar-hint { margin: 0 0 18px; }
+
+  .notice {
+    background: var(--surface); border: 1px solid var(--border); border-left-width: 4px;
+    border-radius: 10px; padding: 12px 16px; margin-bottom: 18px; font-size: 0.86rem;
+    line-height: 1.7; box-shadow: var(--shadow);
+  }
+  .notice.warn { border-left-color: var(--warn); }
+  .notice.bad { border-left-color: var(--bad); }
+  .notice.info { border-left-color: var(--primary); }
+  .notice .title { display: block; font-weight: 600; margin-bottom: 2px; }
+  .notice .detail { color: var(--text-muted); word-break: break-word; }
+  .notice a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .notice a:hover { text-decoration: underline; }
+
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    overflow-x: auto; box-shadow: var(--shadow);
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  th, td { text-align: left; padding: 12px 16px; font-size: 0.88rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  /* Document names are long and often end in the meaningful part; clip them and
+     keep the full value in the title attribute. */
+  td.name-cell { max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
+  td.actions-cell { width: 1%; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.info { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+  .progress { color: var(--text-muted); font-size: 0.8rem; margin-left: 6px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: nowrap; }
+  .row-actions button { padding: 5px 10px; font-size: 0.78rem; white-space: nowrap; }
+  .empty-state { padding: 48px 16px; text-align: center; color: var(--text-muted); line-height: 1.8; }
+  .empty-state a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .empty-state a:hover { text-decoration: underline; }
+
+  .pager { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  .pager .count { margin-right: auto; font-size: 0.82rem; color: var(--text-muted); }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(10, 12, 16, 0.45); display: none;
+    align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
+    max-width: 560px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 26px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  }
+  .modal h3 { margin: 0 0 18px; font-size: 1.1rem; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease; line-height: 1.6; word-break: break-word;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  .toast.warn { border-left-color: var(--warn); }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" href="./index.html">← 返回首页</a>
+    <h1>知识库管理</h1>
+  </div>
+  <div id="user-info" hidden>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <!-- Login view -->
+  <section id="login-view">
+    <h2>登录</h2>
+    <p class="sub">请使用管理账号登录以维护知识库文档</p>
+    <div id="login-error"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
+    </form>
+  </section>
+
+  <!-- App view -->
+  <section id="app-view" hidden>
+    <div class="toolbar">
+      <div class="field">
+        <label for="pl-select">产品线</label>
+        <select id="pl-select"><option value="">请选择产品线</option></select>
+      </div>
+      <div class="field">
+        <label for="keyword-input">搜索文档</label>
+        <input id="keyword-input" type="search" placeholder="按文档名称搜索" autocomplete="off" />
+      </div>
+      <div class="spacer"></div>
+      <button class="primary" id="upload-btn">上传文件</button>
+      <button id="paste-btn">粘贴文本</button>
+      <button id="refresh-btn">刷新</button>
+      <input type="file" id="file-input" hidden />
+    </div>
+    <div class="hint toolbar-hint">
+      单个文件不超过 15 MB；支持 txt、markdown、pdf、docx、html、csv、xlsx 等可被解析的文档格式。
+      上传后需要建立索引，索引完成前该文档不会参与 AI 回答。
+    </div>
+
+    <div class="notice" id="notice" hidden></div>
+
+    <div class="table-wrap" id="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>状态</th>
+            <th>字数</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="doc-tbody">
+          <tr><td colspan="5" class="loading-text">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pager" id="pager" hidden>
+      <span class="count" id="page-count"></span>
+      <button id="prev-btn">上一页</button>
+      <button id="next-btn">下一页</button>
+    </div>
+  </section>
+</main>
+
+<!-- Paste-text modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h3 id="modal-title">粘贴文本</h3>
+    <form id="text-form">
+      <div class="field">
+        <label for="f-name">文档名称</label>
+        <input id="f-name" required maxlength="200" />
+        <div class="hint">用于在列表中区分文档，例如「退换货政策 2025-08」</div>
+      </div>
+      <div class="field">
+        <label for="f-text">文档内容</label>
+        <textarea id="f-text" required placeholder="粘贴纯文本内容，建议一篇文档只讲一个主题"></textarea>
+        <div class="hint" id="text-size-hint">内容上限 15 MB</div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="modal-cancel">取消</button>
+        <button type="submit" class="primary" id="modal-submit">提交</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN_KEY = "unica_access_token";
+  var PAGE_SIZE = 20;
+  // Mirrors MaxKnowledgeUploadBytes on the server. The check here only spares the
+  // operator a doomed upload; the server enforces the same limit with a 413.
+  var MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+  // Indexing poll: 2s, 4s, 8s, then every 10s, and stop following a batch after
+  // two minutes rather than polling a stuck import forever.
+  var POLL_FIRST_DELAY = 2000;
+  var POLL_MAX_DELAY = 10000;
+  var POLL_GIVE_UP_MS = 120000;
+
+  // Dify's indexing states. Anything not listed is rendered as reported.
+  var STATUS_LABELS = {
+    waiting: "等待中", parsing: "解析中", cleaning: "清洗中", splitting: "分段中",
+    indexing: "索引中", completed: "已完成", error: "索引失败", paused: "已暂停"
+  };
+  var STATUS_KINDS = {
+    waiting: "muted", parsing: "info", cleaning: "info", splitting: "info",
+    indexing: "info", completed: "ok", error: "bad", paused: "warn"
+  };
+
+  var state = {
+    productLines: [],
+    currentPL: null,
+    docs: [],
+    page: 1,
+    total: 0,
+    hasMore: false,
+    keyword: "",
+    noDataset: false,
+    canUpload: false,
+    // document_id -> {batch, name, status, completed, total, timer}
+    pending: {},
+    // Bumped whenever the page switches product line or logs out, so responses
+    // and timers belonging to the previous selection are discarded.
+    gen: 0
+  };
+
+  var els = {
+    loginView: document.getElementById("login-view"),
+    appView: document.getElementById("app-view"),
+    loginForm: document.getElementById("login-form"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
+    userInfo: document.getElementById("user-info"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    plSelect: document.getElementById("pl-select"),
+    keywordInput: document.getElementById("keyword-input"),
+    uploadBtn: document.getElementById("upload-btn"),
+    pasteBtn: document.getElementById("paste-btn"),
+    refreshBtn: document.getElementById("refresh-btn"),
+    fileInput: document.getElementById("file-input"),
+    notice: document.getElementById("notice"),
+    tableWrap: document.getElementById("table-wrap"),
+    tbody: document.getElementById("doc-tbody"),
+    pager: document.getElementById("pager"),
+    pageCount: document.getElementById("page-count"),
+    prevBtn: document.getElementById("prev-btn"),
+    nextBtn: document.getElementById("next-btn"),
+    modalBackdrop: document.getElementById("modal-backdrop"),
+    textForm: document.getElementById("text-form"),
+    modalCancel: document.getElementById("modal-cancel"),
+    modalSubmit: document.getElementById("modal-submit"),
+    fName: document.getElementById("f-name"),
+    fText: document.getElementById("f-text"),
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, 4200);
+  }
+
+  // ---------- Auth / API ----------
+  function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
+  function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
+
+  // ---------- Account claims ----------
+  // Read-only decode of the access token payload. The server remains the
+  // authority on scoping; a token that cannot be decoded yields null so the
+  // page keeps its unscoped behaviour instead of failing.
+  function decodeClaims(token) {
+    if (!token || typeof token !== "string") return null;
+    var parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4 !== 0) b64 += "=";
+      var claims = JSON.parse(atob(b64));
+      return claims && typeof claims === "object" ? claims : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isSuperAdmin(claims) {
+    if (!claims) return false;
+    if (claims.role === "super_admin") return true;
+    var roles = claims.roles;
+    if (!Array.isArray(roles)) return false;
+    for (var i = 0; i < roles.length; i++) {
+      if (roles[i] === "super_admin") return true;
+    }
+    return false;
+  }
+
+  // A non-super-admin bound to exactly one product line has nothing to pick:
+  // returns that id so the selector can be locked, null in every other case.
+  function scopedProductLineId() {
+    var claims = decodeClaims(getToken());
+    if (!claims || isSuperAdmin(claims)) return null;
+    var ids = claims.product_line_ids;
+    if (!Array.isArray(ids) || ids.length !== 1) return null;
+    var id = ids[0];
+    return (id === null || id === undefined || id === "") ? null : String(id);
+  }
+
+  function showLogin(message) {
+    clearToken();
+    cancelPolling();
+    els.appView.hidden = true;
+    els.userInfo.hidden = true;
+    els.loginView.hidden = false;
+    if (message) {
+      els.loginError.textContent = message;
+      els.loginError.style.display = "block";
+    }
+  }
+
+  function showApp() {
+    els.loginView.hidden = true;
+    els.appView.hidden = false;
+    els.userInfo.hidden = false;
+  }
+
+  // Wraps fetch with Authorization header, JSON parsing, and 401 handling.
+  // The HTTP status travels on the error so callers can tell a misconfigured
+  // service (503) from an ordinary failure.
+  function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    var token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+    // FormData must set its own multipart boundary, so it is never labelled JSON.
+    var isForm = (typeof FormData !== "undefined") && (options.body instanceof FormData);
+    if (options.body && !isForm && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+    return fetch(path, Object.assign({}, options, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          showLogin("登录已过期，请重新登录");
+          var authErr = new Error("unauthorized");
+          authErr.status = 401;
+          throw authErr;
+        }
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
+          }
+          if (!res.ok) {
+            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
+            var err = new Error(msg);
+            err.status = res.status;
+            throw err;
+          }
+          return data;
+        });
+      });
+  }
+
+  // ---------- Login ----------
+  els.loginForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    els.loginError.style.display = "none";
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "登录中…";
+
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+
+    fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email, password: password })
+    })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          var data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (e) {}
+          if (!res.ok) {
+            var msg = (data && data.error) || "邮箱或密码错误";
+            throw new Error(msg);
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        if (!data || !data.access_token) throw new Error("登录响应异常");
+        setToken(data.access_token);
+        els.userEmail.textContent = email;
+        showApp();
+        bootstrap();
+      })
+      .catch(function (err) {
+        els.loginError.textContent = err.message || "登录失败，请检查网络";
+        els.loginError.style.display = "block";
+      })
+      .finally(function () {
+        els.loginSubmit.disabled = false;
+        els.loginSubmit.textContent = "登 录";
+      });
+  });
+
+  els.logoutBtn.addEventListener("click", function () {
+    showLogin();
+  });
+
+  // ---------- Bootstrap after login ----------
+  function bootstrap() {
+    loadProductLines();
+  }
+
+  function loadProductLines() {
+    return api("/api/v1/product-lines")
+      .then(function (data) {
+        state.productLines = Array.isArray(data) ? data : [];
+        renderProductLineOptions();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        toast("加载产品线失败：" + err.message, "error");
+        els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">加载失败：' + escapeHtml(err.message) + "</td></tr>";
+      });
+  }
+
+  function renderProductLineOptions() {
+    if (state.productLines.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无产品线</option>';
+      selectProductLine("");
+      // Constant markup, no interpolation.
+      showNotice("info", "还没有产品线",
+        "知识库文档挂在产品线下，请先创建一条产品线。",
+        ' <a href="./product-lines.html">前往创建 →</a>');
+      els.tableWrap.hidden = true;
+      els.pager.hidden = true;
+      return;
+    }
+    els.plSelect.innerHTML = state.productLines.map(function (pl) {
+      return '<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
+    }).join("");
+    els.tableWrap.hidden = false;
+    // Auto-select the first line: the knowledge base always belongs to one line.
+    // An account scoped to that same single line gets the selector locked on it.
+    var scopedId = scopedProductLineId();
+    els.plSelect.disabled = !!scopedId && state.productLines.length === 1 &&
+      String(state.productLines[0].id) === scopedId;
+    els.plSelect.value = String(state.productLines[0].id);
+    selectProductLine(els.plSelect.value);
+  }
+
+  els.plSelect.addEventListener("change", function () {
+    selectProductLine(els.plSelect.value);
+  });
+
+  function selectProductLine(id) {
+    cancelPolling();
+    state.currentPL = findProductLine(id);
+    state.page = 1;
+    state.keyword = "";
+    state.docs = [];
+    state.total = 0;
+    state.hasMore = false;
+    state.noDataset = false;
+    els.keywordInput.value = "";
+    if (!state.currentPL) {
+      setUploadEnabled(false);
+      els.keywordInput.disabled = true;
+      els.pager.hidden = true;
+      return;
+    }
+    els.keywordInput.disabled = false;
+    hideNotice();
+    loadDocs();
+  }
+
+  function findProductLine(id) {
+    for (var i = 0; i < state.productLines.length; i++) {
+      if (String(state.productLines[i].id) === String(id)) return state.productLines[i];
+    }
+    return null;
+  }
+
+  // ---------- Paths ----------
+  function knowledgePath(sub, params) {
+    var path = "/api/v1/ai-config/" + encodeURIComponent(state.currentPL.id) + "/knowledge" + (sub || "");
+    var qs = [];
+    var p = params || {};
+    Object.keys(p).forEach(function (k) {
+      var v = p[k];
+      if (v === "" || v === null || v === undefined) return;
+      qs.push(encodeURIComponent(k) + "=" + encodeURIComponent(v));
+    });
+    return path + (qs.length ? "?" + qs.join("&") : "");
+  }
+
+  // ---------- Document list ----------
+  function loadDocs() {
+    if (!state.currentPL) return Promise.resolve();
+    var gen = state.gen;
+    els.tableWrap.hidden = false;
+    els.tbody.innerHTML = '<tr><td colspan="5" class="loading-text">加载中…</td></tr>';
+    els.pager.hidden = true;
+
+    return api(knowledgePath("", { page: state.page, limit: PAGE_SIZE, keyword: state.keyword }))
+      .then(function (data) {
+        if (gen !== state.gen) return; // the product line changed under a slow response
+        data = data || {};
+        state.docs = Array.isArray(data.documents) ? data.documents : [];
+        state.total = typeof data.total === "number" ? data.total : state.docs.length;
+        state.hasMore = data.has_more === true;
+
+        if (data.message) {
+          // A product line with no dataset bound answers 200 with an explanation
+          // instead of a list; surface the server's own wording.
+          state.noDataset = true;
+          setUploadEnabled(false);
+          showNotice("warn", "该产品线还没有绑定知识库", data.message,
+            ' <a href="./product-lines.html">前往产品线管理 →</a>');
+          render();
+          return;
+        }
+
+        state.noDataset = false;
+        setUploadEnabled(true);
+        hideNotice();
+
+        // Deletions can strand the operator past the last page; snap back.
+        if (state.docs.length === 0 && state.page > 1) {
+          state.page = 1;
+          return loadDocs();
+        }
+        render();
+      })
+      .catch(function (err) {
+        if (gen !== state.gen || err.message === "unauthorized") return;
+        state.docs = [];
+        state.total = 0;
+        state.hasMore = false;
+        els.pager.hidden = true;
+        if (err.status === 503) {
+          // The deployment has no dataset API key, so nothing here can work.
+          setUploadEnabled(false);
+          showNotice("bad", "知识库管理当前不可用", err.message);
+          els.tbody.innerHTML =
+            '<tr><td colspan="5" class="empty-state">服务端未启用知识库管理，暂时无法查看或上传文档</td></tr>';
+          return;
+        }
+        setUploadEnabled(false);
+        els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">加载失败：' + escapeHtml(err.message) + "</td></tr>";
+        toast("加载知识库文档失败：" + err.message, "error");
+      });
+  }
+
+  function render() {
+    els.tableWrap.hidden = false;
+    var listed = {};
+    state.docs.forEach(function (d) { listed[String(d.id)] = true; });
+
+    // A freshly uploaded document may not be on the page the operator is looking
+    // at; its indexing progress is shown on top regardless.
+    var extraRows = [];
+    Object.keys(state.pending).forEach(function (id) {
+      if (!listed[id]) extraRows.push(pendingRowHtml(state.pending[id]));
+    });
+
+    if (state.docs.length === 0 && extraRows.length === 0) {
+      els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' + emptyStateHtml() + "</td></tr>";
+      els.pager.hidden = true;
+      return;
+    }
+    els.tbody.innerHTML = extraRows.join("") + state.docs.map(rowHtml).join("");
+    renderPager();
+  }
+
+  function emptyStateHtml() {
+    if (state.noDataset) {
+      return "绑定知识库后，上传的文档会显示在这里";
+    }
+    if (state.keyword) {
+      return "没有匹配「" + escapeHtml(state.keyword) + "」的文档";
+    }
+    return "暂无文档，点击「上传文件」或「粘贴文本」开始建设知识库";
+  }
+
+  function rowHtml(doc) {
+    var pend = state.pending[String(doc.id)];
+    var statusCell = pend
+      ? statusPillHtml(pend.status, pend.completed, pend.total)
+      : statusPillHtml(doc.indexing_status, null, null);
+    if (doc.enabled === false) statusCell += ' <span class="pill muted">已停用</span>';
+    var name = doc.name || "(未命名文档)";
+    return (
+      "<tr>" +
+      '<td class="name-cell" title="' + escapeAttr(name) + '">' + escapeHtml(name) + "</td>" +
+      "<td>" + statusCell + "</td>" +
+      "<td>" + escapeHtml(formatCount(doc.word_count)) + "</td>" +
+      "<td>" + escapeHtml(formatUnixSeconds(doc.created_at)) + "</td>" +
+      '<td class="actions-cell"><div class="row-actions">' +
+      '<button class="danger" data-del="' + escapeAttr(doc.id) + '" data-name="' + escapeAttr(name) + '">删除</button>' +
+      "</div></td>" +
+      "</tr>"
+    );
+  }
+
+  function pendingRowHtml(pend) {
+    var name = pend.name || "(未命名文档)";
+    return (
+      "<tr>" +
+      '<td class="name-cell" title="' + escapeAttr(name) + '">' + escapeHtml(name) + "</td>" +
+      "<td>" + statusPillHtml(pend.status, pend.completed, pend.total) + "</td>" +
+      "<td>—</td>" +
+      "<td>刚刚上传</td>" +
+      '<td class="actions-cell"><div class="row-actions">' +
+      '<button class="danger" data-del="' + escapeAttr(pend.id) + '" data-name="' + escapeAttr(name) + '">删除</button>' +
+      "</div></td>" +
+      "</tr>"
+    );
+  }
+
+  function statusPillHtml(status, completed, total) {
+    var key = String(status == null ? "" : status);
+    var label = STATUS_LABELS[key] || key || "未知";
+    var kind = STATUS_KINDS[key] || "muted";
+    var progress = "";
+    var done = Number(completed);
+    var all = Number(total);
+    if (isFinite(done) && isFinite(all) && all > 0) {
+      progress = '<span class="progress">' + escapeHtml(done + "/" + all) + "</span>";
+    }
+    return '<span class="pill ' + kind + '">' + escapeHtml(label) + "</span>" + progress;
+  }
+
+  function renderPager() {
+    var from = (state.page - 1) * PAGE_SIZE + 1;
+    var to = from + state.docs.length - 1;
+    var text = "";
+    if (state.docs.length > 0) {
+      text = "第 " + from + "–" + to + " 条";
+      if (state.total > 0) text += " / 共 " + state.total + " 条";
+    }
+    els.pageCount.textContent = text;
+    els.prevBtn.disabled = state.page <= 1;
+    els.nextBtn.disabled = !state.hasMore;
+    // A single page needs no pager at all.
+    els.pager.hidden = state.page <= 1 && !state.hasMore;
+  }
+
+  els.prevBtn.addEventListener("click", function () {
+    if (state.page <= 1) return;
+    state.page -= 1;
+    loadDocs();
+  });
+
+  els.nextBtn.addEventListener("click", function () {
+    if (!state.hasMore) return;
+    state.page += 1;
+    loadDocs();
+  });
+
+  els.refreshBtn.addEventListener("click", function () {
+    if (state.currentPL) loadDocs();
+    else loadProductLines();
+  });
+
+  // ---------- Search ----------
+  var searchTimer = null;
+  els.keywordInput.addEventListener("input", function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applyKeyword, 400);
+  });
+  els.keywordInput.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    clearTimeout(searchTimer);
+    applyKeyword();
+  });
+
+  function applyKeyword() {
+    var value = els.keywordInput.value.trim();
+    if (value === state.keyword) return;
+    state.keyword = value;
+    state.page = 1;
+    loadDocs();
+  }
+
+  // ---------- Delete ----------
+  els.tbody.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-del]");
+    if (!btn) return;
+    deleteDoc(btn.getAttribute("data-del"), btn.getAttribute("data-name") || "");
+  });
+
+  function deleteDoc(docID, name) {
+    if (!docID || !state.currentPL) return;
+    if (!confirm("确认删除文档「" + (name || docID) + "」吗？该文档及其索引分段会一并移除，此操作不可撤销。")) return;
+    dropPending(docID);
+    api(knowledgePath("/documents/" + encodeURIComponent(docID)), { method: "DELETE" })
+      .then(function () {
+        toast("文档已删除", "success");
+        loadDocs();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        toast("删除失败：" + err.message, "error");
+        loadDocs();
+      });
+  }
+
+  // ---------- Upload: file ----------
+  els.uploadBtn.addEventListener("click", function () {
+    if (!state.canUpload) return;
+    els.fileInput.click();
+  });
+
+  els.fileInput.addEventListener("change", function () {
+    var file = els.fileInput.files && els.fileInput.files[0];
+    if (!file) return;
+    // The server caps the whole multipart body, so the file itself must leave
+    // room for the boundary and part headers; a file at exactly the cap would
+    // upload whole only to be answered 413.
+    if (file.size > MAX_UPLOAD_BYTES - 1024) {
+      els.fileInput.value = "";
+      toast("文件「" + file.name + "」大小为 " + formatSize(file.size) +
+        "，超过 15 MB 上限，请拆分成多个文档后再上传", "error");
+      return;
+    }
+    if (file.size === 0) {
+      els.fileInput.value = "";
+      toast("文件「" + file.name + "」是空文件，无法上传", "error");
+      return;
+    }
+
+    var form = new FormData();
+    form.append("file", file, file.name);
+    els.uploadBtn.disabled = true;
+    els.uploadBtn.textContent = "上传中…";
+    // A large upload can outlive a product-line switch; the response must not
+    // touch whatever line the operator is looking at by then.
+    var gen = state.gen;
+    api(knowledgePath("/documents"), { method: "POST", body: form })
+      .then(function (data) { onUploaded(data, gen); })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        toast("上传失败：" + err.message, "error");
+      })
+      .finally(function () {
+        els.fileInput.value = "";
+        els.uploadBtn.disabled = !state.canUpload;
+        els.uploadBtn.textContent = "上传文件";
+      });
+  });
+
+  // ---------- Upload: pasted text ----------
+  els.pasteBtn.addEventListener("click", function () {
+    if (!state.canUpload) return;
+    els.textForm.reset();
+    els.modalBackdrop.classList.add("open");
+    els.fName.focus();
+  });
+
+  els.modalCancel.addEventListener("click", closeModal);
+  els.modalBackdrop.addEventListener("click", function (e) {
+    if (e.target === els.modalBackdrop) closeModal();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && els.modalBackdrop.classList.contains("open")) closeModal();
+  });
+
+  function closeModal() {
+    els.modalBackdrop.classList.remove("open");
+    els.textForm.reset();
+  }
+
+  els.textForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (!state.currentPL) return;
+    var name = els.fName.value.trim();
+    var text = els.fText.value.trim();
+    if (!name || !text) {
+      toast("文档名称和内容都不能为空", "error");
+      return;
+    }
+    var body = JSON.stringify({ name: name, text: text });
+    if (byteLength(body) > MAX_UPLOAD_BYTES) {
+      toast("文本内容超过 15 MB 上限，请拆分成多个文档后再提交", "error");
+      return;
+    }
+
+    els.modalSubmit.disabled = true;
+    els.modalSubmit.textContent = "提交中…";
+    var gen = state.gen;
+    api(knowledgePath("/documents"), { method: "POST", body: body })
+      .then(function (data) {
+        closeModal();
+        onUploaded(data, gen);
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        toast("提交失败：" + err.message, "error");
+      })
+      .finally(function () {
+        els.modalSubmit.disabled = false;
+        els.modalSubmit.textContent = "提交";
+      });
+  });
+
+  // ---------- Indexing progress ----------
+  function onUploaded(data, gen) {
+    data = data || {};
+    var docID = data.document_id ? String(data.document_id) : "";
+    var batch = data.batch ? String(data.batch) : "";
+    var name = data.name || "";
+    if (gen !== state.gen) {
+      // The operator switched product line (or logged out) while the upload
+      // was in flight: the document landed in the original line, and neither
+      // its pending row nor its status poll belongs in the current view.
+      toast("「" + (name || "文档") + "」已上传至原产品线，切换回该产品线可查看", "success");
+      return;
+    }
+    toast("「" + (name || "文档") + "」已上传，正在建立索引", "success");
+
+    if (docID && batch) {
+      state.pending[docID] = {
+        id: docID, batch: batch, name: name,
+        status: "waiting", completed: 0, total: 0, timer: null
+      };
+      pollBatch(docID);
+    }
+    state.page = 1;
+    loadDocs();
+  }
+
+  function pollBatch(docID) {
+    var gen = state.gen;
+    var entry = state.pending[docID];
+    if (!entry) return;
+    var delay = POLL_FIRST_DELAY;
+    var deadline = Date.now() + POLL_GIVE_UP_MS;
+
+    function alive() {
+      return gen === state.gen && state.pending[docID] === entry;
+    }
+
+    function schedule(err) {
+      if (!alive()) return;
+      if (Date.now() >= deadline) {
+        dropPending(docID);
+        if (err) toast("索引进度查询失败：" + err.message, "error");
+        else toast("「" + (entry.name || "文档") + "」仍在索引中，可稍后点击刷新查看", "warn");
+        loadDocs();
+        return;
+      }
+      entry.timer = setTimeout(tick, delay);
+      delay = Math.min(delay * 2, POLL_MAX_DELAY);
+    }
+
+    function finish(status, detail) {
+      dropPending(docID);
+      if (status === "completed") {
+        toast("「" + (entry.name || "文档") + "」索引完成，已可用于 AI 回答", "success");
+      } else {
+        toast("「" + (entry.name || "文档") + "」索引失败" + (detail ? "：" + detail : ""), "error");
+      }
+      loadDocs();
+    }
+
+    function tick() {
+      if (!alive() || !state.currentPL) return;
+      api(knowledgePath("/status/" + encodeURIComponent(entry.batch)))
+        .then(function (data) {
+          if (!alive()) return;
+          var st = pickBatchStatus(data, docID);
+          if (st) {
+            entry.status = st.indexing_status || entry.status;
+            entry.completed = Number(st.completed_segments) || 0;
+            entry.total = Number(st.total_segments) || 0;
+            render();
+            if (entry.status === "completed" || entry.status === "error") {
+              finish(entry.status, st.error || "");
+              return;
+            }
+          }
+          schedule(null);
+        })
+        .catch(function (err) {
+          if (!alive()) return;
+          // A rejected token already switched the page to the login view.
+          if (err.message === "unauthorized") {
+            dropPending(docID);
+            return;
+          }
+          schedule(err);
+        });
+    }
+
+    entry.timer = setTimeout(tick, delay);
+    delay = Math.min(delay * 2, POLL_MAX_DELAY);
+  }
+
+  function pickBatchStatus(data, docID) {
+    var list = data && Array.isArray(data.documents) ? data.documents : [];
+    for (var i = 0; i < list.length; i++) {
+      if (String(list[i].id) === String(docID)) return list[i];
+    }
+    // One upload creates one document, so a single-entry batch is that document
+    // even when the reported id does not match.
+    return list.length === 1 ? list[0] : null;
+  }
+
+  function dropPending(docID) {
+    var entry = state.pending[docID];
+    if (!entry) return;
+    if (entry.timer) clearTimeout(entry.timer);
+    delete state.pending[docID];
+  }
+
+  function cancelPolling() {
+    Object.keys(state.pending).forEach(function (id) {
+      if (state.pending[id].timer) clearTimeout(state.pending[id].timer);
+    });
+    state.pending = {};
+    state.gen += 1;
+  }
+
+  // ---------- Notices / upload availability ----------
+  function showNotice(kind, title, detail, extraHtml) {
+    els.notice.className = "notice " + kind;
+    // extraHtml is only ever a constant link written here in the page.
+    els.notice.innerHTML =
+      '<span class="title">' + escapeHtml(title) + "</span>" +
+      (detail ? '<span class="detail">' + escapeHtml(detail) + "</span>" : "") +
+      (extraHtml || "");
+    els.notice.hidden = false;
+  }
+
+  function hideNotice() {
+    els.notice.hidden = true;
+    els.notice.innerHTML = "";
+  }
+
+  function setUploadEnabled(on) {
+    state.canUpload = !!on;
+    els.uploadBtn.disabled = !on;
+    els.pasteBtn.disabled = !on;
+  }
+
+  // ---------- Utils ----------
+  function formatUnixSeconds(value) {
+    var n = Number(value);
+    if (!isFinite(n) || n <= 0) return "—";
+    var d = new Date(n * 1000); // the knowledge API reports seconds
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function formatCount(value) {
+    var n = Number(value);
+    if (!isFinite(n) || n <= 0) return "—";
+    return n.toLocaleString("zh-CN");
+  }
+
+  function formatSize(bytes) {
+    var n = Number(bytes);
+    if (!isFinite(n) || n < 0) return "未知大小";
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  function byteLength(str) {
+    try {
+      return new Blob([str]).size;
+    } catch (e) {
+      return str.length; // conservative fallback; the server enforces the real limit
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function escapeAttr(str) { return escapeHtml(str); }
+
+  // ---------- Init ----------
+  setUploadEnabled(false);
+  if (getToken()) {
+    showApp();
+    bootstrap();
+  } else {
+    showLogin();
+  }
+})();
+</script>
