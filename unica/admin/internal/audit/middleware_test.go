@@ -1,4 +1,4 @@
-package audit
+﻿package audit
 
 import (
 	"encoding/json"
@@ -56,7 +56,7 @@ func TestExtractIP(t *testing.T) {
 			if tc.xri != "" {
 				r.Header.Set("X-Real-IP", tc.xri)
 			}
-			got := extractIP(r)
+			got := ExtractIP(r)
 			if got != tc.expected {
 				t.Errorf("extractIP() = %q, want %q", got, tc.expected)
 			}

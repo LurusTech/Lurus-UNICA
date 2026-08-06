@@ -54,11 +54,10 @@ enforce 覆盖里（`grounding.go` / `judge.go` 注释与测试钉住新契约�
 **要验证需要**：enforce + 熔断跳闸的真实场次，对照
 `router_ontology_breaker_bypassed_total` 与客诉/改答率。
 
-### 2.2（新）黄金集旧基线不可比
-evalset 的置信度现在与 router 完全一致（含 0.90 校验加成档）。
-在旧语义下保存的 `-save-baseline` 文件与新跑分不可直接 diff。
-
-**要验证需要**：重跑一次黄金集并保存新基线，旧基线归档作废。
+### 2.2（新）已解决：新基线已保存
+2026-08-06 部署演练中黄金集对 deepseek-v4-flash 重跑 60/60（标签率 87%，
+0 违规，执法器与黄金集 0 分歧），基线存于
+`unica/router/testdata/golden/baseline-deepseek-v4-flash.json`。
 
 ---
 
@@ -81,34 +80,39 @@ evalset 的置信度现在与 router 完全一致（含 0.90 校验加成档）�
 
 ---
 
-## 三点五、本体运营面（第 2 期新增）
+## 三点五、本体运营面（第 2-3 期新增，第 5 期演练已大部销账）
 
-### 3.5.1 admin 本体 API 的 SQL 未在真实数据库上跑过
-handler 测试全部打桩：`SetConfigKey` 的 `jsonb_build_object` 合并语句、
-`GetConfigJSON`、`SourceYAML` 查询从未打过真实 PostgreSQL。
-语法按 13+ 文档写，但一次都没执行过。
+2026-08-06 WSL 部署演练结果：全部 14 个迁移在全新 PG 16.14 干净重放；
+013/014 在存量库上两遍幂等通过；admin 本体 API（含 `SetConfigKey` jsonb
+合并——异键并存实证）、违规列表/复核/重开 SQL 全部真库过；portal 三页对
+真实 admin 联调 19/20（唯一失败是环境数据缺口，且顺藤摸出 channels/
+channel_configs 双表断裂，已修——见 3.5.6）。演练还抓出并修复两个真缺陷：
+`audit_logs.ip_address` 是 inet 而直呼 LogEvent 传了带端口的 RemoteAddr
+（所有本体/复核审计静默失败），以及 action CHECK 不认识
+publish/rollback/review（迁移 014 扩展词汇）。原 3.5.1/3.5.2/3.5.3 销账。
 
-**要验证需要**：对任意真实库跑一遍 GET/PUT ontology-config 和 publish/
-rollback/GET ontology 全流程（第 5 期部署演练覆盖）。
+### 3.5.4 告警阈值仍无数据支撑
+`ClaimViolationSpike` 的 50/15min 是占位阈值（规则文件里已标注）。
+configmap 半边已解决：生成命令改为目录形式（不再漏面板），kubectl
+dry-run 验证 9 块全捕获。
 
-### 3.5.2 portal 本体页与复核页只对过 mock，没对过真实 admin
-两页均对冻结 API 的 mock 全流程冒烟通过（复核页 51/51），字段名与 handler
-逐一核对过，但没有和真实 admin + 真实登录态联调过。
+**要验证需要**：shadow 真实流量标定阈值。
 
-**要验证需要**：第 5 期部署后按页面路径走一遍真实发布/回滚/复核标注。
+### 3.5.5 deepseek-v4-flash 经 openai_api_compatible 接入
+Dify 0.15.3 原生 deepseek provider 的模型白名单没有 v4-flash，
+演练改走 openai_api_compatible（endpoint https://api.deepseek.com/v1）。
+行为等价但流式分隔/函数调用参数按保守值配置。
 
-### 3.5.3 迁移 013 与违规读/复核 SQL 未在真实数据库上跑过
-`013_claim_violation_review.sql` 从未重放；`ListViolations`（动态 WHERE +
-分页 + COUNT）、`ReviewViolation`（CASE 清空复核人）只有纯函数部分被测。
+**要验证需要**：Dify 升级后回归原生 provider；或长会话/流式场景实测。
 
-**要验证需要**：全新库重放 13 个迁移 + 对真库过一遍列表/复核全流程（第 5 期）。
+### 3.5.6 channels 表已成死架构，双表并存待清理
+全仓库没有代码写 `channels`（002），admin/portal 写的是 `channel_configs`
+（007），而 router 曾只按 `channels` 路由——portal 建的渠道收到消息会被
+"failed to resolve route" 静默丢弃。已修：路由回退到 `channel_configs`
+（两个分支演练中都真实路由成功）。遗留：`channels` 表与旧查询分支
+应在确认无存量部署依赖后迁移移除。
 
-### 3.5.4 告警阈值与仪表盘部署
-`ClaimViolationSpike` 的 50/15min 是占位阈值（规则文件里已标注），无数据支撑；
-新仪表盘 `ontology-quality.json` 尚未进 `dashboard-configmap.yaml`
-（该 configmap 靠手工命令生成，且此前已漏掉两块旧面板）。
-
-**要验证需要**：shadow 真实流量标定阈值；第 5 期部署时重新生成 configmap。
+**要验证需要**：确认没有环境仍靠 `channels` 行路由，然后出移除迁移。
 
 ---
 

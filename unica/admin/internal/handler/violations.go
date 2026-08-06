@@ -223,7 +223,7 @@ func (h *ViolationsHandler) HandleReview(w http.ResponseWriter, r *http.Request)
 		h.logger.LogEvent(actorID, actorRole, "review", "claim_violation",
 			strconv.FormatInt(id, 10), &plID,
 			map[string]string{"review_status": existing.ReviewStatus},
-			map[string]string{"review_status": req.Status}, r.RemoteAddr)
+			map[string]string{"review_status": req.Status}, audit.ExtractIP(r))
 	}
 
 	JSON(w, http.StatusOK, toViolationItem(*updated))

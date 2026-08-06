@@ -1,4 +1,4 @@
-package audit
+﻿package audit
 
 import (
 	"bytes"
@@ -114,7 +114,7 @@ func Middleware(
 			}
 
 			// Get client IP
-			ipAddress := extractIP(r)
+			ipAddress := ExtractIP(r)
 
 			var plIDPtr *string
 			if productLineID != "" {
@@ -162,8 +162,12 @@ func methodToAction(method string) string {
 	}
 }
 
-// extractIP extracts the client IP address from the request.
-func extractIP(r *http.Request) string {
+// ExtractIP extracts the client IP address from the request, preferring
+// proxy headers and stripping the port. Exported because handlers that write
+// audit entries directly (ontology, violations) need the same inet-safe value
+// the middleware records — audit_logs.ip_address is a Postgres inet column,
+// and a raw host:port RemoteAddr fails the insert.
+func ExtractIP(r *http.Request) string {
 	// Check X-Forwarded-For header first
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")

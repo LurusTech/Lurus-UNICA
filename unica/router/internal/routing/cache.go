@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -83,18 +84,47 @@ func (rc *RouteCache) GetRoute(ctx context.Context, channelID string) (*RouteCon
 	return config, nil
 }
 
-// queryRoute fetches routing config from the database by joining channels and product_lines.
+// queryRoute fetches routing config from the database.
+//
+// Two channel tables exist for historical reasons: `channels` (002) predates
+// the admin service, and `channel_configs` (007) is what the admin API and
+// portal actually write — nothing in the codebase inserts into `channels`
+// anymore. Routing must therefore resolve against both, or every channel an
+// operator creates through the portal receives webhooks that the router drops
+// with "failed to resolve route". The legacy table is tried first so any
+// hand-provisioned row keeps working; the admin-managed table is the one that
+// makes portal-created channels real.
 func (rc *RouteCache) queryRoute(ctx context.Context, channelID string) (*RouteConfig, error) {
-	var config RouteConfig
-	var configJSONStr sql.NullString
-	err := rc.db.QueryRowContext(ctx,
+	config, err := rc.scanRoute(ctx,
 		`SELECT p.id, COALESCE(p.dify_agent_id, ''), COALESCE(p.dify_api_key, ''), COALESCE(p.dify_base_url, 'http://dify:5001/v1'), p.config_json
 		 FROM channels c
 		 JOIN product_lines p ON c.product_line_id = p.id
-		 WHERE c.id = $1 AND c.enabled = true`, channelID,
-	).Scan(&config.ProductLineID, &config.DifyAgentID, &config.DifyAPIKey, &config.DifyBaseURL, &configJSONStr)
+		 WHERE c.id = $1 AND c.enabled = true`, channelID)
+	if err == nil {
+		return config, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("query route for channel %s: %w", channelID, err)
+	}
+
+	config, err = rc.scanRoute(ctx,
+		`SELECT p.id, COALESCE(p.dify_agent_id, ''), COALESCE(p.dify_api_key, ''), COALESCE(p.dify_base_url, 'http://dify:5001/v1'), p.config_json
+		 FROM channel_configs c
+		 JOIN product_lines p ON c.product_line_id = p.id
+		 WHERE c.id = $1 AND c.is_enabled = true`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("query route for channel %s: %w", channelID, err)
+	}
+	return config, nil
+}
+
+func (rc *RouteCache) scanRoute(ctx context.Context, query, channelID string) (*RouteConfig, error) {
+	var config RouteConfig
+	var configJSONStr sql.NullString
+	err := rc.db.QueryRowContext(ctx, query, channelID).
+		Scan(&config.ProductLineID, &config.DifyAgentID, &config.DifyAPIKey, &config.DifyBaseURL, &configJSONStr)
+	if err != nil {
+		return nil, err
 	}
 	if configJSONStr.Valid && configJSONStr.String != "" {
 		config.ConfigJSON = json.RawMessage(configJSONStr.String)

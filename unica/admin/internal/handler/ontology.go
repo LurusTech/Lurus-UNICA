@@ -365,5 +365,5 @@ func (h *OntologyHandler) logMutation(r *http.Request, action, resourceType, plI
 	if claims := auth.GetClaims(r.Context()); claims != nil {
 		actorID, actorRole = claims.UserID, claims.Role
 	}
-	h.logger.LogEvent(actorID, actorRole, action, resourceType, plID, &plID, before, after, r.RemoteAddr)
+	h.logger.LogEvent(actorID, actorRole, action, resourceType, plID, &plID, before, after, audit.ExtractIP(r))
 }

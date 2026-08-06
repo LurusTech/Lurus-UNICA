@@ -1,15 +1,13 @@
 # ConfigMap containing all UNICA Grafana dashboards.
 # This is auto-mounted by Grafana via the dashboardsConfigMaps setting in prometheus-values.yaml.
 #
-# To regenerate from JSON files:
+# To regenerate, point --from-file at the WHOLE dashboards directory. A
+# hand-maintained per-file list silently drops every dashboard added after it
+# was written — it had already lost three of nine by the time this was fixed:
 #   kubectl create configmap unica-grafana-dashboards \
-#     --from-file=system-overview.json=../grafana/dashboards/system-overview.json \
-#     --from-file=gateway-channel-status.json=../grafana/dashboards/gateway-channel-status.json \
-#     --from-file=router-ai-pipeline.json=../grafana/dashboards/router-ai-pipeline.json \
-#     --from-file=queue-backlog.json=../grafana/dashboards/queue-backlog.json \
-#     --from-file=agent-workspace.json=../grafana/dashboards/agent-workspace.json \
-#     --from-file=channel-traffic.json=../grafana/dashboards/channel-traffic.json \
+#     --from-file=../grafana/dashboards/ \
 #     -n monitoring --dry-run=client -o yaml > dashboard-configmap.yaml
+#   (then re-add the grafana_dashboard: "1" label below; kubectl create does not carry labels)
 #
 # Apply: kubectl apply -f dashboard-configmap.yaml -n monitoring
 apiVersion: v1
