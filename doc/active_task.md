@@ -11,16 +11,16 @@
 一线多渠道；同浏览器多标签页可双开（token 按标签页隔离）；
 本体编辑暂不下放客户（首页对非超管隐藏入口）。
 
-## 演练环境（当前在 WSL 运行中，未释放）
-- Dify 栈：/data/unica-dify，nginx :3402（控制台 admin@unica.local / Rehearsal-Dify-2026!）
-- admin：宿主进程 :8081（~/unica-run/admin.new + admin.env）；unica-redis :6380
-- portal：unica-portal 容器（host 网络 :8791），Windows 侧用 WSL IP 访问
-  （如 http://172.17.158.157:8791，IP 以 `wsl hostname -I` 为准）
-- 门户超管 rehearsal@unica.local / Rehearsal-2026!；演练客户 DrillCo3/4/5
-  （一次性密码未留存，要用就重新开户）
-- 数据集密钥为演练自铸（admin.env 内），生产部署须自行铸造并轮换
-- 释放：`pkill -f unica-run/admin; docker rm -f unica-portal unica-redis;
-  cd /data/unica-dify && docker compose down`（数据目录保留即可复原）
+## 演练环境（2026-08-06 已按指示释放，数据保留可复原）
+容器与进程全部停止（dify 七件套、unica-portal、unica-redis、admin 宿主进程），
+**数据目录 /data/unica-dify（85MB，业务库含 DrillCo3/4/5 演练客户）与
+~/unica-run/（admin.new 为本次分支构建，admin.env 含演练自铸数据集密钥）保留**。
+复原：`cd /data/unica-dify && docker compose up -d`，重建 unica-redis(:6380) 与
+unica-portal（host 网络 :8791，配置见 git 历史 p4_run 脚本模式），
+`source ~/unica-run/admin.env` 后起 admin.new。
+凭证：Dify 控制台 admin@unica.local / Rehearsal-Dify-2026!；
+门户超管 rehearsal@unica.local / Rehearsal-2026!（演练客户一次性密码未留存）。
+Windows 侧访问一律用 `wsl hostname -I` 的 IP，localhost 转发不通。
 
 ## 建议下一步
 1. 合并 feat/customer-self-service 到 main（CI 已配置六模块矩阵）
