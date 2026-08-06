@@ -35,6 +35,13 @@ func (rr *responseRecorder) Write(b []byte) (int, error) {
 	return rr.ResponseWriter.Write(b)
 }
 
+// Unwrap exposes the wrapped writer so http.ResponseController can reach the
+// connection's deadline controls through this recorder; without it a handler
+// stretching its deadlines for a large upload would silently stretch nothing.
+func (rr *responseRecorder) Unwrap() http.ResponseWriter {
+	return rr.ResponseWriter
+}
+
 // Middleware creates an HTTP middleware that captures audit events around write operations.
 // resourceType identifies the kind of resource being mutated (e.g. "channel_config", "ai_config").
 // beforeFn retrieves the current state before the handler runs (nil for create operations).
@@ -90,8 +97,20 @@ func Middleware(
 			var afterState json.RawMessage
 			if afterFn != nil {
 				if action == "create" {
-					// For creates, extract resource ID from response body
-					afterState, resourceID, productLineID = extractCreateResponse(rec.body.Bytes())
+					// For creates, extract resource ID from response body. A
+					// response that names neither leaves the before-state's
+					// identifiers standing: on a sub-resource create (a knowledge
+					// document under a product line) the enclosing resource is
+					// still what the entry is about, and overwriting it with ""
+					// would file the row under no resource and no tenant.
+					var id, plID string
+					afterState, id, plID = extractCreateResponse(rec.body.Bytes())
+					if id != "" {
+						resourceID = id
+					}
+					if plID != "" {
+						productLineID = plID
+					}
 				} else {
 					var err error
 					afterState, err = afterFn(r, resourceID)

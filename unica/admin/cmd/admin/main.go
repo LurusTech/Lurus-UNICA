@@ -97,7 +97,11 @@ func main() {
 	roleHandler := handler.NewRoleHandler(roleRepo, userRepo)
 	plHandler := handler.NewProductLineHandler(plRepo, difyBridge, cfg.DifyAdminEmail, cfg.DifyAdminPassword)
 	channelHandler := handler.NewChannelHandler(channelRepo, aesKey, cfg.GatewayHost, rdb)
-	aiConfigHandler := handler.NewAIConfigHandler(aiConfigRepo, plRepo, difyBridge, rdb)
+	aiConfigHandler := handler.NewAIConfigHandler(aiConfigRepo, plRepo, difyBridge, rdb,
+		cfg.DifyAPIBaseURL, cfg.DifyDatasetAPIKey)
+	if cfg.DifyDatasetAPIKey == "" {
+		log.Println("[admin] WARNING: DIFY_DATASET_API_KEY not set, knowledge base management disabled")
+	}
 
 	// Initialize audit logging
 	auditRepo := audit.NewRepository(db)
@@ -146,6 +150,13 @@ func main() {
 		},
 	)
 
+	// Knowledge sub-paths mutate Dify documents, not the ai_agent_configs row;
+	// snapshotting that row around them would pair a before-state of one entity
+	// with an after-state of another. Their before-state instead names the
+	// document the request touches, so a delete row still says what was deleted.
+	isKnowledgePath := func(segments []string) bool {
+		return len(segments) > 1 && segments[1] == "knowledge"
+	}
 	aiConfigAuditMW := audit.Middleware(auditLogger, "ai_config",
 		func(r *http.Request) (json.RawMessage, string, string, error) {
 			segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/ai-config/")
@@ -153,6 +164,14 @@ func main() {
 				return nil, "", "", nil
 			}
 			plID := segments[0]
+			if isKnowledgePath(segments) {
+				target := map[string]string{"product_line_id": plID}
+				if len(segments) > 3 && segments[2] == "documents" {
+					target["document_id"] = segments[3]
+				}
+				data, _ := json.Marshal(target)
+				return data, plID, plID, nil
+			}
 			cfg, err := aiConfigRepo.GetByProductLineID(r.Context(), plID)
 			if err != nil {
 				return nil, plID, plID, err
@@ -161,6 +180,10 @@ func main() {
 			return data, plID, plID, nil
 		},
 		func(r *http.Request, resourceID string) (json.RawMessage, error) {
+			segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/ai-config/")
+			if isKnowledgePath(segments) {
+				return nil, nil
+			}
 			cfg, err := aiConfigRepo.GetByProductLineID(r.Context(), resourceID)
 			if err != nil {
 				return nil, err
@@ -272,7 +295,12 @@ func main() {
 	mux.Handle("/api/v1/channels/", authMW(requireManageChannels(channelAuditMW(http.HandlerFunc(channelHandler.HandleChannel)))))
 
 	// Protected endpoints - AI Config (with audit middleware)
-	mux.Handle("/api/v1/ai-config/", authMW(requireManageAIConfig(aiConfigAuditMW(http.HandlerFunc(aiConfigHandler.HandleAIConfig)))))
+	// The knowledge upload is the only large body in this subtree, and the audit
+	// middleware buffers bodies for replay, so the ceiling goes outside it. The
+	// slack above the handler's own 15 MB limit is what lets the handler answer
+	// 413 rather than fail on a body truncated to exactly the limit.
+	aiConfigBodyLimit := handler.LimitRequestBody(handler.MaxKnowledgeUploadBytes + (1 << 20))
+	mux.Handle("/api/v1/ai-config/", authMW(requireManageAIConfig(aiConfigBodyLimit(aiConfigAuditMW(http.HandlerFunc(aiConfigHandler.HandleAIConfig))))))
 
 	// Protected endpoints - Audit Logs (SuperAdmin and ProductAdmin only)
 	mux.Handle("/api/v1/audit-logs", authMW(requireViewAuditLogs(http.HandlerFunc(auditLogHandler.HandleAuditLogs))))

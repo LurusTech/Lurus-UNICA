@@ -39,6 +39,22 @@ func (r *ProductLineRepository) GetConfigJSON(ctx context.Context, id string) (j
 	return json.RawMessage(raw), nil
 }
 
+// GetDifyAppKey returns the product line's Dify app API key. It is not on the
+// ProductLine model on purpose: the model is serialised into API responses and
+// a credential must not travel with it.
+func (r *ProductLineRepository) GetDifyAppKey(ctx context.Context, id string) (string, error) {
+	var key string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(dify_api_key, '') FROM product_lines WHERE id = $1`, id).Scan(&key)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to load dify app key: %w", err)
+	}
+	return key, nil
+}
+
 // SetConfigKey replaces exactly one top-level key of config_json in a single
 // SQL statement. The merge happens database-side (jsonb ||), so concurrent
 // writers of different keys cannot clobber each other the way a Go-side

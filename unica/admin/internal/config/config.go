@@ -21,6 +21,11 @@ type Config struct {
 	DifyAPIBaseURL    string // Dify service API base URL (e.g. "http://dify:5001/v1")
 	DifyAdminEmail    string // Dify console admin email, used to obtain a login token for provisioning
 	DifyAdminPassword string // Dify console admin password, used to obtain a login token for provisioning
+	// DifyDatasetAPIKey authenticates the knowledge (dataset) endpoints of the
+	// service API. Dify validates the token type per endpoint family, so an app
+	// key does not work here and a dataset key does not work for chat. Empty
+	// disables knowledge base management rather than failing at startup.
+	DifyDatasetAPIKey string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -40,6 +45,7 @@ func Load() *Config {
 		DifyAPIBaseURL:    envOrDefault("DIFY_API_BASE_URL", "http://dify:5001/v1"),
 		DifyAdminEmail:    envOrDefault("DIFY_ADMIN_EMAIL", ""),
 		DifyAdminPassword: envOrDefault("DIFY_ADMIN_PASSWORD", ""),
+		DifyDatasetAPIKey: envOrDefault("DIFY_DATASET_API_KEY", ""),
 	}
 }
 

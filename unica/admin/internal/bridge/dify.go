@@ -1,6 +1,8 @@
 // Package bridge provides Dify API integration for the admin service.
-// It proxies configuration changes (system prompt, knowledge listing, test messages)
-// to the Dify platform on behalf of knowledge/product admins.
+// It proxies console-API work (app provisioning, system prompt) and app-key chat
+// calls to the Dify platform on behalf of knowledge/product admins. The dataset
+// (knowledge) endpoints are not here: they need a dataset-type key and live in
+// the shared difyapp client.
 package bridge
 
 import (
@@ -50,24 +52,6 @@ type AppInfo struct {
 	Name         string `json:"name"`
 	Mode         string `json:"mode"`
 	SystemPrompt string `json:"system_prompt,omitempty"`
-}
-
-// KnowledgeDocument represents a document in a Dify knowledge base.
-type KnowledgeDocument struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	DataSourceType string `json:"data_source_type"`
-	WordCount      int    `json:"word_count"`
-	IndexingStatus string `json:"indexing_status"`
-	Enabled        bool   `json:"enabled"`
-	CreatedAt      int64  `json:"created_at"`
-}
-
-// KnowledgeListResponse represents the paginated response from the Dify datasets/documents API.
-type KnowledgeListResponse struct {
-	Data    []KnowledgeDocument `json:"data"`
-	HasMore bool                `json:"has_more"`
-	Total   int                 `json:"total"`
 }
 
 // TestMessageResponse represents the response from a Dify test chat message.
@@ -337,42 +321,6 @@ func (b *DifyBridge) updateSystemPromptWithToken(ctx context.Context, appID, pro
 // `inputs` map. The list lives in difyapp because the router provisions the same
 // apps and must declare the same set.
 var contextVariables = difyapp.ContextVariables
-
-// ListKnowledgeDocuments lists documents in a Dify dataset (knowledge base).
-func (b *DifyBridge) ListKnowledgeDocuments(ctx context.Context, datasetID string, apiKey string) (*KnowledgeListResponse, error) {
-	if datasetID == "" {
-		return nil, fmt.Errorf("dataset ID is empty")
-	}
-
-	url := fmt.Sprintf("%s/datasets/%s/documents?page=1&limit=100", b.config.APIBaseURL, datasetID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("list knowledge docs: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d listing documents: %s", resp.StatusCode, string(body))
-	}
-
-	var result KnowledgeListResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal knowledge list: %w", err)
-	}
-
-	return &result, nil
-}
 
 // SendTestMessage sends a test chat message to a Dify app and returns the response.
 func (b *DifyBridge) SendTestMessage(ctx context.Context, apiKey string, message string, userID string) (*TestMessageResponse, error) {

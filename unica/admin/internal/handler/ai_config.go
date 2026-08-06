@@ -2,39 +2,74 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
 	"github.com/kefu/unica/admin/internal/repository"
+	"github.com/kefu/unica/pkg/difyapp"
 	"github.com/redis/go-redis/v9"
 )
+
+// MaxKnowledgeUploadBytes caps a knowledge document upload. Dify itself refuses
+// larger files, and the cap has to hold before the body is read so a single
+// request cannot be turned into unbounded memory.
+const MaxKnowledgeUploadBytes = 15 << 20
+
+// uploadFormMemoryBytes is how much of a multipart upload is parsed in memory;
+// the remainder spills to a temp file. It stays under MaxKnowledgeUploadBytes so
+// the parse cannot allocate more than one capped body.
+const uploadFormMemoryBytes = 4 << 20
+
+// aiConfigProductLines is the product-line access this handler needs: the record
+// itself (which carries the Dify bindings read from config_json) and the app API
+// key, which the record deliberately does not carry.
+type aiConfigProductLines interface {
+	GetByID(ctx context.Context, id string) (*repository.ProductLine, error)
+	GetDifyAppKey(ctx context.Context, id string) (string, error)
+}
 
 // AIConfigHandler handles AI agent configuration endpoints.
 type AIConfigHandler struct {
 	configRepo *repository.AIConfigRepository
-	plRepo     *repository.ProductLineRepository
+	plRepo     aiConfigProductLines
 	difyBridge *bridge.DifyBridge
 	rdb        *redis.Client
+	// dataset is nil when no dataset key is configured, which is the only
+	// distinction the knowledge endpoints need between "unavailable" and "ready".
+	dataset *difyapp.DatasetClient
 }
 
-// NewAIConfigHandler creates a new AI config handler.
+// NewAIConfigHandler creates a new AI config handler. datasetAPIBaseURL is the
+// Dify service API root (the /v1 base) and datasetAPIKey is a dataset-type key:
+// the knowledge endpoints reject the per-product-line app keys, so the key is
+// deployment-wide and knowledge management stays disabled while it is empty.
 func NewAIConfigHandler(
 	configRepo *repository.AIConfigRepository,
-	plRepo *repository.ProductLineRepository,
+	plRepo aiConfigProductLines,
 	difyBridge *bridge.DifyBridge,
 	rdb *redis.Client,
+	datasetAPIBaseURL string,
+	datasetAPIKey string,
 ) *AIConfigHandler {
-	return &AIConfigHandler{
+	h := &AIConfigHandler{
 		configRepo: configRepo,
 		plRepo:     plRepo,
 		difyBridge: difyBridge,
 		rdb:        rdb,
 	}
+	if datasetAPIKey != "" {
+		h.dataset = difyapp.NewDatasetClient(datasetAPIBaseURL, datasetAPIKey)
+	}
+	return h
 }
 
 // aiConfigResponse combines the DB config with the Dify system prompt.
@@ -97,20 +132,11 @@ func (h *AIConfigHandler) HandleAIConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Verify product line access for non-SuperAdmin
-	claims := auth.GetClaims(r.Context())
-	if claims != nil && claims.Role != "super_admin" {
-		hasAccess := false
-		for _, id := range claims.ProductLineIDs {
-			if id == plID {
-				hasAccess = true
-				break
-			}
-		}
-		if !hasAccess {
-			ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
-			return
-		}
+	// Product-line scoping for the whole subtree: the manage-ai-config
+	// permission says what a caller may do, not which line they may do it to.
+	if !productLineScopeAllowed(r, plID) {
+		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+		return
 	}
 
 	// Route based on sub-path
@@ -145,11 +171,7 @@ func (h *AIConfigHandler) HandleAIConfig(w http.ResponseWriter, r *http.Request)
 		}
 		h.updateHandoffRules(w, r, pl)
 	case "knowledge":
-		if r.Method != http.MethodGet {
-			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		h.listKnowledge(w, r, pl)
+		h.handleKnowledge(w, r, pl, segments[2:])
 	case "test":
 		if r.Method != http.MethodPost {
 			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -310,41 +332,360 @@ func (h *AIConfigHandler) updateHandoffRules(w http.ResponseWriter, r *http.Requ
 	JSON(w, http.StatusOK, cfg)
 }
 
-// listKnowledge lists knowledge base documents for a product line via Dify API.
-func (h *AIConfigHandler) listKnowledge(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
-	// We need the Dify API key and a dataset ID for this product line.
-	// The dataset ID would typically be stored in product_lines.config_json or a related table.
-	// For now, we'll use the Dify admin API to list datasets for the app.
-	if pl.DifyAgentID == nil || *pl.DifyAgentID == "" {
-		ErrorJSON(w, http.StatusBadRequest, "no Dify app configured for this product line")
-		return
-	}
+// noDatasetMessage is the answer for a product line that has no knowledge base
+// bound yet. It is not an error the caller can fix by retrying: the binding is
+// written by product-line provisioning.
+const noDatasetMessage = "no knowledge base dataset configured for this product line"
 
-	// Try to get dataset ID from config_json
-	datasetID, apiKey := h.getProductLineDifyParams(r, pl)
-	if datasetID == "" {
-		// Return empty list if no dataset configured
+// handleKnowledge routes the knowledge sub-resource of a product line:
+//
+//	GET    knowledge                     list documents
+//	POST   knowledge/documents           upload (multipart file or JSON text)
+//	DELETE knowledge/documents/{docID}   delete
+//	GET    knowledge/status/{batch}      indexing progress of an upload
+//
+// rest is the path after "knowledge". The dataset is always the one bound to
+// the product line; no request may name a different one, which is what keeps a
+// caller scoped to one line from reaching another line's knowledge base.
+func (h *AIConfigHandler) handleKnowledge(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine, rest []string) {
+	switch {
+	case len(rest) == 0:
+		if r.Method != http.MethodGet {
+			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.listKnowledge(w, r, pl)
+	case rest[0] == "documents" && len(rest) == 1:
+		if r.Method != http.MethodPost {
+			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.uploadKnowledgeDocument(w, r, pl)
+	case rest[0] == "documents" && len(rest) == 2:
+		if r.Method != http.MethodDelete {
+			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.deleteKnowledgeDocument(w, r, pl, rest[1])
+	case rest[0] == "status" && len(rest) == 2:
+		if r.Method != http.MethodGet {
+			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.knowledgeIndexingStatus(w, r, pl, rest[1])
+	default:
+		ErrorJSON(w, http.StatusNotFound, "unknown knowledge sub-path: "+strings.Join(rest, "/"))
+	}
+}
+
+// knowledgeDataset resolves the dataset a request may act on, or writes the
+// response explaining why it cannot. mutating decides how a product line with no
+// dataset is reported: listing an unbound line is an empty knowledge base, but
+// writing to one has no target.
+func (h *AIConfigHandler) knowledgeDataset(w http.ResponseWriter, pl *repository.ProductLine, mutating bool) (string, bool) {
+	if h.dataset == nil {
+		ErrorJSON(w, http.StatusServiceUnavailable,
+			"knowledge base management is unavailable: DIFY_DATASET_API_KEY is not configured for this service")
+		return "", false
+	}
+	if pl.DifyDatasetID == nil || *pl.DifyDatasetID == "" {
+		if mutating {
+			ErrorJSON(w, http.StatusNotFound, noDatasetMessage)
+			return "", false
+		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"product_line_id": pl.ID,
-			"documents":       []interface{}{},
+			"documents":       []difyapp.Document{},
 			"total":           0,
-			"message":         "no knowledge base dataset configured for this product line",
+			"message":         noDatasetMessage,
 		})
+		return "", false
+	}
+	return *pl.DifyDatasetID, true
+}
+
+// listKnowledge lists knowledge base documents for a product line.
+func (h *AIConfigHandler) listKnowledge(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	datasetID, ok := h.knowledgeDataset(w, pl, false)
+	if !ok {
 		return
 	}
 
-	docs, err := h.difyBridge.ListKnowledgeDocuments(r.Context(), datasetID, apiKey)
+	q := r.URL.Query()
+	page, err := positiveQueryInt(q.Get("page"))
+	if err != nil {
+		ErrorJSON(w, http.StatusBadRequest, "page must be a positive integer")
+		return
+	}
+	limit, err := positiveQueryInt(q.Get("limit"))
+	if err != nil {
+		ErrorJSON(w, http.StatusBadRequest, "limit must be a positive integer")
+		return
+	}
+
+	docs, err := h.dataset.ListDocuments(r.Context(), datasetID, page, limit, strings.TrimSpace(q.Get("keyword")))
 	if err != nil {
 		log.Printf("[ai-config] list knowledge error: %v", err)
-		ErrorJSON(w, http.StatusBadGateway, "failed to list knowledge documents: "+err.Error())
+		writeDatasetError(w, "failed to list knowledge documents", err)
 		return
+	}
+	if docs.Data == nil {
+		docs.Data = []difyapp.Document{}
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"product_line_id": pl.ID,
 		"documents":       docs.Data,
 		"total":           docs.Total,
+		"page":            docs.Page,
+		"limit":           docs.Limit,
+		"has_more":        docs.HasMore,
 	})
+}
+
+// uploadDocumentRequest is the JSON form of an upload, for text pasted into the
+// console rather than a file picked from disk.
+type uploadDocumentRequest struct {
+	Name string `json:"name"`
+	Text string `json:"text"`
+}
+
+// uploadDocumentResponse identifies the created document and the batch that
+// tracks its indexing. Batch, not the document ID, is what the status endpoint
+// takes.
+type uploadDocumentResponse struct {
+	DocumentID string `json:"document_id"`
+	Name       string `json:"name"`
+	Batch      string `json:"batch"`
+}
+
+// knowledgeUploadWindow is how long an upload request may take end to end. The
+// server's global read/write deadlines are sized for JSON round-trips; a 15 MB
+// body arriving over a slow link plus Dify's synchronous ingest does not fit in
+// them, and a connection killed after Dify accepted the file leaves a document
+// created upstream with an error reported to the client.
+const knowledgeUploadWindow = 5 * time.Minute
+
+// defaultProcessRule accompanies every document create. Dify falls back to the
+// dataset's latest process rule when none is sent — and a freshly provisioned
+// dataset has none to fall back to, so the very first upload would fail.
+var defaultProcessRule = map[string]interface{}{"mode": "automatic"}
+
+// uploadKnowledgeDocument creates a document from either a multipart file part
+// or a JSON {name, text} body.
+func (h *AIConfigHandler) uploadKnowledgeDocument(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	datasetID, ok := h.knowledgeDataset(w, pl, true)
+	if !ok {
+		return
+	}
+
+	// Stretch this request's deadlines to the upload window. Failure is
+	// deliberately ignored: test recorders support no deadlines, and a writer
+	// that cannot stretch simply keeps the server's defaults.
+	rc := http.NewResponseController(w)
+	deadline := time.Now().Add(knowledgeUploadWindow)
+	_ = rc.SetReadDeadline(deadline)
+	_ = rc.SetWriteDeadline(deadline)
+
+	// The limit is applied before this handler reads a byte, so an oversized
+	// upload is refused rather than parsed. The route additionally caps the body
+	// above this limit (see LimitRequestBody) because middleware upstream of the
+	// handler buffers request bodies.
+	r.Body = http.MaxBytesReader(w, r.Body, MaxKnowledgeUploadBytes)
+
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil && r.Header.Get("Content-Type") != "" {
+		ErrorJSON(w, http.StatusBadRequest, "invalid Content-Type header")
+		return
+	}
+
+	var result *difyapp.DocumentResult
+	if strings.HasPrefix(mediaType, "multipart/") {
+		result, err = h.uploadFromMultipart(w, r, datasetID)
+	} else {
+		result, err = h.uploadFromJSON(w, r, datasetID)
+	}
+	if result == nil {
+		// The helper already wrote the response for a rejected request.
+		if err != nil {
+			log.Printf("[ai-config] upload knowledge error: %v", err)
+		}
+		return
+	}
+
+	log.Printf("[ai-config] uploaded knowledge document product_line=%s dataset=%s document=%s batch=%s",
+		pl.ID, datasetID, result.Document.ID, result.Batch)
+	JSON(w, http.StatusCreated, uploadDocumentResponse{
+		DocumentID: result.Document.ID,
+		Name:       result.Document.Name,
+		Batch:      result.Batch,
+	})
+}
+
+// uploadFromMultipart handles the file form. It returns a nil result once it has
+// written the failure response itself.
+func (h *AIConfigHandler) uploadFromMultipart(w http.ResponseWriter, r *http.Request, datasetID string) (*difyapp.DocumentResult, error) {
+	if err := r.ParseMultipartForm(uploadFormMemoryBytes); err != nil {
+		if writeBodyLimitExceeded(w, err) {
+			return nil, err
+		}
+		ErrorJSON(w, http.StatusBadRequest, "invalid multipart form")
+		return nil, err
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		if writeBodyLimitExceeded(w, err) {
+			return nil, err
+		}
+		ErrorJSON(w, http.StatusBadRequest, "multipart form must carry a file part named \"file\"")
+		return nil, err
+	}
+	defer file.Close()
+
+	// A browser may send a whole path, and a Windows one at that; only the base
+	// name is a document name. path.Base rather than filepath.Base: the input is
+	// normalised to "/" here, and the result must not depend on the OS the admin
+	// service happens to run on.
+	filename := path.Base(strings.ReplaceAll(header.Filename, "\\", "/"))
+	if filename == "" || filename == "." || filename == "/" {
+		ErrorJSON(w, http.StatusBadRequest, "uploaded file has no name")
+		return nil, nil
+	}
+
+	// The body is fully consumed by the parse above, so the size limit can no
+	// longer fire from here on.
+	result, err := h.dataset.CreateDocumentByFile(r.Context(), datasetID, filename, file, difyapp.DocumentOptions{ProcessRule: defaultProcessRule})
+	if err != nil {
+		writeDatasetError(w, "failed to upload knowledge document", err)
+		return nil, err
+	}
+	return result, nil
+}
+
+// uploadFromJSON handles the {name, text} form.
+func (h *AIConfigHandler) uploadFromJSON(w http.ResponseWriter, r *http.Request, datasetID string) (*difyapp.DocumentResult, error) {
+	var req uploadDocumentRequest
+	if err := DecodeJSON(r, &req); err != nil {
+		if writeBodyLimitExceeded(w, err) {
+			return nil, err
+		}
+		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+		return nil, err
+	}
+	name := strings.TrimSpace(req.Name)
+	text := strings.TrimSpace(req.Text)
+	if name == "" || text == "" {
+		ErrorJSON(w, http.StatusBadRequest, "name and text are required")
+		return nil, nil
+	}
+
+	result, err := h.dataset.CreateDocumentByText(r.Context(), datasetID, name, text, difyapp.DocumentOptions{ProcessRule: defaultProcessRule})
+	if err != nil {
+		writeDatasetError(w, "failed to upload knowledge document", err)
+		return nil, err
+	}
+	return result, nil
+}
+
+// deleteKnowledgeDocument removes one document from the product line's dataset.
+func (h *AIConfigHandler) deleteKnowledgeDocument(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine, docID string) {
+	datasetID, ok := h.knowledgeDataset(w, pl, true)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(docID) == "" {
+		ErrorJSON(w, http.StatusBadRequest, "document id required")
+		return
+	}
+
+	if err := h.dataset.DeleteDocument(r.Context(), datasetID, docID); err != nil {
+		log.Printf("[ai-config] delete knowledge document error: %v", err)
+		writeDatasetError(w, "failed to delete knowledge document", err)
+		return
+	}
+
+	log.Printf("[ai-config] deleted knowledge document product_line=%s dataset=%s document=%s", pl.ID, datasetID, docID)
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"product_line_id": pl.ID,
+		"document_id":     docID,
+		"message":         "knowledge document deleted",
+	})
+}
+
+// knowledgeIndexingStatus reports how far Dify has got with the batch an upload
+// returned.
+func (h *AIConfigHandler) knowledgeIndexingStatus(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine, batch string) {
+	datasetID, ok := h.knowledgeDataset(w, pl, true)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(batch) == "" {
+		ErrorJSON(w, http.StatusBadRequest, "batch required")
+		return
+	}
+
+	statuses, err := h.dataset.IndexingStatus(r.Context(), datasetID, batch)
+	if err != nil {
+		log.Printf("[ai-config] knowledge indexing status error: %v", err)
+		writeDatasetError(w, "failed to get indexing status", err)
+		return
+	}
+	if statuses == nil {
+		statuses = []difyapp.DocumentIndexingStatus{}
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"product_line_id": pl.ID,
+		"batch":           batch,
+		"documents":       statuses,
+	})
+}
+
+// positiveQueryInt parses an optional pagination parameter. Absent means "let
+// the client decide", which the dataset client renders as its own default.
+func positiveQueryInt(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("not a positive integer: %q", raw)
+	}
+	return n, nil
+}
+
+// writeBodyLimitExceeded answers a request that outgrew MaxKnowledgeUploadBytes
+// and reports whether it did. The limit error surfaces from whichever read hit
+// it — multipart parsing, the JSON decoder, or the upload itself — so every read
+// of an upload body has to be checked.
+func writeBodyLimitExceeded(w http.ResponseWriter, err error) bool {
+	var maxErr *http.MaxBytesError
+	if !errors.As(err, &maxErr) {
+		return false
+	}
+	ErrorJSON(w, http.StatusRequestEntityTooLarge,
+		fmt.Sprintf("knowledge document exceeds the %d MB upload limit", MaxKnowledgeUploadBytes>>20))
+	return true
+}
+
+// writeDatasetError maps a knowledge API failure onto a status an operator can
+// act on. A rejected key is the predictable misconfiguration here — the dataset
+// endpoints refuse app keys — so it is named rather than reported as a generic
+// upstream fault.
+func writeDatasetError(w http.ResponseWriter, action string, err error) {
+	var apiErr *difyapp.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			ErrorJSON(w, http.StatusBadGateway,
+				"Dify rejected the dataset API key (DIFY_DATASET_API_KEY must be a dataset key, not an app key): "+apiErr.Error())
+			return
+		case http.StatusNotFound:
+			ErrorJSON(w, http.StatusNotFound, action+": "+apiErr.Error())
+			return
+		}
+	}
+	ErrorJSON(w, http.StatusBadGateway, action+": "+err.Error())
 }
 
 // sendTestMessage sends a test message to the Dify app and returns the AI response.
@@ -371,7 +712,12 @@ func (h *AIConfigHandler) sendTestMessage(w http.ResponseWriter, r *http.Request
 		userID = "admin-test-" + claims.UserID
 	}
 
-	_, apiKey := h.getProductLineDifyParams(r, pl)
+	apiKey, err := h.plRepo.GetDifyAppKey(r.Context(), pl.ID)
+	if err != nil {
+		log.Printf("[ai-config] failed to load dify app key: %v", err)
+		ErrorJSON(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	if apiKey == "" {
 		ErrorJSON(w, http.StatusBadRequest, "no Dify API key configured for this product line")
 		return
@@ -406,32 +752,4 @@ func (h *AIConfigHandler) invalidateConfigCache(ctx context.Context, productLine
 	if err := h.rdb.Publish(ctx, "unica:config_invalidation", invalidationMsg).Err(); err != nil {
 		log.Printf("[ai-config] failed to publish invalidation for %s: %v", productLineID, err)
 	}
-}
-
-// getProductLineDifyParams extracts the Dify dataset_id and api_key from the product line's config_json.
-func (h *AIConfigHandler) getProductLineDifyParams(r *http.Request, pl *repository.ProductLine) (datasetID, apiKey string) {
-	// Query config_json from database directly since ProductLine model doesn't carry it
-	var configJSON []byte
-	var difyAPIKey, difyBaseURL string
-
-	err := h.plRepo.DB().QueryRowContext(r.Context(),
-		`SELECT COALESCE(config_json, '{}'::jsonb), COALESCE(dify_api_key, ''), COALESCE(dify_base_url, '')
-		 FROM product_lines WHERE id = $1`, pl.ID,
-	).Scan(&configJSON, &difyAPIKey, &difyBaseURL)
-	if err != nil {
-		log.Printf("[ai-config] failed to query product line config: %v", err)
-		return "", ""
-	}
-
-	apiKey = difyAPIKey
-
-	// Try to extract dataset_id from config_json
-	var cfgMap map[string]interface{}
-	if err := json.Unmarshal(configJSON, &cfgMap); err == nil {
-		if dsID, ok := cfgMap["dify_dataset_id"].(string); ok {
-			datasetID = dsID
-		}
-	}
-
-	return datasetID, apiKey
 }

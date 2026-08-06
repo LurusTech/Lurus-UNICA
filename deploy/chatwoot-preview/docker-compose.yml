@@ -83,6 +83,10 @@ services:
       DIFY_API_BASE_URL: "http://100.122.83.20:3402/v1"
       DIFY_ADMIN_EMAIL: "admin@unica.local"
       DIFY_ADMIN_PASSWORD: "Unica2026x"
+      # Dataset-type key from the Dify knowledge base API page. The app keys
+      # stored per product line are rejected by the dataset endpoints; leaving
+      # this empty disables knowledge base management instead of failing.
+      DIFY_DATASET_API_KEY: "${DIFY_DATASET_API_KEY:-}"
     volumes:
       - /data/unica-chatwoot/admin/unica-admin:/usr/local/bin/unica-admin:ro
     depends_on:

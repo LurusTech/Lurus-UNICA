@@ -25,6 +25,25 @@ func DecodeJSON(r *http.Request, v interface{}) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
+// LimitRequestBody caps a request body before any middleware wrapped inside it
+// reads the body whole. The audit middleware buffers request bodies for replay,
+// so without a ceiling above it a single large upload becomes unbounded memory
+// there no matter what limit the handler applies.
+//
+// The ceiling must sit above the handler's own limit: the handler has to be able
+// to read past its limit to answer 413, and would otherwise see a body truncated
+// to exactly the limit and report it as malformed instead.
+func LimitRequestBody(limit int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // ExtractPathParam extracts a path segment from a URL path.
 // For example, extracting "id" from "/api/v1/users/{id}" given the prefix "/api/v1/users/".
 func ExtractPathParam(path, prefix string) string {

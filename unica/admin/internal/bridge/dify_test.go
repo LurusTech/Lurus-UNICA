@@ -190,40 +190,6 @@ func TestDifyBridge_SendTestMessage_EmptyAPIKey(t *testing.T) {
 	}
 }
 
-func TestDifyBridge_ListKnowledgeDocuments(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("expected GET, got %s", r.Method)
-		}
-
-		resp := KnowledgeListResponse{
-			Data: []KnowledgeDocument{
-				{ID: "doc-1", Name: "FAQ.pdf", WordCount: 1500, IndexingStatus: "completed", Enabled: true},
-				{ID: "doc-2", Name: "Guide.md", WordCount: 3000, IndexingStatus: "completed", Enabled: true},
-			},
-			Total:   2,
-			HasMore: false,
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	b := NewDifyBridge(DifyBridgeConfig{
-		APIBaseURL: server.URL,
-	})
-
-	result, err := b.ListKnowledgeDocuments(context.Background(), "ds-123", "api-key")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Total != 2 {
-		t.Errorf("expected 2 documents, got %d", result.Total)
-	}
-	if result.Data[0].Name != "FAQ.pdf" {
-		t.Errorf("unexpected first doc name: %q", result.Data[0].Name)
-	}
-}
-
 func TestDifyBridge_Login_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
