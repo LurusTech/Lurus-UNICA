@@ -42,6 +42,16 @@ func (rr *responseRecorder) Unwrap() http.ResponseWriter {
 	return rr.ResponseWriter
 }
 
+// Options carries the behaviour a resource may need beyond the default
+// before/after snapshots.
+type Options struct {
+	// Redact rewrites a state snapshot before it is stored. A create's
+	// after-state is the handler's own response body, so an endpoint that
+	// answers with a one-time secret (a generated password) needs this to keep
+	// that secret out of a table that outlives the response.
+	Redact func(state json.RawMessage) json.RawMessage
+}
+
 // Middleware creates an HTTP middleware that captures audit events around write operations.
 // resourceType identifies the kind of resource being mutated (e.g. "channel_config", "ai_config").
 // beforeFn retrieves the current state before the handler runs (nil for create operations).
@@ -51,6 +61,17 @@ func Middleware(
 	resourceType string,
 	beforeFn BeforeStateFunc,
 	afterFn AfterStateFunc,
+) func(http.Handler) http.Handler {
+	return MiddlewareWithOptions(logger, resourceType, beforeFn, afterFn, Options{})
+}
+
+// MiddlewareWithOptions is Middleware with per-resource behaviour applied.
+func MiddlewareWithOptions(
+	logger *Logger,
+	resourceType string,
+	beforeFn BeforeStateFunc,
+	afterFn AfterStateFunc,
+	opts Options,
 ) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +159,15 @@ func Middleware(
 			var plIDPtr *string
 			if productLineID != "" {
 				plIDPtr = &productLineID
+			}
+
+			if opts.Redact != nil {
+				if beforeState != nil {
+					beforeState = opts.Redact(beforeState)
+				}
+				if afterState != nil {
+					afterState = opts.Redact(afterState)
+				}
 			}
 
 			var beforePtr, afterPtr *json.RawMessage

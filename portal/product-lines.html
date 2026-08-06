@@ -164,6 +164,32 @@
   .toast.warn { border-left-color: var(--warn); }
   @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
+  /* One-click onboarding report */
+  .report-steps { margin-top: 4px; }
+  .report-step {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .report-step:last-child { border-bottom: none; }
+  .report-mark { flex: none; font-size: 0.95rem; line-height: 1.35; }
+  .report-mark.ok { color: var(--ok); }
+  .report-mark.warn { color: var(--warn); }
+  .report-body { min-width: 0; }
+  .report-title { font-size: 0.88rem; font-weight: 600; }
+  .report-msg { font-size: 0.82rem; color: var(--text-muted); margin-top: 3px; word-break: break-word; }
+  .cred-box {
+    margin-top: 18px; padding: 14px 16px; border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+  }
+  .cred-warn { color: var(--warn); font-size: 0.85rem; font-weight: 600; margin-bottom: 12px; }
+  .cred-item { margin-bottom: 12px; }
+  .cred-item:last-child { margin-bottom: 0; }
+  .cred-label { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 5px; }
+  .cred-row { display: flex; gap: 8px; }
+  .cred-row input { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; }
+  .cred-row button { flex: none; }
+
   .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
   [hidden] { display: none !important; }
 </style>
@@ -207,6 +233,7 @@
 
     <div class="toolbar">
       <div class="spacer"></div>
+      <button id="onboard-btn" hidden>⚡ 一键开户</button>
       <button class="primary" id="create-btn">＋ 新建产品线</button>
       <button id="refresh-btn">刷新</button>
     </div>
@@ -285,6 +312,39 @@
   </div>
 </div>
 
+<!-- 一键开户 modal -->
+<div class="modal-backdrop" id="onboard-modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="onboard-modal-title">
+    <h3 id="onboard-modal-title">一键开户</h3>
+    <p class="modal-sub" id="onboard-modal-sub">一次完成产品线、AI 应用与知识库、门户账号和人工客服工作台的开通</p>
+    <form id="onboard-form">
+      <div class="field">
+        <label for="f-cust-name">客户名称 (name)</label>
+        <input id="f-cust-name" required />
+        <div class="hint">用于系统内部标识，建议使用英文/拼音，不含空格</div>
+      </div>
+      <div class="field">
+        <label for="f-cust-display-name">显示名 (display_name)</label>
+        <input id="f-cust-display-name" required />
+      </div>
+      <div class="field">
+        <label for="f-cust-admin-email">管理员邮箱 (admin_email)</label>
+        <input id="f-cust-admin-email" type="email" autocomplete="off" required />
+        <div class="hint">同时作为门户账号与人工客服工作台账号的登录邮箱</div>
+      </div>
+      <div class="field">
+        <label for="f-cust-admin-password">初始密码 (admin_password)</label>
+        <input id="f-cust-admin-password" type="password" autocomplete="new-password" placeholder="留空则自动生成" />
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="onboard-modal-cancel">取消</button>
+        <button type="submit" class="primary" id="onboard-modal-submit">开始开户</button>
+      </div>
+    </form>
+    <div id="onboard-result" hidden></div>
+  </div>
+</div>
+
 <div id="toast-host" aria-live="polite"></div>
 
 <script>
@@ -294,7 +354,14 @@
   var TOKEN_KEY = "unica_access_token";
   var DIFY_CONSOLE_BASE = "http://100.122.83.20:3402";
 
-  var state = { productLines: [], editingId: null, provisioningIds: {}, aiConfigPL: null, canManagePL: true };
+  var state = {
+    productLines: [], editingId: null, provisioningIds: {}, aiConfigPL: null,
+    canManagePL: true, canOnboard: false,
+    // onboardDone: the run succeeded, so closing the modal must refresh the list.
+    // onboardSecrets: one-time credentials are on screen, so a stray click or
+    // Escape must not discard them.
+    onboardDone: false, onboardSecrets: false, onboardSummary: ""
+  };
 
   var els = {
     loginView: document.getElementById("login-view"),
@@ -306,6 +373,7 @@
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
     createBtn: document.getElementById("create-btn"),
+    onboardBtn: document.getElementById("onboard-btn"),
     refreshBtn: document.getElementById("refresh-btn"),
     tbody: document.getElementById("pl-tbody"),
 
@@ -329,8 +397,22 @@
     promptHint: document.getElementById("prompt-hint"),
     aiUpdatedHint: document.getElementById("ai-updated-hint"),
 
+    onboardModalBackdrop: document.getElementById("onboard-modal-backdrop"),
+    onboardModalTitle: document.getElementById("onboard-modal-title"),
+    onboardModalSub: document.getElementById("onboard-modal-sub"),
+    onboardForm: document.getElementById("onboard-form"),
+    onboardModalCancel: document.getElementById("onboard-modal-cancel"),
+    onboardModalSubmit: document.getElementById("onboard-modal-submit"),
+    onboardResult: document.getElementById("onboard-result"),
+    fCustName: document.getElementById("f-cust-name"),
+    fCustDisplayName: document.getElementById("f-cust-display-name"),
+    fCustAdminEmail: document.getElementById("f-cust-admin-email"),
+    fCustAdminPassword: document.getElementById("f-cust-admin-password"),
+
     toastHost: document.getElementById("toast-host")
   };
+
+  var ONBOARD_SUB_TEXT = els.onboardModalSub.textContent;
 
   // ---------- Toasts ----------
   function toast(message, kind) {
@@ -385,6 +467,41 @@
     var claims = decodeClaims(getToken());
     if (!claims) return true;
     return isSuperAdmin(claims);
+  }
+
+  // Mirrors the server permission matrix: the onboarding route chains
+  // manage_users and manage_product_lines, and super_admin is the only role
+  // granted both. Strict === true keeps inherited keys out.
+  var ONBOARD_CUSTOMER_ROLES = { super_admin: true };
+
+  function claimRoles(claims) {
+    var roles = [];
+    if (!claims) return roles;
+    if (typeof claims.role === "string" && claims.role) roles.push(claims.role);
+    if (Array.isArray(claims.roles)) {
+      for (var i = 0; i < claims.roles.length; i++) {
+        if (typeof claims.roles[i] === "string") roles.push(claims.roles[i]);
+      }
+    }
+    return roles;
+  }
+
+  // Onboarding is the one action here that is hidden rather than shown by
+  // default: it provisions across four systems, so an account that cannot be
+  // shown to hold both permissions must not be offered the button.
+  function canOnboardCustomers() {
+    var roles = claimRoles(decodeClaims(getToken()));
+    for (var i = 0; i < roles.length; i++) {
+      if (ONBOARD_CUSTOMER_ROLES[roles[i]] === true) return true;
+    }
+    return false;
+  }
+
+  function applyAccountVisibility() {
+    state.canManagePL = canManageProductLines();
+    state.canOnboard = canOnboardCustomers();
+    els.createBtn.hidden = !state.canManagePL;
+    els.onboardBtn.hidden = !state.canOnboard;
   }
 
   function showLogin(message) {
@@ -483,6 +600,7 @@
 
   // ---------- Bootstrap after login ----------
   function bootstrap() {
+    applyAccountVisibility();
     loadProductLines();
   }
 
@@ -506,8 +624,7 @@
   function renderProductLines() {
     // Without manage_product_lines the server refuses every mutation here, so
     // the account gets a read-only view rather than buttons that would 403.
-    state.canManagePL = canManageProductLines();
-    els.createBtn.hidden = !state.canManagePL;
+    applyAccountVisibility();
     if (state.productLines.length === 0) {
       els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' +
         (state.canManagePL ? "暂无产品线，点击“新建产品线”开始" : "暂无产品线") +
@@ -631,6 +748,9 @@
     if (e.key !== "Escape") return;
     if (els.plModalBackdrop.classList.contains("open")) closePLModal();
     if (els.aiModalBackdrop.classList.contains("open")) closeAIModal();
+    // Escape is ignored while one-time credentials are displayed; the report
+    // carries an explicit 关闭 button for that case.
+    if (els.onboardModalBackdrop.classList.contains("open") && !state.onboardSecrets) closeOnboardModal();
   });
 
   function openCreateModal() {
@@ -806,12 +926,280 @@
       .filter(function (s) { return s.length > 0; });
   }
 
+  // ---------- 一键开户 ----------
+  els.onboardBtn.addEventListener("click", openOnboardModal);
+  els.onboardModalCancel.addEventListener("click", closeOnboardModal);
+  els.onboardModalBackdrop.addEventListener("click", function (e) {
+    // A misplaced click must not discard credentials that are shown once.
+    if (e.target === els.onboardModalBackdrop && !state.onboardSecrets) closeOnboardModal();
+  });
+
+  function openOnboardModal() {
+    state.onboardDone = false;
+    state.onboardSecrets = false;
+    state.onboardSummary = "";
+    els.onboardModalTitle.textContent = "一键开户";
+    els.onboardModalSub.textContent = ONBOARD_SUB_TEXT;
+    els.onboardForm.reset();
+    els.onboardForm.hidden = false;
+    els.onboardResult.innerHTML = "";
+    els.onboardResult.hidden = true;
+    els.onboardModalBackdrop.classList.add("open");
+    els.fCustName.focus();
+  }
+
+  function closeOnboardModal() {
+    var reload = state.onboardDone;
+    els.onboardModalBackdrop.classList.remove("open");
+    state.onboardDone = false;
+    state.onboardSecrets = false;
+    state.onboardSummary = "";
+    // Emptying the report is what takes the one-time passwords out of the DOM.
+    els.onboardResult.innerHTML = "";
+    els.onboardResult.hidden = true;
+    els.onboardForm.reset();
+    els.onboardForm.hidden = false;
+    els.onboardModalTitle.textContent = "一键开户";
+    els.onboardModalSub.textContent = ONBOARD_SUB_TEXT;
+    if (reload) loadProductLines();
+  }
+
+  els.onboardForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+
+    var payload = {
+      name: els.fCustName.value.trim(),
+      display_name: els.fCustDisplayName.value.trim(),
+      admin_email: els.fCustAdminEmail.value.trim()
+    };
+    if (!payload.name || !payload.display_name || !payload.admin_email) {
+      toast("客户名称、显示名与管理员邮箱均为必填", "error");
+      return;
+    }
+    // admin_password is omitted when blank rather than sent empty: the server
+    // generates a password only for an absent field.
+    var password = els.fCustAdminPassword.value;
+    if (password) payload.admin_password = password;
+
+    els.onboardModalSubmit.disabled = true;
+    els.onboardModalCancel.disabled = true;
+    els.onboardModalSubmit.innerHTML = '<span class="spinner"></span>开户中…';
+
+    api("/api/v1/customers", { method: "POST", body: JSON.stringify(payload) })
+      .then(function (data) {
+        if (!data) throw new Error("开户响应异常");
+        state.onboardDone = true;
+        renderOnboardResult(data);
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("开户失败: " + err.message, "error");
+      })
+      .finally(function () {
+        els.onboardModalSubmit.disabled = false;
+        els.onboardModalCancel.disabled = false;
+        els.onboardModalSubmit.textContent = "开始开户";
+      });
+  });
+
+  // Step rows are derived once and feed both the on-screen report and the
+  // plain-text summary, so the two can never drift apart.
+  function onboardSteps(data) {
+    var pl = data.product_line || {};
+    var dify = data.dify || {};
+    var portal = data.portal_account || {};
+    var chatwoot = data.chatwoot || {};
+    var steps = [];
+
+    var plLabel = (pl.display_name || "") + "（" + (pl.name || "") + "）";
+    steps.push({
+      title: "产品线",
+      ok: true,
+      message: (pl.created ? "已创建：" : "已存在，直接复用：") + plLabel
+    });
+
+    var difyIds = [];
+    if (dify.dify_agent_id) difyIds.push("应用 " + dify.dify_agent_id);
+    if (dify.dataset_id) difyIds.push("知识库 " + dify.dataset_id);
+    var difySuffix = difyIds.length ? "（" + difyIds.join(" / ") + "）" : "";
+    // A message is present only when the step degraded; a clean run with
+    // provisioned=false simply means the binding was already there.
+    if (dify.message) {
+      steps.push({ title: "AI 应用与知识库", ok: false, message: "未完成：" + dify.message });
+    } else if (dify.provisioned) {
+      steps.push({ title: "AI 应用与知识库", ok: true, message: "已创建并绑定" + difySuffix });
+    } else {
+      steps.push({ title: "AI 应用与知识库", ok: true, message: "已存在绑定，未重复创建" + difySuffix });
+    }
+
+    steps.push({
+      title: "门户账号",
+      ok: true,
+      message: (portal.created ? "已创建：" : "账号已存在，已确保授权：") +
+        (portal.email || "") + "，角色 " + (portal.role || "")
+    });
+
+    var cwDetails = [];
+    if (chatwoot.account_id) cwDetails.push("账户 ID " + chatwoot.account_id);
+    if (chatwoot.inbox_id) cwDetails.push("收件箱 ID " + chatwoot.inbox_id);
+    var cwSuffix = cwDetails.length ? "：" + cwDetails.join("，") : "";
+    // configured=true with a reason is the graceful path: the tenant exists but
+    // one part of it still needs a human.
+    if (chatwoot.configured && !chatwoot.reason) {
+      steps.push({ title: "人工客服工作台", ok: true, message: "已开通" + cwSuffix });
+    } else if (chatwoot.configured) {
+      steps.push({ title: "人工客服工作台", ok: false, message: "部分完成" + cwSuffix + "。" + chatwoot.reason });
+    } else {
+      steps.push({ title: "人工客服工作台", ok: false, message: "未完成：" + (chatwoot.reason || "服务端未返回原因") });
+    }
+
+    return steps;
+  }
+
+  // Generated passwords appear in this response and nowhere else, ever.
+  function onboardCredentials(data) {
+    var portal = data.portal_account || {};
+    var chatwoot = data.chatwoot || {};
+    var creds = [];
+    if (portal.generated_password) {
+      creds.push({
+        label: "门户账号密码（" + (portal.email || "") + "）",
+        value: portal.generated_password
+      });
+    }
+    if (chatwoot.generated_password) {
+      creds.push({
+        label: "人工客服工作台密码（" + (chatwoot.agent_email || portal.email || "") + "）",
+        value: chatwoot.generated_password
+      });
+    }
+    return creds;
+  }
+
+  function renderOnboardResult(data) {
+    var pl = data.product_line || {};
+    var steps = onboardSteps(data);
+    var creds = onboardCredentials(data);
+    var allOk = true;
+    for (var i = 0; i < steps.length; i++) {
+      if (!steps[i].ok) allOk = false;
+    }
+
+    state.onboardSecrets = creds.length > 0;
+    state.onboardSummary = buildOnboardSummary(data, steps, creds);
+
+    els.onboardModalTitle.textContent = allOk ? "开户完成" : "开户完成（部分步骤需人工处理）";
+    els.onboardModalSub.textContent = "客户 " + (pl.display_name || pl.name || "") +
+      " · 产品线 ID " + (data.product_line_id || data.id || "");
+
+    var html = '<div class="report-steps">' + steps.map(function (s) {
+      return '<div class="report-step">' +
+        '<span class="report-mark ' + (s.ok ? "ok" : "warn") + '">' + (s.ok ? "✓" : "⚠") + "</span>" +
+        '<div class="report-body">' +
+        '<div class="report-title">' + escapeHtml(s.title) + "</div>" +
+        '<div class="report-msg">' + escapeHtml(s.message) + "</div>" +
+        "</div>" +
+        "</div>";
+    }).join("") + "</div>";
+
+    if (creds.length > 0) {
+      html += '<div class="cred-box">' +
+        '<div class="cred-warn">⚠ 仅此一次显示，请立即保存</div>' +
+        creds.map(function (c, idx) {
+          return '<div class="cred-item">' +
+            '<div class="cred-label">' + escapeHtml(c.label) + "</div>" +
+            '<div class="cred-row">' +
+            '<input id="onboard-cred-' + idx + '" readonly value="' + escapeAttr(c.value) + '" />' +
+            '<button type="button" id="onboard-cred-copy-' + idx + '">复制</button>' +
+            "</div>" +
+            "</div>";
+        }).join("") +
+        "</div>";
+    }
+
+    html += '<div class="modal-actions">' +
+      '<button type="button" id="onboard-copy-all">复制全部</button>' +
+      '<button type="button" class="primary" id="onboard-close">关闭</button>' +
+      "</div>";
+
+    els.onboardForm.hidden = true;
+    els.onboardResult.innerHTML = html;
+    els.onboardResult.hidden = false;
+
+    creds.forEach(function (c, idx) {
+      var copyBtn = document.getElementById("onboard-cred-copy-" + idx);
+      if (copyBtn) {
+        copyBtn.addEventListener("click", function () { copyText(c.value, "密码已复制"); });
+      }
+    });
+    var copyAllBtn = document.getElementById("onboard-copy-all");
+    if (copyAllBtn) {
+      copyAllBtn.addEventListener("click", function () { copyText(state.onboardSummary, "开户结果已复制"); });
+    }
+    var closeBtn = document.getElementById("onboard-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", closeOnboardModal);
+      closeBtn.focus();
+    }
+
+    toast(allOk ? "开户完成" : "开户完成，部分步骤需人工处理", allOk ? "success" : "warn");
+  }
+
+  // Plain text, not HTML: this is what lands on the clipboard.
+  function buildOnboardSummary(data, steps, creds) {
+    var pl = data.product_line || {};
+    var lines = [];
+    lines.push("UNICA 一键开户结果");
+    lines.push("客户: " + (pl.display_name || "") + " (" + (pl.name || "") + ")");
+    lines.push("产品线 ID: " + (data.product_line_id || data.id || ""));
+    lines.push("");
+    steps.forEach(function (s) {
+      lines.push((s.ok ? "[OK] " : "[!] ") + s.title + ": " + s.message);
+    });
+    if (creds.length > 0) {
+      lines.push("");
+      lines.push("凭据（仅此一次显示，请立即保存）:");
+      creds.forEach(function (c) {
+        lines.push("  " + c.label + ": " + c.value);
+      });
+    }
+    return lines.join("\n");
+  }
+
+  // ---------- Clipboard ----------
+  // Falls back to a temporary textarea because the portal is often served over
+  // plain HTTP, where the async clipboard API is unavailable.
+  function copyText(text, okMessage) {
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+      navigator.clipboard.writeText(text)
+        .then(function () { toast(okMessage, "success"); })
+        .catch(function () { legacyCopy(text, okMessage); });
+      return;
+    }
+    legacyCopy(text, okMessage);
+  }
+
+  function legacyCopy(text, okMessage) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove();
+    toast(ok ? okMessage : "复制失败，请手动选择", ok ? "success" : "warn");
+  }
+
   // ---------- Utils ----------
   function escapeHtml(str) {
     return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
+  function escapeAttr(str) { return escapeHtml(str); }
 
   // ---------- Init ----------
   if (getToken()) {

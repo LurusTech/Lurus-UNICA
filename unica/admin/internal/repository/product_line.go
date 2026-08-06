@@ -132,6 +132,53 @@ func (r *ProductLineRepository) GetByID(ctx context.Context, id string) (*Produc
 	return pl, nil
 }
 
+// GetByName retrieves a product line by its name. The column carries no unique
+// constraint, so the oldest match wins: onboarding a customer twice must resume
+// on the line it created the first time rather than pick an arbitrary row.
+func (r *ProductLineRepository) GetByName(ctx context.Context, name string) (*ProductLine, error) {
+	pl := &ProductLine{}
+	var cwID sql.NullInt64
+	var difyID sql.NullString
+	var configJSON []byte
+
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, name, COALESCE(display_name, name), chatwoot_account_id, dify_agent_id, created_at, COALESCE(updated_at, created_at), COALESCE(config_json, '{}')
+		 FROM product_lines WHERE name = $1 ORDER BY created_at LIMIT 1`, name,
+	).Scan(&pl.ID, &pl.Name, &pl.DisplayName, &cwID, &difyID, &pl.CreatedAt, &pl.UpdatedAt, &configJSON)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get product line by name: %w", err)
+	}
+	if cwID.Valid {
+		v := int(cwID.Int64)
+		pl.ChatwootAccountID = &v
+	}
+	applyDifyBindingFields(pl, difyID, configJSON)
+	return pl, nil
+}
+
+// SetChatwootAccountID writes only the chatwoot_account_id column. Update would
+// also rewrite name and display_name, which would let a stale in-memory copy of
+// the row overwrite a rename that happened in between.
+func (r *ProductLineRepository) SetChatwootAccountID(ctx context.Context, id string, accountID int) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE product_lines SET chatwoot_account_id = $2, updated_at = NOW() WHERE id = $1`,
+		id, accountID)
+	if err != nil {
+		return fmt.Errorf("failed to set chatwoot account id: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to set chatwoot account id: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("product line not found: %s", id)
+	}
+	return nil
+}
+
 // List returns all product lines, optionally filtered by IDs.
 func (r *ProductLineRepository) List(ctx context.Context, ids []string) ([]ProductLine, error) {
 	var rows *sql.Rows

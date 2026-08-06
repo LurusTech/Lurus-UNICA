@@ -26,6 +26,15 @@ type Config struct {
 	// key does not work here and a dataset key does not work for chat. Empty
 	// disables knowledge base management rather than failing at startup.
 	DifyDatasetAPIKey string
+	// ChatwootBaseURL is the Chatwoot deployment root (e.g. "http://chatwoot:3000").
+	ChatwootBaseURL string
+	// ChatwootPlatformToken authenticates the Chatwoot Platform API, the only API
+	// that can create accounts and users. It is issued once by hand in the Super
+	// Admin console; empty disables tenant provisioning rather than failing at
+	// startup.
+	ChatwootPlatformToken string
+	// ChatwootWebhookURL is the callback a provisioned API inbox posts to.
+	ChatwootWebhookURL string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -46,6 +55,10 @@ func Load() *Config {
 		DifyAdminEmail:    envOrDefault("DIFY_ADMIN_EMAIL", ""),
 		DifyAdminPassword: envOrDefault("DIFY_ADMIN_PASSWORD", ""),
 		DifyDatasetAPIKey: envOrDefault("DIFY_DATASET_API_KEY", ""),
+
+		ChatwootBaseURL:       envOrDefault("CHATWOOT_BASE_URL", ""),
+		ChatwootPlatformToken: envOrDefault("CHATWOOT_PLATFORM_TOKEN", ""),
+		ChatwootWebhookURL:    envOrDefault("CHATWOOT_WEBHOOK_URL", ""),
 	}
 }
 

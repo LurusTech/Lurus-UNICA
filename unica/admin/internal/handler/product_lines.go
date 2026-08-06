@@ -199,6 +199,11 @@ func (h *ProductLineHandler) updateProductLine(w http.ResponseWriter, r *http.Re
 	JSON(w, http.StatusOK, pl)
 }
 
+// difyAdminUnconfiguredMessage is what both the provisioning route and customer
+// onboarding say when the console credentials are missing; the two surfaces must
+// not drift into naming different environment variables.
+const difyAdminUnconfiguredMessage = "未配置 Dify 管理员账号，请联系系统管理员设置 DIFY_ADMIN_EMAIL 和 DIFY_ADMIN_PASSWORD 环境变量"
+
 // provisionDifyResponse is the response body for POST /api/v1/product-lines/:id/provision-dify.
 type provisionDifyResponse struct {
 	Provisioned   bool   `json:"provisioned"`
@@ -206,19 +211,42 @@ type provisionDifyResponse struct {
 	DifyDatasetID string `json:"dify_dataset_id"`
 }
 
+// difyProvisionError is a provisioning failure that already knows how the HTTP
+// surface must report it, so the route and the onboarding orchestrator answer
+// with the same status and wording without either restating the mapping.
+type difyProvisionError struct {
+	status  int
+	message string
+}
+
+func (e *difyProvisionError) Error() string { return e.message }
+
+// Status reports the HTTP status this failure maps to.
+func (e *difyProvisionError) Status() int { return e.status }
+
 // provisionDify one-click provisions a Dify chat app + dataset for a product line inside
 // the default Dify workspace, then persists the binding. It is idempotent: if the product
 // line already has a dify_agent_id, the current binding is returned with provisioned=false.
 func (h *ProductLineHandler) provisionDify(w http.ResponseWriter, r *http.Request, id string) {
-	pl, err := h.plRepo.GetByID(r.Context(), id)
-	if err != nil {
-		log.Printf("[product-lines] provision-dify get error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "internal error")
+	resp, perr := h.provisionDifyLine(r.Context(), id)
+	if perr != nil {
+		ErrorJSON(w, perr.status, perr.message)
 		return
 	}
+	JSON(w, http.StatusOK, resp)
+}
+
+// provisionDifyLine holds the provisioning sequence itself, without an
+// http.ResponseWriter, so customer onboarding can run the same steps and keep
+// going when they fail.
+func (h *ProductLineHandler) provisionDifyLine(ctx context.Context, id string) (*provisionDifyResponse, *difyProvisionError) {
+	pl, err := h.plRepo.GetByID(ctx, id)
+	if err != nil {
+		log.Printf("[product-lines] provision-dify get error: %v", err)
+		return nil, &difyProvisionError{http.StatusInternalServerError, "internal error"}
+	}
 	if pl == nil {
-		ErrorJSON(w, http.StatusNotFound, "product line not found")
-		return
+		return nil, &difyProvisionError{http.StatusNotFound, "product line not found"}
 	}
 
 	if pl.DifyAgentID != nil && *pl.DifyAgentID != "" {
@@ -226,65 +254,57 @@ func (h *ProductLineHandler) provisionDify(w http.ResponseWriter, r *http.Reques
 		if pl.DifyDatasetID != nil {
 			datasetID = *pl.DifyDatasetID
 		}
-		JSON(w, http.StatusOK, provisionDifyResponse{
+		return &provisionDifyResponse{
 			Provisioned:   false,
 			DifyAgentID:   *pl.DifyAgentID,
 			DifyDatasetID: datasetID,
-		})
-		return
+		}, nil
 	}
 
 	if h.difyAdminEmail == "" || h.difyAdminPassword == "" {
-		ErrorJSON(w, http.StatusServiceUnavailable, "未配置 Dify 管理员账号，请联系系统管理员设置 DIFY_ADMIN_EMAIL 和 DIFY_ADMIN_PASSWORD 环境变量")
-		return
+		return nil, &difyProvisionError{http.StatusServiceUnavailable, difyAdminUnconfiguredMessage}
 	}
 
-	token, err := h.difyBridge.Login(r.Context(), h.difyAdminEmail, h.difyAdminPassword)
+	token, err := h.difyBridge.Login(ctx, h.difyAdminEmail, h.difyAdminPassword)
 	if err != nil {
 		log.Printf("[product-lines] dify login error: %v", err)
-		ErrorJSON(w, http.StatusBadGateway, "登录 Dify 失败: "+err.Error())
-		return
+		return nil, &difyProvisionError{http.StatusBadGateway, "登录 Dify 失败: " + err.Error()}
 	}
 
 	provisionName := fmt.Sprintf("UNICA-%s", pl.Name)
 
-	app, err := h.difyBridge.CreateChatApp(r.Context(), token, provisionName)
+	app, err := h.difyBridge.CreateChatApp(ctx, token, provisionName)
 	if err != nil {
 		log.Printf("[product-lines] dify create app error: %v", err)
-		ErrorJSON(w, http.StatusBadGateway, "创建 Dify 应用失败: "+err.Error())
-		return
+		return nil, &difyProvisionError{http.StatusBadGateway, "创建 Dify 应用失败: " + err.Error()}
 	}
 
-	dataset, err := h.difyBridge.CreateDataset(r.Context(), token, provisionName)
+	dataset, err := h.difyBridge.CreateDataset(ctx, token, provisionName)
 	if err != nil {
 		log.Printf("[product-lines] dify create dataset error: %v", err)
-		ErrorJSON(w, http.StatusBadGateway, "创建 Dify 知识库失败: "+err.Error())
-		return
+		return nil, &difyProvisionError{http.StatusBadGateway, "创建 Dify 知识库失败: " + err.Error()}
 	}
 
-	apiKey, err := h.difyBridge.CreateAppAPIKey(r.Context(), token, app.ID)
+	apiKey, err := h.difyBridge.CreateAppAPIKey(ctx, token, app.ID)
 	if err != nil {
 		log.Printf("[product-lines] dify create api key error: %v", err)
-		ErrorJSON(w, http.StatusBadGateway, "创建 Dify API Key 失败: "+err.Error())
-		return
+		return nil, &difyProvisionError{http.StatusBadGateway, "创建 Dify API Key 失败: " + err.Error()}
 	}
 
-	updated, err := h.plRepo.UpdateDifyBinding(r.Context(), pl.ID, app.ID, apiKey.Token, h.difyBridge.APIBaseURL(), map[string]string{
+	updated, err := h.plRepo.UpdateDifyBinding(ctx, pl.ID, app.ID, apiKey.Token, h.difyBridge.APIBaseURL(), map[string]string{
 		"dify_dataset_id": dataset.ID,
 	})
 	if err != nil {
 		log.Printf("[product-lines] update dify binding error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "保存 Dify 绑定信息失败")
-		return
+		return nil, &difyProvisionError{http.StatusInternalServerError, "保存 Dify 绑定信息失败"}
 	}
 	if updated == nil {
-		ErrorJSON(w, http.StatusNotFound, "product line not found")
-		return
+		return nil, &difyProvisionError{http.StatusNotFound, "product line not found"}
 	}
 
-	JSON(w, http.StatusOK, provisionDifyResponse{
+	return &provisionDifyResponse{
 		Provisioned:   true,
 		DifyAgentID:   app.ID,
 		DifyDatasetID: dataset.ID,
-	})
+	}, nil
 }

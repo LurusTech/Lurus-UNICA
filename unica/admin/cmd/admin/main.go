@@ -103,6 +103,21 @@ func main() {
 		log.Println("[admin] WARNING: DIFY_DATASET_API_KEY not set, knowledge base management disabled")
 	}
 
+	// Chatwoot tenant provisioning needs the platform token, which is issued by
+	// hand in the Super Admin console. Without it onboarding still runs and
+	// reports the Chatwoot step as unavailable.
+	var chatwootClient *bridge.ChatwootClient
+	if cfg.ChatwootBaseURL != "" && cfg.ChatwootPlatformToken != "" {
+		chatwootClient = bridge.NewChatwootClient(bridge.ChatwootConfig{
+			BaseURL:       cfg.ChatwootBaseURL,
+			PlatformToken: cfg.ChatwootPlatformToken,
+		})
+	} else {
+		log.Println("[admin] WARNING: CHATWOOT_BASE_URL/CHATWOOT_PLATFORM_TOKEN not set, customer onboarding will skip Chatwoot provisioning")
+	}
+	customerHandler := handler.NewCustomerHandler(plRepo, userRepo, roleRepo, plHandler,
+		chatwootClient, cfg.ChatwootWebhookURL, cfg.BcryptCost)
+
 	// Initialize audit logging
 	auditRepo := audit.NewRepository(db)
 	auditLogger := audit.NewLogger(auditRepo, 256)
@@ -222,6 +237,17 @@ func main() {
 		nil, // after state captured from response body
 	)
 
+	// Onboarding has no before state (the customer is what the call brings into
+	// existence) and its after state is the response itself, which the create
+	// path extracts — the after function only has to be present for that path to
+	// run. The response also carries the one-time passwords, so it is redacted
+	// on the way into the trail.
+	customerAuditMW := audit.MiddlewareWithOptions(auditLogger, handler.CustomerAuditResource,
+		nil,
+		func(r *http.Request, resourceID string) (json.RawMessage, error) { return nil, nil },
+		audit.Options{Redact: handler.RedactCustomerSecrets},
+	)
+
 	// Build HTTP mux
 	mux := http.NewServeMux()
 
@@ -255,6 +281,17 @@ func main() {
 		}
 		userAuditMW(http.HandlerFunc(userHandler.HandleUser)).ServeHTTP(w, r)
 	}))))
+
+	// Protected endpoints - Customer onboarding. The call creates a product line
+	// and a portal account in one step, so it demands both permissions; the
+	// permission matrix grants that pair to super admins only.
+	//
+	// The onboarding body is four short fields, and the audit middleware buffers
+	// request bodies for replay, so the ceiling goes outside it: inside, a large
+	// body would already have been read whole before any limit applied.
+	customerBodyLimit := handler.LimitRequestBody(1 << 20)
+	mux.Handle("/api/v1/customers", authMW(requireManageUsers(requireManagePL(
+		customerBodyLimit(customerAuditMW(http.HandlerFunc(customerHandler.HandleCustomers)))))))
 
 	// Protected endpoints - Product Lines
 	// GET (list) is scoped by the caller's claims and open to any authenticated

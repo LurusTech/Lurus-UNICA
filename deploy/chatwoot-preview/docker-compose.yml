@@ -87,6 +87,15 @@ services:
       # stored per product line are rejected by the dataset endpoints; leaving
       # this empty disables knowledge base management instead of failing.
       DIFY_DATASET_API_KEY: "${DIFY_DATASET_API_KEY:-}"
+      # Chatwoot deployment onboarding provisions tenants in, reached inside the
+      # compose network so no public hop is involved.
+      CHATWOOT_BASE_URL: "http://rails:3000"
+      # Access token of a platform app created in the Chatwoot super admin
+      # console; empty leaves customer onboarding without a Chatwoot step.
+      CHATWOOT_PLATFORM_TOKEN: "${CHATWOOT_PLATFORM_TOKEN:-}"
+      # Callback baked into every provisioned API inbox, so it must be the
+      # gateway address Chatwoot itself can reach.
+      CHATWOOT_WEBHOOK_URL: "http://100.98.57.55:8080/api/v1/webhook/chatwoot"
     volumes:
       - /data/unica-chatwoot/admin/unica-admin:/usr/local/bin/unica-admin:ro
     depends_on:

@@ -20,14 +20,23 @@
       batch——迁移补 batch 列）；假服务单测全绿
 - [x] 2. portal：knowledge.html 知识库页（列表/上传/删除/索引状态轮询）；客户视图
       （前端解 JWT，单线账号锁定产品线选择并隐藏切换，多开行为保持）
-- [ ] 3. 一键开户：POST /api/v1/customers 编排（建产品线→开通 Dify→建账号+按线赋角色→
+- [x] 3. 一键开户：POST /api/v1/customers 编排（建产品线→开通 Dify→建账号+按线赋角色→
       Chatwoot 平台 API 建 account/用户/绑定/API 收件箱→写 config_json.chatwoot；
       每步幂等，Chatwoot 未配置时降级并明示）；portal 开户入口；假服务单测
 - [ ] 4. 验收：六模块 build/vet/test(-race) + CI 绿；WSL 复原 Dify 栈实测
       知识库上传→索引→问答接地 + portal 走查；结论写回 unverified 清单
 
 ## Current Status
-- [ ] In Progress（第 1、2 期已完成并通过评审闸门；第 3 期进行中。分支 feat/customer-self-service）
+- [ ] In Progress（第 1-3 期已完成并通过评审闸门；第 4 期（WSL 复原实测）进行中。
+  分支 feat/customer-self-service）
+- 第 3 期要点：POST /api/v1/customers 一键开户（super_admin 专属，需同时持有
+  manage_users+manage_product_lines）；Chatwoot 三段式进度落盘（account→token→inbox
+  各自成功即持久化，重试按缺口续作，不再孤儿化 account）；不完整绑定如实报
+  configured:false 并附原因；赋角失败降级返回 201 保住一次性生成密码；
+  迁移 016 product_lines.name 唯一索引堵并发开户竞态；生成密码只出现在开户
+  响应一次，审计快照统一脱敏；portal 产品线页新增一键开户向导与结果报告；
+  新环境变量 CHATWOOT_BASE_URL / CHATWOOT_PLATFORM_TOKEN / CHATWOOT_WEBHOOK_URL
+  （平台应用 token 需在 Chatwoot Super Admin 后台手工创建一次）
 - 第 2 期要点：portal 新增 knowledge.html（列表/搜索/分页、文件+文本上传、删除、
   按 batch 轮询索引进度带退避与代数守卫）；六页统一 JWT 解码助手，非超管单线账号
   锁定产品线选择；首页按角色隐藏 产品线管理/本体 卡（本体暂不下放为既定决策）；
