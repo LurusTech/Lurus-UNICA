@@ -2,39 +2,100 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>领域本体 - UNICA 统一管理门户</title>
 <style>
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
   :root {
-    --bg: #f5f6f8;
-    --surface: #ffffff;
-    --text: #1a1d24;
-    --text-muted: #6b7280;
-    --border: #e2e5ea;
-    --primary: #2563eb;
-    --primary-hover: #1d4ed8;
-    --ok: #16a34a;
-    --bad: #dc2626;
-    --warn: #d97706;
-    --row-hover: #f0f2f5;
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+    --lt-accent: #FF5D1F;
+    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
+    --lt-on-accent: #14130F;
+    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  :root {
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    --ok: var(--lt-ok);
+    --bad: var(--lt-err);
+    --warn: var(--lt-warn);
+    /* Neutral elevation shadow, no brand hue — kept at original value. */
     --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
   }
   @media (prefers-color-scheme: dark) {
+    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
     :root {
-      --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
-      --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
-      --row-hover: #1e222b;
-      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+      --lt-paper: #14130F;
+      --lt-bg:    #0A0908;
+      --lt-ink:   #F0EDE4;
+      --lt-rule:  #25221C;
+      --lt-ok:    #3FA876;
+      --lt-warn:  #E0A040;
+      --lt-err:   #EE6F5E;
+      --lt-info:  #5A7BC7;
+
+      --bg: var(--lt-paper);
+      --surface: var(--lt-bg);
+      --text: var(--lt-ink);
+      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+      --border: var(--lt-rule);
+      --primary: var(--lt-accent);
+      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+      --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
     }
   }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
   :root[data-theme="dark"] {
-    --bg: #0f1115; --surface: #171a21; --text: #e7e9ee; --text-muted: #9199a8;
-    --border: #2a2e38; --primary: #3b82f6; --primary-hover: #60a5fa;
-    --row-hover: #1e222b;
-    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    --lt-paper: #14130F;
+    --lt-bg:    #0A0908;
+    --lt-ink:   #F0EDE4;
+    --lt-rule:  #25221C;
+    --lt-ok:    #3FA876;
+    --lt-warn:  #E0A040;
+    --lt-err:   #EE6F5E;
+    --lt-info:  #5A7BC7;
+
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
   }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
   :root[data-theme="light"] {
-    --bg: #f5f6f8; --surface: #ffffff; --text: #1a1d24; --text-muted: #6b7280;
-    --border: #e2e5ea; --primary: #2563eb; --primary-hover: #1d4ed8;
-    --row-hover: #f0f2f5;
-    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
   }
   * { box-sizing: border-box; }
   html, body {
