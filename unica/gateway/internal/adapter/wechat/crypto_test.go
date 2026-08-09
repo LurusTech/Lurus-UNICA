@@ -9,7 +9,7 @@ import (
 )
 
 func TestVerifySignature(t *testing.T) {
-	token := "unica_wechat_test_2026"
+	token := "throwaway-test-token" // arbitrary fixture; signature is computed from it below
 	timestamp := "1709625600"
 	nonce := "abc123"
 
