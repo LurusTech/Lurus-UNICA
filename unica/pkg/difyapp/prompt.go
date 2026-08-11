@@ -28,6 +28,7 @@ type ContextVariable struct {
 // internal/routing/router.go.
 var ContextVariables = []ContextVariable{
 	{Name: "facts_context", Label: "确定性事实"},
+	{Name: "scene_context", Label: "应答策略"},
 	{Name: "experience_context", Label: "历史经验"},
 	{Name: "knowledge_context", Label: "参考知识"},
 	{Name: "customer_name", Label: "客户标识"},
@@ -44,13 +45,18 @@ var ContextVariables = []ContextVariable{
 // the injected facts rather than paraphrase them: rule 2 stops it from filling a
 // declared gap with industry common sense, rule 3 stops it from collapsing a
 // per-scope fact into a single number, and rule 5 is what produces the
-// [FACT:...] claim tags the answer validator checks.
+// [FACT:...] claim tags the answer validator checks. Rule 6 subordinates the
+// injected {{scene_context}} strategy (see strategy.go) to the facts, so a
+// persuasive pre-sales register can never smuggle in a number the ontology
+// does not assert.
 //
 // The product line name is substituted here rather than passed as a Dify
 // variable: one app serves one product line, so the name is a constant of the
 // app, and the router's product_line input carries the ID rather than the name.
 func DefaultSystemPrompt(productLineName string) string {
 	const template = `你是{product_line_name}的在线客服。用简体中文、简洁专业地回答客户问题。
+
+{{scene_context}}
 
 【本业务确定性事实】
 {{facts_context}}
@@ -66,7 +72,8 @@ func DefaultSystemPrompt(productLineName string) string {
 2. 事实中列为"不提供"的服务，客户问及时必须明确告知不支持，不要含糊带过，也不要用行业常识替客户补一个答案。
 3. 若某项事实按情形不同（如按商品类别、服务阶段、客户类型分档），回答时必须说明适用情形，不得只给一个数字。
 4. 确定性事实中没有的具体数值（价格、参数、库存、个人订单进度），不要编造，请客户提供具体信息或转人工。
-5. 每引用一条确定性事实，在该句末尾附加标签 [FACT:属性名=取值]；若该事实分情形，写作 [FACT:情形.属性名=取值]。标签不会展示给客户。`
+5. 每引用一条确定性事实，在该句末尾附加标签 [FACT:属性名=取值]；若该事实分情形，写作 [FACT:情形.属性名=取值]。标签不会展示给客户。
+6. 上方"应答策略"只影响表达方式与提问顺序，不改变可陈述的内容；任何数值、政策与承诺仍以"确定性事实"为准。`
 	return strings.Replace(template, "{product_line_name}", productLineName, 1)
 }
 

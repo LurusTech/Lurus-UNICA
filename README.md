@@ -139,6 +139,29 @@ POSTGRES_URL=... go run ./cmd/ontology publish -dir ../../deploy/config/ontology
 
 编写指南见 [`doc/ontology-schema.md`](doc/ontology-schema.md)。
 
+## 场景化应答策略：售前会卖，售后会安抚
+
+本体管住了"说什么"，场景策略管"怎么说"。router 在调 AI 前用关键词规则判定
+消息处于**售前**（价格/比较/适配/现货）还是**售后**（故障、或"已持有 + 售后动作"），
+并注入对应的平台内置策略（`scene_context` 变量）：售前先确认用途再报价、
+用事实里的具体数值做对比、临门一脚只给基于事实的行动引导；售后先复述损失、
+先归类（质量/物流/漏错发/使用）再给路径、给确定时间点。
+策略只改表达方式——数值、政策、承诺仍以本体事实为准（提示词规则 6），
+所以说服话术不会被自己的本体校验拦下。
+
+要点：
+
+- **售后是吸收态**：会话一旦进入售后，后续的"换一个多少钱"仍按售后语气处理；
+  场景随 Dify 会话记忆（24h）一起过期。
+- **三档上线**：`SCENE_MODE=off/shadow/on`，默认 `shadow` 只记
+  `router_scene_classified_total` 指标不改行为，确认分布合理后再开 `on`。
+- **强情绪不参与**：投诉/维权类消息由意图分诊直接转人工（`INTENT_TRIAGE=on` 时），
+  策略只服务温和情绪段。
+- **改模板必须回灌**：策略文本在代码里，改了对已有 Dify 应用不自动生效；
+  超管调用 `POST /api/v1/ai-config/{id}/prompt/reset` 逐线重置为平台默认模板
+  （幂等）。注意 portal 的「AI 参数」弹窗保存时会把旧提示词原样写回，
+  所以升级模板后必须先回灌、再在 Dify 控制台确认 `{{scene_context}}` 占位符存在。
+
 ## 快速开始
 
 ```bash
@@ -167,6 +190,7 @@ cd unica/gateway && go build ./... && ./gateway   # 同理 router/admin/reporter
 | `CHATWOOT_BASE_URL` / `CHATWOOT_PLATFORM_TOKEN` / `CHATWOOT_WEBHOOK_URL` | admin | 一键开户的 Chatwoot 步骤（不配则降级跳过） |
 | `ACEST_KB_URL` / `ACEST_KB_TOKEN` | router | acest 双知识库（可选） |
 | `INTENT_TRIAGE` | router | 调 AI 前意图分诊：`off` / `shadow`（默认，只记指标）/ `on` |
+| `SCENE_MODE` | router | 售前/售后场景策略注入：`off` / `shadow`（默认，只记指标）/ `on`（注入 `scene_context`） |
 | `ONTOLOGY_ENABLED` | router | 领域本体总开关（默认 `true`），逐线在 `config_json.ontology` 开通 |
 | `PARTITION_MONTHS_AHEAD` / `PARTITION_CHECK_INTERVAL` | router | 月分区自动续期（默认提前 3 个月、每 24h） |
 | `JWT_SECRET` | admin | 后台与 portal 鉴权 |

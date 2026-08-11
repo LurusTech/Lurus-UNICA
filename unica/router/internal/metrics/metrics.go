@@ -105,6 +105,16 @@ var (
 		Help: "Total pre-dispatch intent classifications",
 	}, []string{"class", "reason", "mode"})
 
+	// SceneClassifiedTotal counts commercial-stage classifications on AI-bound
+	// messages. source distinguishes a stage the message earned itself from one
+	// inherited through conversation stickiness; under shadow mode this counter
+	// is the only observable effect and answers how traffic would split before
+	// strategy injection changes a single answer.
+	SceneClassifiedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_scene_classified_total",
+		Help: "Total commercial-stage classifications on AI-bound messages",
+	}, []string{"stage", "reason", "source", "mode"})
+
 	// IntentTriageHandoffTotal counts handoffs decided before any model call, so
 	// the saved Dify calls are directly countable.
 	IntentTriageHandoffTotal = promauto.NewCounterVec(prometheus.CounterOpts{

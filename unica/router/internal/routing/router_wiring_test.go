@@ -54,11 +54,17 @@ func (f *fakeConvStore) CreateMessage(ctx context.Context, msg *state.Message) (
 type fakeDify struct {
 	answer string
 	calls  int
+	// convID, when set, is echoed back as the Dify conversation ID so the
+	// router persists its session object (and with it the sticky stage).
+	convID string
+	// inputs records what each call carried, for asserting injection.
+	inputs []map[string]string
 }
 
 func (f *fakeDify) Chat(ctx context.Context, cfg bridge.DifyConfig, query string, userID string, convID string, inputs map[string]string) (*bridge.DifyResponse, error) {
 	f.calls++
-	return &bridge.DifyResponse{Answer: f.answer}, nil
+	f.inputs = append(f.inputs, inputs)
+	return &bridge.DifyResponse{Answer: f.answer, ConversationID: f.convID}, nil
 }
 
 type fakeRoutes struct{ cfg *RouteConfig }
@@ -260,5 +266,77 @@ func TestProcessMessage_OpenBreakerSendsViolatingAnswer(t *testing.T) {
 	}
 	if len(onto.recorded) != 2 || !onto.recorded[0].enforced || onto.recorded[1].enforced {
 		t.Errorf("recorded enforcement flags should be [true false], got %+v", onto.recorded)
+	}
+}
+
+// TestProcessMessage_SceneInjection walks strategy injection end to end: under
+// SceneOn a pre-sales and a post-sales message must reach the model with
+// different scene_context texts, and under SceneShadow the key must be absent
+// while classification still happens.
+func TestProcessMessage_SceneInjection(t *testing.T) {
+	t.Run("on injects per-stage strategy", func(t *testing.T) {
+		store := &fakeConvStore{convID: "conv-scene-1", state: state.StatePending}
+		dify := &fakeDify{answer: "好的"}
+		r, _ := newWiringRouter(t, store, dify, &RouteConfig{ProductLineID: "pl-1"}, nil)
+		r.sceneMode = SceneOn
+
+		r.processMessage(context.Background(), inboundEntry(t, "10", "这两款哪个更值得买"), 0)
+		store.state = state.StatePending
+		store.convID = "conv-scene-2"
+		r.processMessage(context.Background(), inboundEntry(t, "11", "刚收到就碎了"), 0)
+
+		if len(dify.inputs) != 2 {
+			t.Fatalf("expected 2 model calls, got %d", len(dify.inputs))
+		}
+		presales := dify.inputs[0]["scene_context"]
+		postsales := dify.inputs[1]["scene_context"]
+		if presales == "" || postsales == "" {
+			t.Fatalf("scene_context missing: presales=%q postsales=%q", presales, postsales)
+		}
+		if presales == postsales {
+			t.Error("pre-sales and post-sales messages received the same strategy text")
+		}
+		if !strings.Contains(presales, "售前") || !strings.Contains(postsales, "售后") {
+			t.Errorf("strategy texts mislabelled: presales=%q postsales=%q", presales[:20], postsales[:20])
+		}
+	})
+
+	t.Run("shadow classifies but injects nothing", func(t *testing.T) {
+		store := &fakeConvStore{convID: "conv-scene-3", state: state.StatePending}
+		dify := &fakeDify{answer: "好的"}
+		r, _ := newWiringRouter(t, store, dify, &RouteConfig{ProductLineID: "pl-1"}, nil)
+		r.sceneMode = SceneShadow
+
+		r.processMessage(context.Background(), inboundEntry(t, "12", "这个多少钱"), 0)
+
+		if len(dify.inputs) != 1 {
+			t.Fatalf("expected 1 model call, got %d", len(dify.inputs))
+		}
+		if _, present := dify.inputs[0]["scene_context"]; present {
+			t.Error("shadow mode must not inject scene_context")
+		}
+	})
+}
+
+// TestProcessMessage_SceneStageIsSticky pins the absorbing-state contract
+// through the real Redis session: after a fault report, a bare price question
+// in the same conversation must still receive the post-sales strategy.
+func TestProcessMessage_SceneStageIsSticky(t *testing.T) {
+	store := &fakeConvStore{convID: "conv-sticky", state: state.StatePending}
+	// convID echo makes recordJudgement persist the session (and the stage).
+	dify := &fakeDify{answer: "好的", convID: "dify-conv-1"}
+	r, _ := newWiringRouter(t, store, dify, &RouteConfig{ProductLineID: "pl-1"}, nil)
+	r.sceneMode = SceneOn
+
+	r.processMessage(context.Background(), inboundEntry(t, "20", "我买的杯子碎了"), 0)
+	store.state = state.StatePending
+	r.processMessage(context.Background(), inboundEntry(t, "21", "换一个多少钱"), 0)
+
+	if len(dify.inputs) != 2 {
+		t.Fatalf("expected 2 model calls, got %d", len(dify.inputs))
+	}
+	second := dify.inputs[1]["scene_context"]
+	if !strings.Contains(second, "售后") {
+		t.Errorf("follow-up price question flipped out of post-sales, got: %.30s", second)
 	}
 }

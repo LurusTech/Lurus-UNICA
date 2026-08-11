@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/kefu/unica/pkg/difyapp"
 	"github.com/kefu/unica/pkg/model"
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/pkg/domain"
@@ -42,6 +43,11 @@ type RouterConfig struct {
 	// treated as guardrail.DefaultTriageMode so existing callers and tests keep
 	// working without opting in.
 	TriageMode guardrail.TriageMode
+
+	// SceneMode controls commercial-stage classification and response-strategy
+	// injection. The zero value is treated as DefaultSceneMode, mirroring
+	// TriageMode.
+	SceneMode SceneMode
 }
 
 // Narrow views of the Router's heavyweight dependencies, so the message
@@ -81,6 +87,7 @@ type Router struct {
 	chatwootForwarder *ChatwootForwarder
 	evaluator         *guardrail.Evaluator
 	triageMode        guardrail.TriageMode
+	sceneMode         SceneMode
 	ontology          ontologySource
 	breaker           *domain.Breaker
 	marketingTracker  *marketing.Tracker
@@ -135,6 +142,10 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 	if triageMode == "" {
 		triageMode = guardrail.DefaultTriageMode
 	}
+	sceneMode := config.SceneMode
+	if sceneMode == "" {
+		sceneMode = DefaultSceneMode
+	}
 
 	r := &Router{
 		rdb:               rdb,
@@ -142,6 +153,7 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		chatwootForwarder: cwForwarder,
 		evaluator:         guardrail.NewEvaluator(),
 		triageMode:        triageMode,
+		sceneMode:         sceneMode,
 		breaker:           domain.NewBreaker(),
 		marketingTracker:  mktTracker,
 		surveyHandler:     surveyH,
@@ -448,33 +460,40 @@ const difyConvKeyPrefix = "dify_conv:"
 const difyConvTTL = 24 * time.Hour
 
 // difyConvSession holds the Dify conversation tracking data stored in Redis.
+// Stage rides along so the conversation's commercial phase expires together
+// with the model's own multi-turn memory: when one is gone, both are.
 type difyConvSession struct {
 	DifyConversationID string `json:"dify_conversation_id"`
 	MessageCount       int    `json:"message_count"`
 	LastActive         string `json:"last_active"`
+	Stage              string `json:"stage,omitempty"`
 }
 
-// getDifyConvID retrieves the Dify conversation ID from Redis for multi-turn context.
-func (r *Router) getDifyConvID(ctx context.Context, convID string) string {
-	key := difyConvKeyPrefix + convID
-	val, err := r.rdb.Get(ctx, key).Result()
-	if err != nil {
-		return ""
-	}
+// getDifySession retrieves the Dify conversation tracking data from Redis.
+// Returns the zero value when absent or unreadable.
+func (r *Router) getDifySession(ctx context.Context, convID string) difyConvSession {
 	var session difyConvSession
-	if err := json.Unmarshal([]byte(val), &session); err != nil {
-		return ""
+	val, err := r.rdb.Get(ctx, difyConvKeyPrefix+convID).Result()
+	if err != nil {
+		return session
 	}
-	return session.DifyConversationID
+	if err := json.Unmarshal([]byte(val), &session); err != nil {
+		return difyConvSession{}
+	}
+	return session
 }
 
-// setDifyConvID stores the Dify conversation ID in Redis for multi-turn context.
-func (r *Router) setDifyConvID(ctx context.Context, convID string, difyConvID string, msgCount int) {
+// setDifyConvID stores the Dify conversation ID in Redis for multi-turn
+// context. The write replaces the whole session object, so the caller must
+// pass the stage through — omitting it would erase the sticky stage on every
+// turn.
+func (r *Router) setDifyConvID(ctx context.Context, convID string, difyConvID string, msgCount int, stage string) {
 	key := difyConvKeyPrefix + convID
 	session := difyConvSession{
 		DifyConversationID: difyConvID,
 		MessageCount:       msgCount,
 		LastActive:         time.Now().UTC().Format(time.RFC3339),
+		Stage:              stage,
 	}
 	data, err := json.Marshal(session)
 	if err != nil {
@@ -541,6 +560,7 @@ type aiCallContext struct {
 	inputs             map[string]string
 	userID             string
 	difyConvID         string
+	stage              intent.Stage
 	ontology           *domain.Ontology
 	ontologyVersion    int
 	ontologyCfg        *domain.Config
@@ -552,10 +572,11 @@ type aiCallContext struct {
 // identity, the multi-turn session, recalled experience/knowledge, and the
 // ontology facts block.
 func (r *Router) prepareAIContext(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, query string) *aiCallContext {
+	// One Redis read serves both multi-turn context and the sticky stage.
+	session := r.getDifySession(ctx, convID)
 	ac := &aiCallContext{
-		userID: msg.Data.PlatformMeta.PlatformUserID,
-		// Look up existing Dify conversation ID for multi-turn context
-		difyConvID: r.getDifyConvID(ctx, convID),
+		userID:     msg.Data.PlatformMeta.PlatformUserID,
+		difyConvID: session.DifyConversationID,
 	}
 	if ac.userID == "" {
 		ac.userID = msg.Data.CustomerID
@@ -566,6 +587,24 @@ func (r *Router) prepareAIContext(ctx context.Context, config *RouteConfig, msg 
 		"customer_name": msg.Data.PlatformMeta.PlatformUserID,
 		"channel":       msg.Data.ChannelID,
 		"product_line":  msg.Data.ProductLineID,
+	}
+
+	// Commercial-stage classification. Shadow mode classifies and persists the
+	// sticky stage (via recordJudgement's session write) but injects nothing,
+	// so the stage distribution of real traffic is measurable before any
+	// answer changes register.
+	if r.sceneMode.Classifies() {
+		stageResult := intent.ResolveStage(intent.Stage(session.Stage), query)
+		ac.stage = stageResult.Stage
+		source := "message"
+		if stageResult.Reason == intent.StageReasonInherited {
+			source = "inherited"
+		}
+		metrics.SceneClassifiedTotal.WithLabelValues(
+			string(stageResult.Stage), stageResult.Reason, source, string(r.sceneMode)).Inc()
+		if r.sceneMode.Injects() {
+			ac.inputs["scene_context"] = difyapp.StrategyFor(string(stageResult.Stage))
+		}
 	}
 
 	// Recall experience/knowledge context from the acest kb-server and inject
@@ -656,21 +695,15 @@ func (r *Router) recordJudgement(ctx context.Context, config *RouteConfig, convI
 		}
 	}
 
-	// Store Dify conversation ID for multi-turn context
+	// Store Dify conversation ID for multi-turn context, carrying the sticky
+	// stage along so the whole-object write cannot erase it.
 	if difyResp.ConversationID != "" {
-		// Increment message count (simple approach: read current + 1)
-		existingConvID := r.getDifyConvID(ctx, convID)
+		session := r.getDifySession(ctx, convID)
 		msgCount := 1
-		if existingConvID != "" {
-			// Already had a session, increment
-			key := difyConvKeyPrefix + convID
-			val, _ := r.rdb.Get(ctx, key).Result()
-			var session difyConvSession
-			if json.Unmarshal([]byte(val), &session) == nil {
-				msgCount = session.MessageCount + 1
-			}
+		if session.DifyConversationID != "" {
+			msgCount = session.MessageCount + 1
 		}
-		r.setDifyConvID(ctx, convID, difyResp.ConversationID, msgCount)
+		r.setDifyConvID(ctx, convID, difyResp.ConversationID, msgCount, string(ac.stage))
 	}
 
 	// Track retrieval metrics

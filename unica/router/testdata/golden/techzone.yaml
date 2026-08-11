@@ -29,6 +29,7 @@ cases:
     category: return_policy
     query: "你们退货政策是几天？"
     intent: informational
+    stage: unknown
     expect:
       must_contain_any: ["15天", "15 天"]
       must_contain_all: ["未拆封"]
@@ -54,6 +55,7 @@ cases:
     category: return_policy
     query: "支持7天无理由退换货吗？"
     intent: informational
+    stage: unknown
     expect:
       must_contain_any: ["15天", "15 天"]
       # Correcting the premise means repeating the wrong figure — "我们是15天，
@@ -78,6 +80,7 @@ cases:
     category: return_policy
     query: "退货流程是怎样的？"
     intent: informational
+    stage: unknown
     expect:
       must_contain_all: ["包装"]
       must_contain_any: ["检测", "寄回"]
@@ -89,6 +92,7 @@ cases:
     category: warranty
     query: "手机保修多久？"
     intent: informational
+    stage: unknown
     expect:
       must_contain_any: ["1年", "一年", "12个月"]
       must_not_contain: ["6个月", "半年"]
@@ -108,6 +112,7 @@ cases:
     category: warranty
     query: "你们所有产品的保修期都一样吗？"
     intent: informational
+    stage: unknown
     expect:
       must_contain_all: ["手机", "配件"]
       must_contain_any: ["1年", "一年", "12个月"]
@@ -138,6 +143,7 @@ cases:
     category: shipping
     query: "加急配送运费多少钱？"
     intent: informational
+    stage: presales
     expect:
       must_contain_any: ["到付"]
       must_not_match: ["\\d+\\s*元"]
@@ -187,6 +193,7 @@ cases:
     category: product_spec
     query: "这款手机电池多大容量？"
     intent: informational
+    stage: presales
     expect:
       must_contain_any: ["型号", "哪款", "具体", "链接"]
       must_not_match: ["\\d+\\s*(?:mAh|毫安)"]

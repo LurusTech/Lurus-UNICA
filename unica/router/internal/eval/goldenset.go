@@ -24,6 +24,16 @@ const (
 	IntentEmotional     = "emotional"
 )
 
+// Expected commercial stages for a customer message, consumed offline by the
+// stage classifier tests. Empty means "not annotated": stage labels are only
+// added where a case is unambiguous, so the corpus never asserts a judgement
+// call.
+const (
+	StagePresales  = "presales"
+	StagePostsales = "postsales"
+	StageUnknown   = "unknown"
+)
+
 // Expect holds the assertions applied to one answer.
 //
 // MustDeny is the closed-world assertion: the answer must not present the term
@@ -51,6 +61,7 @@ type Case struct {
 	Category string `yaml:"category"`
 	Query    string `yaml:"query"`
 	Intent   string `yaml:"intent"`
+	Stage    string `yaml:"stage,omitempty"`
 	Expect   Expect `yaml:"expect"`
 	Note     string `yaml:"note"`
 
@@ -152,6 +163,13 @@ func validateCase(c *Case) error {
 		return fmt.Errorf("case %s: intent is required", c.ID)
 	default:
 		return fmt.Errorf("case %s: unknown intent %q", c.ID, c.Intent)
+	}
+
+	// Stage is optional: unannotated cases assert nothing about stage.
+	switch c.Stage {
+	case StagePresales, StagePostsales, StageUnknown, "":
+	default:
+		return fmt.Errorf("case %s: unknown stage %q", c.ID, c.Stage)
 	}
 
 	e := &c.Expect

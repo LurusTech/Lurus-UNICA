@@ -10,6 +10,9 @@
 #   query           the customer message sent verbatim to Dify
 #   intent          expected classification: informational | transactional | emotional
 #                   (consumed offline by internal/intent tests, no network required)
+#   stage           optional expected commercial stage: presales | postsales | unknown
+#                   (consumed offline by the stage classifier tests; only annotate
+#                   unambiguous cases — omit rather than assert a judgement call)
 #   expect.must_contain_all   every literal must appear in the answer
 #   expect.must_contain_any   at least one literal must appear
 #   expect.must_not_contain   none of these literals may appear
@@ -38,6 +41,7 @@ cases:
     category: return_policy
     query: "你们退货是几天？"
     intent: informational
+    stage: unknown
     expect:
       must_contain_any: ["7天", "7 天"]
       must_not_contain: ["15天", "30天", "24小时"]
@@ -68,6 +72,7 @@ cases:
     category: return_policy
     query: "退货流程是怎样的？"
     intent: informational
+    stage: unknown
     expect:
       must_contain_all: ["客服"]
       must_contain_any: ["寄回", "退回"]
@@ -79,6 +84,7 @@ cases:
     category: shipping
     query: "一般几天能收到货？"
     intent: informational
+    stage: unknown
     expect:
       must_contain_any: ["3-5", "3～5", "3 到 5"]
       must_not_contain: ["当日达", "次日达", "2-3"]
@@ -89,6 +95,7 @@ cases:
     category: shipping
     query: "加急配送要额外加多少钱？"
     intent: informational
+    stage: presales
     expect:
       must_contain_any: ["15元", "15 元"]
       must_not_contain: ["10元", "到付"]
@@ -177,6 +184,7 @@ cases:
     category: product_spec
     query: "这个的尺寸是多少？"
     intent: informational
+    stage: presales
     expect:
       must_contain_any: ["型号", "商品", "链接", "哪款", "具体"]
       must_not_match: ["\\d+\\s*(?:cm|厘米|mm|毫米|英寸)"]
@@ -187,6 +195,7 @@ cases:
     category: pricing
     query: "这个多少钱？"
     intent: informational
+    stage: presales
     expect:
       must_contain_any: ["哪款", "具体", "商品", "链接", "型号"]
       must_not_match: ["\\d+\\s*元"]

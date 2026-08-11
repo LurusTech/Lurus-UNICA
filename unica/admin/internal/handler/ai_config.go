@@ -14,6 +14,7 @@ import (
 
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
+	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/pkg/difyapp"
 	"github.com/redis/go-redis/v9"
@@ -162,6 +163,16 @@ func (h *AIConfigHandler) HandleAIConfig(w http.ResponseWriter, r *http.Request)
 	subPath := segments[1]
 	switch subPath {
 	case "prompt":
+		// POST .../prompt/reset restores the platform's default template;
+		// PUT .../prompt writes caller-supplied text.
+		if len(segments) > 2 && segments[2] == "reset" {
+			if r.Method != http.MethodPost {
+				ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			h.resetPrompt(w, r, pl)
+			return
+		}
 		if r.Method != http.MethodPut {
 			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
@@ -261,6 +272,37 @@ func (h *AIConfigHandler) updatePrompt(w http.ResponseWriter, r *http.Request, p
 		"message":         "system prompt updated",
 		"product_line_id": pl.ID,
 		"prompt_length":   len(req.Prompt),
+	})
+}
+
+// resetPrompt overwrites the app's system prompt with the platform's current
+// default template. Restricted to super_admin: the template carries the
+// platform's response strategies and fact-precedence rules, and "reset" is the
+// only sanctioned way to propagate a template change to an existing app — the
+// portal's prompt editor writes back whatever stale text its textarea holds,
+// so customer-facing roles must not be able to race this. Idempotent.
+func (h *AIConfigHandler) resetPrompt(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	claims := auth.GetClaims(r.Context())
+	if claims != nil && claims.Role != string(rbac.RoleSuperAdmin) {
+		ErrorJSON(w, http.StatusForbidden, "prompt reset requires super_admin")
+		return
+	}
+	if pl.DifyAgentID == nil || *pl.DifyAgentID == "" {
+		ErrorJSON(w, http.StatusBadRequest, "no Dify app configured for this product line")
+		return
+	}
+
+	prompt := difyapp.DefaultSystemPrompt(pl.Name)
+	if err := h.difyBridge.UpdateSystemPrompt(r.Context(), *pl.DifyAgentID, prompt); err != nil {
+		log.Printf("[ai-config] reset prompt error: %v", err)
+		ErrorJSON(w, http.StatusBadGateway, "failed to reset prompt in Dify: "+err.Error())
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message":         "system prompt reset to platform default",
+		"product_line_id": pl.ID,
+		"prompt_length":   len(prompt),
 	})
 }
 

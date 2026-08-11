@@ -38,6 +38,7 @@ MODEL = os.environ.get("DIFY_MODEL", "deepseek-chat")
 # variable is silently dropped.
 CONTEXT_VARS = [
     ("facts_context", "确定性事实"),
+    ("scene_context", "应答策略"),
     ("experience_context", "历史经验"),
     ("knowledge_context", "参考知识"),
     ("customer_name", "客户标识"),
@@ -50,6 +51,8 @@ CONTEXT_VARS = [
 # carries the product line ID, so {{product_line}} rendered a UUID into the
 # prompt. Same template as bridge.DefaultSystemPrompt in the router and admin.
 PRE_PROMPT = """你是{product_line_name}的在线客服。用简体中文、简洁专业地回答客户问题。
+
+{{scene_context}}
 
 【本业务确定性事实】
 {{facts_context}}
@@ -66,6 +69,7 @@ PRE_PROMPT = """你是{product_line_name}的在线客服。用简体中文、简
 3. 若某项事实按情形不同（如按商品类别、服务阶段、客户类型分档），回答时必须说明适用情形，不得只给一个数字。
 4. 确定性事实中没有的具体数值（价格、参数、库存、个人订单进度），不要编造，请客户提供具体信息或转人工。
 5. 每引用一条确定性事实，在该句末尾附加标签 [FACT:属性名=取值]；若该事实分情形，写作 [FACT:情形.属性名=取值]。标签不会展示给客户。
+6. 上方"应答策略"只影响表达方式与提问顺序，不改变可陈述的内容；任何数值、政策与承诺仍以"确定性事实"为准。
 """
 
 

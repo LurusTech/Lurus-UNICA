@@ -81,8 +81,9 @@ func main() {
 		ConsumerName:  cfg.consumerName,
 		Workers:       cfg.workers,
 		TriageMode:    cfg.triageMode,
+		SceneMode:     cfg.sceneMode,
 	}
-	log.Printf("[router] intent triage mode: %s", cfg.triageMode)
+	log.Printf("[router] intent triage mode: %s, scene mode: %s", cfg.triageMode, cfg.sceneMode)
 
 	router := routing.NewRouter(rdb, db, stateManager, difyClient, routeCache, routerConfig)
 
@@ -221,6 +222,7 @@ type config struct {
 	port          string
 	idleTimeout   time.Duration
 	triageMode    guardrail.TriageMode
+	sceneMode     routing.SceneMode
 
 	// Monthly partition provisioning for messages and audit_logs.
 	partitionInterval    time.Duration
@@ -293,6 +295,16 @@ func loadConfig() config {
 		triageMode = guardrail.DefaultTriageMode
 	}
 	cfg.triageMode = triageMode
+
+	// Commercial-stage classification and response-strategy injection.
+	// Defaults to shadow for the same reason as triage: stage metrics accrue
+	// while every answer stays exactly as it was.
+	sceneMode, err := routing.ParseSceneMode(os.Getenv("SCENE_MODE"))
+	if err != nil {
+		log.Printf("[router] warning: %v; falling back to %q", err, routing.DefaultSceneMode)
+		sceneMode = routing.DefaultSceneMode
+	}
+	cfg.sceneMode = sceneMode
 
 	// Domain ontology. Enabled by default because it costs nothing until a
 	// product line opts in; ONTOLOGY_ENABLED=false is the switch for turning it
