@@ -33,11 +33,28 @@
 - [x] 11. `pkg/difyapp` 防分叉守卫测试：读 Python 文件断言变量名与占位符齐全，文件缺失则 skip
 - [x] 12. `router_wiring_test.go` 加三条：on 模式注入且售前/售后文本不同、shadow 模式不注入、粘性吸收态（经真实 miniredis 会话）
 - [x] 13. 六模块 build + vet + test 全绿（严格退出码验证）
-- [ ] 14. 端到端：复原 WSL 环境 → 回灌提示词 → **Dify 侧确认占位符存在** → 售前/售后各一条消息 → 人工读答复确认语气有差异且无本体外数值
+- [x] 14. 端到端实测通过（2026-08-11，WSL 复原环境，真实 Dify + deepseek）：
+  - 回灌端点首跑暴露真缺陷："dify admin token is empty"——AI-config 全部控制台调用
+    依赖没人配置的静态 DIFY_ADMIN_TOKEN。已修：bridge 按 静态 token → 邮箱密码登录铸造
+    （缓存 30 分钟 + 401 重铸一次）回退，提交 3a913a7
+  - 修复后 DrillCo3 回灌成功，Dify 侧验证：占位符 `{{scene_context}}` ✓ 规则 6 ✓ 变量声明 ✓
+  - 全链路（router SCENE_MODE=on，真实 Redis 流 + 真实模型）：
+    售前"这两款榨汁机哪个更值得买"→ 反问二选一（出汁率 vs 清洗）；
+    售后"我买的杯子碎了"→ 先共情复述 + 归类"物流问题" + 一次说清凭证（订单号+两张照片）;
+    同会话追问"换一个新的多少钱"→ **保持售后语气**（免费补发，不推销）——吸收态经真实会话生效；
+    指标 `router_scene_classified_total`：2 presales/comparison + 2 postsales/fault + 1 inherited，零误差
+  - 边界确认：DrillCo3 未配本体，模型给出"免费补发"这类流程承诺无人校验——
+    真实客户上线须配本体+validation，这不是场景策略的缺陷而是既有 per-line opt-in 设计
 - [x] 15. README：环境变量表 + 「场景化应答策略」章节（含回灌约束）
 
 ## Current Status
-- [x] In Progress：代码全部落地并通过六模块验证，剩步骤 14 的 WSL 实测
+- [x] Ready for Review：15 步全部完成，分支 feat/scene-strategy（f1f7a4d + 3a913a7），待合并
+
+## 演练环境当前状态（2026-08-11 实测后仍在运行）
+Dify 七件套 + unica-redis(:6380) + admin-scene-bin(:8081) + router-scene-bin(:8090) 全部在跑。
+演练遗留数据：channels 表插入了一行 scene-drill 渠道（id 1111...5501 → DrillCo3）；
+DrillCo3 的 config_json 加了 `guardrail.confidence_threshold=0.05`（放行答案用，
+真实部署不要抄）且提示词已回灌为新模板。释放命令同上次（pkill + docker rm + compose down）。
 
 ---
 

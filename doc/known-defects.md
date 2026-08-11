@@ -103,6 +103,15 @@ publish 到 `unica:config_invalidation`，但订阅方只有
 改动小、与现有读取方天然兼容），或让 router 改读 `ai_agent_configs` 表并接上失效通知。
 推荐前者。另：`ai_agent_configs.max_ai_turns` 无任何读取方，一并处置。
 
+2026-08-11 演练实证：手写 SQL 往 `config_json.guardrail` 塞 `confidence_threshold`
+并清掉 `channel_route:*` 缓存后，router 立即按新阈值放行——**读取侧完全健康，
+缺的只是写入路径**。修法就是给 `updateThreshold`/`updateHandoffRules` 加一行
+`SetConfigKey(..., "guardrail", ...)` 并失效 route cache。
+
+（同日已顺手修掉一条相邻缺陷：AI-config 的控制台调用全部依赖没人配置的静态
+`DIFY_ADMIN_TOKEN`，portal 的「AI 参数」弹窗读/写提示词在真实部署里从来就是坏的。
+bridge 现在会用邮箱密码按需铸造 token，见 3a913a7。）
+
 ---
 
 ## D5 `[INTENT:]` 标签从未在任何提示词里被要求过
