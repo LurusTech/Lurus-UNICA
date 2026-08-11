@@ -5,8 +5,8 @@
 | 项目 | 值 |
 |------|---|
 | AppID | `wx2b53de720673da7a` |
-| AppSecret | `1efb7a251e319a6025390fc1aca4251b` |
-| Token | `unica_wechat_test_2026` |
+| AppSecret | `<REDACTED-见带外凭证库>` |
+| Token | `<REDACTED-见带外凭证库>` |
 | Webhook URL | `https://ailurus.top/webhook/wechat` |
 | 加密模式 | 未启用（明文模式） |
 | 验证状态 | 已通过 (2026-03-05) |
@@ -58,8 +58,8 @@ SSL 证书：Let's Encrypt，自动续期。
 ### 环境变量（Gateway 启动需要）
 ```bash
 export WECHAT_APP_ID=wx2b53de720673da7a
-export WECHAT_APP_SECRET=1efb7a251e319a6025390fc1aca4251b
-export WECHAT_TOKEN=unica_wechat_test_2026
+export WECHAT_APP_SECRET=<REDACTED-见带外凭证库>   # 真值见带外凭证库,勿写回本文档
+export WECHAT_TOKEN=<REDACTED-见带外凭证库>        # 同上
 export WECHAT_ENCRYPTED_MODE=false
 export WECHAT_CHANNEL_ID=wechat-test
 export REDIS_URL=redis://localhost:6379/0

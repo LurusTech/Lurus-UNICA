@@ -1,0 +1,140 @@
+# gitleaks configuration for 2b-svc-unica (LurusTech/Lurus-UNICA — PUBLIC repo)
+#
+# Extends the upstream default ruleset (generic API keys, cloud provider
+# creds, private keys, JWTs, ...) and adds Lurus-specific rules covering the
+# credential classes found tracked in this repo by the 2026-08-07 sweep:
+#   1. WeChat AppSecret (32-hex) hardcoded in docs/dev-environment.md
+#      (scrubbed from the working tree; rotation is owner-gated)
+#   2. Shared cluster ops password (Lurus@ops family) — guard rail, the class
+#      that leaked from sibling repos
+#   3. Connection strings / DSNs with an embedded username:password
+#   4. Literal password/secret/token values in k8s Secret stringData / env
+#
+# SCOPE NOTE: the CI gate scans the *working tree*, not git history. History
+# still carries the pre-scrub values; remediation for those is rotation
+# (owner-gated), not a permanently-red history scan.
+#
+# Run locally:  gitleaks detect --no-git --config .gitleaks.toml --redact -v
+# Staged only:  gitleaks protect --staged --config .gitleaks.toml --redact -v
+
+title = "unica secret scanning"
+
+[extend]
+useDefault = true
+
+# --- Rule 1: WeChat AppSecret (32-hex) ---------------------------------------
+# The actual leak shape in this repo: `export WECHAT_APP_SECRET=<32-hex>` and
+# markdown table rows `| AppSecret | `<32-hex>` |` in docs/dev-environment.md.
+[[rules]]
+id = "unica-wechat-app-secret"
+description = "WeChat AppSecret (32-hex) committed in plaintext"
+regex = '''(?i)(wechat[_-]?app[_-]?secret|app[_-]?secret)[^\n]{0,16}?\b([0-9a-f]{32})\b'''
+secretGroup = 2
+keywords = ["appsecret", "app_secret", "app-secret"]
+
+# --- Rule 2: shared Lurus ops password ---------------------------------------
+[[rules]]
+id = "lurus-shared-ops-password"
+description = "Shared Lurus infrastructure password (cluster PG / Zitadel admin / Grafana) in plaintext"
+regex = '''Lurus(@|%40|%2540)ops'''
+keywords = ["lurus@ops", "lurus%40ops"]
+
+# --- Rule 3: cross-service internal API key (64-hex) -------------------------
+[[rules]]
+id = "lurus-internal-api-key"
+description = "Lurus cross-service internal API key (64-hex) committed in plaintext"
+regex = '''(?i)(lurus[_-]?identity[_-]?internal[_-]?key|internal[_-]?api[_-]?key|lurus[_-]?api[_-]?key)["'\s]*[:=]["'\s]*([a-f0-9]{64})'''
+secretGroup = 2
+keywords = [
+  "lurus_identity_internal_key",
+  "internal_api_key",
+  "lurus_api_key",
+  "lurus-identity-internal-key",
+]
+[rules.allowlist]
+regexes = [
+  '''(?i)(changeme|change[_-]?me|placeholder|replace[_-]?me|example|dummy|<[^>]+>|\$\{[^}]+\}|\$\([^)]+\)|base64-encoded)''',
+  '''^0{64}$''',
+  '''^f{64}$''',
+]
+
+# --- Rule 4: connection string / DSN with embedded credentials ---------------
+[[rules]]
+id = "lurus-dsn-with-credentials"
+description = "Connection string / DSN carrying an embedded username:password"
+regex = '''(?i)\b[a-z][a-z0-9+.-]*://[a-z0-9_.-]+:([^@\s"'/]{6,})@[a-z0-9_.-]+(:[0-9]+)?/'''
+secretGroup = 1
+keywords = [
+  "postgres://", "postgresql://", "mysql://", "redis://", "mongodb://", "amqp://",
+]
+[rules.allowlist]
+regexes = [
+  # deploy/secrets/*.yaml + deploy/{chatwoot,dify}/*-secrets.yaml templates
+  # carry CHANGE_ME_* placeholder passwords inside their DSNs (verified
+  # 2026-08-07 scan); setup-infra.sh / deploy.sh refuse to apply them as-is.
+  '''(?i)change[_-]?me''',
+  # `postgres://postgres:password@localhost:5432/...` — the literal word
+  # "password" as the password is the dev-default DSN in router/main.go and
+  # unica/scripts/setup_*.go (localhost only), and docs/stories examples.
+  '''^(password|pass)$''',
+  '''(?i)(changeme|placeholder|replace[_-]?me|example|dummy|localhost|127\.0\.0\.1|<[^>]+>|\$\{[^}]+\}|\$\([^)]+\))''',
+]
+
+# --- Rule 5: literal password values in k8s Secret / env assignments ---------
+[[rules]]
+id = "k8s-literal-password"
+description = "Literal password value assigned to a *_PASSWORD / *_SECRET / *_TOKEN key"
+regex = '''(?i)\b([a-z0-9_-]*(?:password|passwd|secret|token))["'\s]*[:=][ \t]*["']([^"'\s$<{][^"'\n]{7,})["']'''
+secretGroup = 2
+keywords = ["password", "passwd", "secret", "token"]
+[rules.allowlist]
+regexes = [
+  '''(?i)(changeme|change[_-]?me|placeholder|replace[_-]?me|example|dummy|sample|test[_-]?only|your[_-]|xxx+|redacted|masked|\*{3,})''',
+  # templated / referenced values are fine
+  '''(\$\{[^}]+\}|\$\([^)]+\)|\{\{[^}]+\}\}|<[^>]+>|base64-encoded)''',
+  # k8s indirection is the approved pattern, never a literal
+  '''(?i)(secretKeyRef|valueFrom|secretName|configMapKeyRef)''',
+  # Lowercase identifier words ("encrypted_token", "verification_token" in
+  # docs/stories/STORY-024.md) are field names in payload examples, not
+  # credentials. Deliberately NARROWER than the sibling repos'
+  # `^[A-Za-z0-9_.-]+$`: real passwords in this org mix case and digits
+  # (Unica2026x-class) and must keep firing.
+  '''^[a-z_.-]+$''',
+]
+
+# --- Rule 6: newapi/relay-style API key --------------------------------------
+# Blind spot found 2026-08-07: a real newapi relay key (sk- + 48 alnum)
+# slipped past both the gitleaks default ruleset and the lucrum base rules.
+[[rules]]
+id = "lurus-relay-key"
+description = "Lurus newapi/relay style API key (sk- + long alnum) or Langfuse key pair"
+regex = '''\bsk-[A-Za-z0-9]{30,}\b|\b[ps]k-lf-[a-z0-9-]{16,}\b'''
+keywords = ["sk-", "pk-lf-"]
+
+# --- Global allowlist --------------------------------------------------------
+[allowlist]
+description = "Paths that never contain live credentials"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  '''\.lock$''',
+  '''(^|/)bun\.lockb$''',
+  '''(^|/)package-lock\.json$''',
+  '''\.(png|jpe?g|gif|svg|ico|webp|woff2?|ttf|eot|pdf)$''',
+  # this config necessarily names the patterns it hunts for
+  '''(^|/)\.gitleaks\.toml$''',
+  # scanner's own output artifacts
+  '''(^|/)gitleaks\.sarif$''',
+  '''(^|/)gitleaks-report\.json$''',
+  # Test fixtures: Go adapter/token/bridge tests assert against synthetic
+  # throwaway credentials (verified file-by-file in the 2026-08-07 scan:
+  # adapter_test.go / handler_test.go / *_test.go under unica/). Real
+  # secrets must never live under a test path anyway.
+  '''(^|/)__tests__/''',
+  '''(^|/)tests?/''',
+  '''(^|/)e2e/''',
+  '''\.(test|spec)\.[jt]sx?$''',
+  '''(^|/)test_[^/]+\.py$''',
+  '''[^/]+_test\.(go|py)$''',
+]
