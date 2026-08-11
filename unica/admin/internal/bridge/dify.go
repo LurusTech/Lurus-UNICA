@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/kefu/unica/pkg/difyapp"
@@ -22,8 +23,15 @@ import (
 type DifyBridgeConfig struct {
 	// AdminURL is the Dify console API root (e.g. "http://dify:5001/console/api").
 	AdminURL string
-	// AdminToken is the authentication token for the Dify console API.
+	// AdminToken is the authentication token for the Dify console API. Console
+	// tokens expire, so most deployments leave this empty and configure
+	// AdminEmail/AdminPassword instead.
 	AdminToken string
+	// AdminEmail and AdminPassword let the bridge mint console tokens on
+	// demand when AdminToken is empty. Without either, every console call
+	// that is not handed an explicit per-call token fails.
+	AdminEmail    string
+	AdminPassword string
 	// APIBaseURL is the Dify service API root (e.g. "http://dify:5001/v1").
 	APIBaseURL string
 }
@@ -32,7 +40,19 @@ type DifyBridgeConfig struct {
 type DifyBridge struct {
 	httpClient *http.Client
 	config     DifyBridgeConfig
+
+	// Cached console token minted via Login when no static AdminToken is
+	// configured. Dify console tokens outlive any single request but do
+	// expire, so the cache is time-bounded and invalidated on a 401.
+	tokenMu       sync.Mutex
+	cachedToken   string
+	tokenMintedAt time.Time
 }
+
+// consoleTokenTTL bounds how long a minted console token is reused. Dify
+// 0.15.x issues 60-minute tokens; half that leaves a wide safety margin, and
+// the 401-retry path below catches early expiry anyway.
+const consoleTokenTTL = 30 * time.Minute
 
 // NewDifyBridge creates a new Dify bridge client.
 func NewDifyBridge(cfg DifyBridgeConfig) *DifyBridge {
@@ -394,26 +414,82 @@ func (b *DifyBridge) doAdminRequest(ctx context.Context, method, path string, re
 	return b.doAdminRequestWithToken(ctx, method, path, reqBody, "")
 }
 
+// consoleToken resolves a token for the Dify console API: a static AdminToken
+// when configured, otherwise a cached token minted via Login with the
+// configured admin credentials. Console tokens expire, which is why most
+// deployments configure email/password rather than a token — the provisioning
+// path always logged in per call for exactly that reason, while the AI-config
+// path relied on the static token alone and broke wherever it was unset.
+func (b *DifyBridge) consoleToken(ctx context.Context) (string, error) {
+	if b.config.AdminToken != "" {
+		return b.config.AdminToken, nil
+	}
+	if b.config.AdminEmail == "" || b.config.AdminPassword == "" {
+		return "", fmt.Errorf("dify admin token is empty and no admin credentials configured")
+	}
+
+	b.tokenMu.Lock()
+	defer b.tokenMu.Unlock()
+	if b.cachedToken != "" && time.Since(b.tokenMintedAt) < consoleTokenTTL {
+		return b.cachedToken, nil
+	}
+	token, err := b.Login(ctx, b.config.AdminEmail, b.config.AdminPassword)
+	if err != nil {
+		return "", fmt.Errorf("mint console token: %w", err)
+	}
+	b.cachedToken = token
+	b.tokenMintedAt = time.Now()
+	return token, nil
+}
+
+// invalidateConsoleToken drops the cached minted token after a 401 so the next
+// attempt logs in afresh. Static AdminTokens are not touched: they are
+// operator-supplied and re-minting is not an option.
+func (b *DifyBridge) invalidateConsoleToken() {
+	b.tokenMu.Lock()
+	b.cachedToken = ""
+	b.tokenMu.Unlock()
+}
+
 // doAdminRequestWithToken performs an HTTP request to the Dify Console (admin) API.
 // When token is non-empty it is used for the Authorization header instead of the
-// bridge's static AdminToken (used for per-call tokens obtained via Login).
+// bridge's resolved console token (used for per-call tokens obtained via Login).
 func (b *DifyBridge) doAdminRequestWithToken(ctx context.Context, method, path string, reqBody interface{}, token string) ([]byte, error) {
 	if b.config.AdminURL == "" {
 		return nil, fmt.Errorf("dify admin URL is empty")
 	}
 	authToken := token
+	minted := false
 	if authToken == "" {
-		authToken = b.config.AdminToken
-	}
-	if authToken == "" {
-		return nil, fmt.Errorf("dify admin token is empty")
+		var err error
+		authToken, err = b.consoleToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+		minted = b.config.AdminToken == ""
 	}
 
+	body, status, err := b.adminRoundTrip(ctx, method, path, reqBody, authToken)
+	// A cached minted token can expire early; log in once more and retry.
+	if err != nil && status == http.StatusUnauthorized && minted {
+		b.invalidateConsoleToken()
+		if authToken, err = b.consoleToken(ctx); err != nil {
+			return nil, err
+		}
+		body, _, err = b.adminRoundTrip(ctx, method, path, reqBody, authToken)
+	}
+	return body, err
+}
+
+// adminRoundTrip is one console-API HTTP exchange. It returns the status code
+// alongside the error so the caller can distinguish an auth failure worth
+// retrying from everything else.
+func (b *DifyBridge) adminRoundTrip(ctx context.Context, method, path string, reqBody interface{}, authToken string) ([]byte, int, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
 		bodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
-			return nil, fmt.Errorf("marshal request body: %w", err)
+			return nil, 0, fmt.Errorf("marshal request body: %w", err)
 		}
 		bodyReader = bytes.NewReader(bodyBytes)
 	}
@@ -421,7 +497,7 @@ func (b *DifyBridge) doAdminRequestWithToken(ctx context.Context, method, path s
 	url := b.config.AdminURL + path
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
@@ -429,21 +505,21 @@ func (b *DifyBridge) doAdminRequestWithToken(ctx context.Context, method, path s
 	start := time.Now()
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP %s %s: %w", method, path, err)
+		return nil, 0, fmt.Errorf("HTTP %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 
 	elapsed := time.Since(start)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
 	}
 
 	log.Printf("[dify-bridge] %s %s -> %d (%s)", method, path, resp.StatusCode, elapsed)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d from %s %s: %s", resp.StatusCode, method, path, string(body))
+		return nil, resp.StatusCode, fmt.Errorf("HTTP %d from %s %s: %s", resp.StatusCode, method, path, string(body))
 	}
 
-	return body, nil
+	return body, resp.StatusCode, nil
 }

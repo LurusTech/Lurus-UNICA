@@ -176,3 +176,49 @@ func TestResetPrompt_RefusesAdvancedPromptMode(t *testing.T) {
 		t.Error("advanced mode must not receive a model-config write")
 	}
 }
+
+// TestResetPrompt_MintsConsoleTokenWhenStaticAbsent pins the login fallback:
+// deployments configure admin email/password rather than a static console
+// token (console tokens expire), and before this fallback existed every
+// AI-config console call — not just reset — failed there with "dify admin
+// token is empty".
+func TestResetPrompt_MintsConsoleTokenWhenStaticAbsent(t *testing.T) {
+	dify := newFakePromptDify(t)
+	var loginCalls int
+	base := dify.server.Config.Handler
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		loginCalls++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"result":"success","data":{"access_token":"minted-token"}}`))
+	})
+	mux.Handle("/", base)
+	dify.server.Config.Handler = mux
+
+	appID := "app-1"
+	h := &AIConfigHandler{
+		plRepo: &fakeAIConfigPLs{pl: &repository.ProductLine{
+			ID: "pl-1", Name: "Acme", DifyAgentID: &appID,
+		}},
+		difyBridge: bridge.NewDifyBridge(bridge.DifyBridgeConfig{
+			AdminURL:      dify.server.URL,
+			AdminEmail:    "admin@example.com",
+			AdminPassword: "secret",
+			APIBaseURL:    dify.server.URL,
+		}),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai-config/pl-1/prompt/reset", nil)
+	w := httptest.NewRecorder()
+	h.HandleAIConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 via minted token, got %d: %s", w.Code, w.Body.String())
+	}
+	if loginCalls != 1 {
+		t.Errorf("expected exactly one login (read+write share the cached token), got %d", loginCalls)
+	}
+	if dify.writtenConfig() == nil {
+		t.Fatal("no model-config write reached Dify")
+	}
+}

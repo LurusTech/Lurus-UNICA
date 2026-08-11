@@ -86,9 +86,11 @@ func main() {
 	// Initialize AI config repository and Dify bridge
 	aiConfigRepo := repository.NewAIConfigRepository(db)
 	difyBridge := bridge.NewDifyBridge(bridge.DifyBridgeConfig{
-		AdminURL:   cfg.DifyAdminURL,
-		AdminToken: cfg.DifyAdminToken,
-		APIBaseURL: cfg.DifyAPIBaseURL,
+		AdminURL:      cfg.DifyAdminURL,
+		AdminToken:    cfg.DifyAdminToken,
+		AdminEmail:    cfg.DifyAdminEmail,
+		AdminPassword: cfg.DifyAdminPassword,
+		APIBaseURL:    cfg.DifyAPIBaseURL,
 	})
 
 	// Initialize handlers
