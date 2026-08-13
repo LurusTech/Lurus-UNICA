@@ -24,6 +24,17 @@ import (
 // app's output format.
 var factTagPattern = regexp.MustCompile(`\[FACT:([^\]=]+)=([^\]]*)\]`)
 
+// factTagStripPattern matches any [FACT:...] whatsoever, well-formed or not.
+//
+// Stripping cannot reuse the pattern above. That one requires the "=" and so
+// leaves a tag the model wrote without one — [FACT:学位免责] — sitting in the
+// text that goes to the customer, who sees internal markup the prompt promised
+// they never would. A model that half-follows the convention is the ordinary
+// case, not an exotic one: it was observed on 3 of 21 turns in a single
+// conversation. Parsing stays strict, because a tag with no value asserts
+// nothing checkable; removal is deliberately total.
+var factTagStripPattern = regexp.MustCompile(`\[FACT:[^\]]*\]`)
+
 // Claim is one factual assertion the model made about its own answer.
 type Claim struct {
 	// Qualifiers are the scope values as written, outermost first. Empty when
@@ -77,7 +88,7 @@ func ParseClaims(answer string) ClaimResult {
 	}
 
 	return ClaimResult{
-		CleanedAnswer: tidy(factTagPattern.ReplaceAllString(answer, "")),
+		CleanedAnswer: tidy(factTagStripPattern.ReplaceAllString(answer, "")),
 		Claims:        claims,
 	}
 }

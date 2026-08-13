@@ -255,6 +255,31 @@ func TestParseClaims_MalformedTagsAreStrippedNotReported(t *testing.T) {
 	if strings.Contains(result.CleanedAnswer, "return_window_days") {
 		t.Errorf("well-formed tag not stripped: %q", result.CleanedAnswer)
 	}
+	// This assertion is the one the test's name always promised and did not
+	// make. Without it, stripping could reuse the parse pattern — which needs
+	// the "=" — and leave a valueless tag in the text sent to the customer.
+	// It did, and [FACT:学位免责] reached replies on 3 of 21 turns in a live
+	// conversation before anything noticed.
+	if strings.Contains(result.CleanedAnswer, "[FACT:") {
+		t.Errorf("malformed tag left in customer-facing text: %q", result.CleanedAnswer)
+	}
+}
+
+// The tag is written by a model, so it arrives in every shape a model can
+// produce it in, not only the documented one.
+func TestParseClaims_StripsEveryTagShapeFromCustomerText(t *testing.T) {
+	shapes := []string{
+		"学区以教育局审核为准。[FACT:学位免责]",
+		"佣金为成交总价的1%。[FACT:佣金费率=]",
+		"看房免费。[FACT:]",
+		"退费按阶段计算。[FACT:签约前.退费比例]",
+		"多个标签。[FACT:a] 中间 [FACT:b=1] 结尾 [FACT:c]",
+	}
+	for _, answer := range shapes {
+		if got := ParseClaims(answer).CleanedAnswer; strings.Contains(got, "[FACT:") {
+			t.Errorf("internal markup reached the customer: %q", got)
+		}
+	}
 }
 
 func TestIsAffirmed(t *testing.T) {

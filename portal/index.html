@@ -272,17 +272,22 @@
       <p>管理小红书、抖音、微信、淘宝、快手等渠道配置。</p>
       <span class="go">进入配置 →</span>
     </a>
-    <a class="card" href="http://100.98.57.55:3400/">
+    <!-- Chatwoot and Dify are separate deployments on their own ports. Their
+         addresses are derived from the address this page was served from rather
+         than hardcoded: the host differs per environment, and on WSL it changes
+         whenever WSL restarts, so a literal URL here goes stale silently and
+         the card becomes a dead link. -->
+    <a class="card" id="card-workbench" href="#" data-port="3400">
       <div class="icon">💬</div>
       <h3>客服工作台</h3>
       <p>接待会话、处理工单，统一管理多渠道客服消息。</p>
       <span class="go">进入工作台 →</span>
     </a>
-    <a class="card" href="http://100.122.83.20:3402/">
+    <a class="card" id="card-dify" href="#" data-port="3402">
       <div class="icon">🤖</div>
-      <h3>AI 与知识库</h3>
-      <p>配置智能体、知识库与自动回复策略。</p>
-      <span class="go">进入管理 →</span>
+      <h3>AI 智能体平台</h3>
+      <p>配置智能体、模型供应商与知识库索引。</p>
+      <span class="go">进入平台 →</span>
     </a>
   </div>
 
@@ -309,6 +314,20 @@
     }
     tick();
     setInterval(tick, 1000);
+
+    // Chatwoot and Dify sit on their own ports of the same host this page came
+    // from. Deriving the address keeps the cards working when the host changes
+    // — which on WSL it does at every restart — instead of leaving a hardcoded
+    // link that silently points at a machine no longer there.
+    Array.prototype.forEach.call(
+      document.querySelectorAll("a.card[data-port]"),
+      function (card) {
+        card.href = window.location.protocol + "//" +
+          window.location.hostname + ":" + card.dataset.port + "/";
+        card.target = "_blank";
+        card.rel = "noopener";
+      }
+    );
 
     // System status checks. Each entry: label + endpoint to probe.
     // Uses relative paths so the page works behind any same-origin reverse proxy.

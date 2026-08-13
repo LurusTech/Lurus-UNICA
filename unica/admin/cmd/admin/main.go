@@ -91,6 +91,10 @@ func main() {
 		AdminEmail:    cfg.DifyAdminEmail,
 		AdminPassword: cfg.DifyAdminPassword,
 		APIBaseURL:    cfg.DifyAPIBaseURL,
+		// Datasets are provisioned here but filled by the AI-config handler, so
+		// both have to be told the same indexing technique or the knowledge base
+		// is created to be searched one way and populated to be searched another.
+		IndexingTechnique: cfg.DifyIndexingTechnique,
 	})
 
 	// Initialize handlers

@@ -74,4 +74,32 @@ func TestConfigureAppsCopyInSync(t *testing.T) {
 			t.Errorf("configure_apps.py PRE_PROMPT lacks %s — preview apps will accept the input and never render it", placeholder)
 		}
 	}
+
+	// Placeholders alone do not catch a drifted rule set. Rule 7 is the only
+	// rule that tells the model to answer rather than to withhold, so a preview
+	// app missing it reproduces exactly the behaviour it was added to fix:
+	// clarifying questions in place of answers the context already supports.
+	if !strings.Contains(script, "必须直接回答") {
+		t.Error("configure_apps.py PRE_PROMPT lacks the answer-first rule — preview apps will ask clarifying questions instead of answering")
+	}
+}
+
+// The stage a customer is in is the platform's own bookkeeping. Asking them to
+// declare it produces a question they have no reason to answer, and a sample of
+// such a question inside a strategy gets copied into replies almost verbatim —
+// which is how it reached customers the first time.
+func TestNoStrategyAsksTheCustomerToSelfClassify(t *testing.T) {
+	texts := map[string]string{
+		"presales":  presalesStrategy,
+		"postsales": postsalesStrategy,
+		"generic":   genericStrategy,
+		"prompt":    DefaultSystemPrompt("TestLine"),
+	}
+	for name, text := range texts {
+		for _, banned := range []string{"您是想了解购买前的信息", "还是已购商品遇到了问题"} {
+			if strings.Contains(text, banned) {
+				t.Errorf("%s contains the self-classification prompt %q", name, banned)
+			}
+		}
+	}
 }

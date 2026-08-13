@@ -34,6 +34,11 @@ type DifyBridgeConfig struct {
 	AdminPassword string
 	// APIBaseURL is the Dify service API root (e.g. "http://dify:5001/v1").
 	APIBaseURL string
+	// IndexingTechnique is how this deployment indexes knowledge documents.
+	// A dataset's retrieval settings have to agree with it: Dify defaults a new
+	// dataset to semantic search, which finds nothing in one indexed by
+	// keywords. Empty means the high-quality default.
+	IndexingTechnique string
 }
 
 // DifyBridge communicates with the Dify platform for AI config management.
@@ -213,7 +218,15 @@ func (b *DifyBridge) CreateChatApp(ctx context.Context, token, name string) (*Di
 	return &resp, nil
 }
 
-// CreateDataset provisions a new Dify dataset (knowledge base) in the default workspace.
+// CreateDataset provisions a new Dify dataset (knowledge base) in the default
+// workspace and sets retrieval settings that match how its documents will be
+// indexed. Dify's own defaults are semantic search — which retrieves nothing at
+// all from a keyword-indexed dataset — and a top_k of 2, which is only enough
+// when ranking is reliable.
+//
+// Two calls, not one: the create endpoint ignores a retrieval_model in its body
+// without complaint, so settings sent there are simply lost. They have to be
+// PATCHed onto the dataset afterwards.
 func (b *DifyBridge) CreateDataset(ctx context.Context, token, name string) (*DifyDatasetCreated, error) {
 	reqBody := map[string]interface{}{
 		"name":        name,
@@ -229,7 +242,55 @@ func (b *DifyBridge) CreateDataset(ctx context.Context, token, name string) (*Di
 		return nil, fmt.Errorf("unmarshal create dataset response: %w", err)
 	}
 	log.Printf("[dify-bridge] created dataset %q (id=%s)", resp.Name, resp.ID)
+
+	// Non-fatal: a dataset on Dify's defaults still accepts documents, and a
+	// failure here must not lose the dataset that was just created. It is
+	// reported rather than swallowed, and SetDatasetRetrieval can repair it.
+	if err := b.SetDatasetRetrieval(ctx, resp.ID, token); err != nil {
+		log.Printf("[dify-bridge] WARN: dataset %s kept Dify's default retrieval settings; "+
+			"knowledge answers will be weaker until repaired: %v", resp.ID, err)
+	}
 	return &resp, nil
+}
+
+// SetDatasetRetrieval applies this deployment's retrieval settings to a dataset
+// and verifies they took. Idempotent, so it doubles as the repair path for
+// datasets provisioned before this existed.
+func (b *DifyBridge) SetDatasetRetrieval(ctx context.Context, datasetID, token string) error {
+	if datasetID == "" {
+		return fmt.Errorf("dataset ID is empty")
+	}
+	want := difyapp.RetrievalModel(b.config.IndexingTechnique)
+
+	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPatch, "/datasets/"+datasetID,
+		map[string]interface{}{"retrieval_model": want}, token); err != nil {
+		return fmt.Errorf("set dataset retrieval: %w", err)
+	}
+
+	// Read back rather than trust the status code: this endpoint answers a
+	// write it ignored with the same 200 as one it applied, which is how the
+	// settings came to be sent on create and silently dropped.
+	body, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/datasets/"+datasetID, nil, token)
+	if err != nil {
+		return fmt.Errorf("set dataset retrieval: verify: %w", err)
+	}
+	var got struct {
+		RetrievalModel struct {
+			SearchMethod string `json:"search_method"`
+			TopK         int    `json:"top_k"`
+		} `json:"retrieval_model_dict"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		return fmt.Errorf("set dataset retrieval: unmarshal verified config: %w", err)
+	}
+	wantMethod, _ := want["search_method"].(string)
+	if got.RetrievalModel.SearchMethod != wantMethod {
+		return fmt.Errorf("set dataset retrieval: dataset %s still reports search_method=%q, want %q",
+			datasetID, got.RetrievalModel.SearchMethod, wantMethod)
+	}
+	log.Printf("[dify-bridge] dataset %s retrieval set to %s (top_k=%d)",
+		datasetID, got.RetrievalModel.SearchMethod, got.RetrievalModel.TopK)
+	return nil
 }
 
 // CreateAppAPIKey generates a new API key for the specified Dify app.
@@ -335,6 +396,67 @@ func (b *DifyBridge) updateSystemPromptWithToken(ctx context.Context, appID, pro
 	}
 	log.Printf("[dify-bridge] updated system prompt for app_id=%s (len=%d)", appID, len(prompt))
 	return nil
+}
+
+// AttachDataset binds a dataset to an app so the app actually retrieves from
+// it. Creating the dataset and creating the app leave them unconnected.
+func (b *DifyBridge) AttachDataset(ctx context.Context, appID, datasetID string) error {
+	return b.AttachDatasetWithToken(ctx, appID, datasetID, "")
+}
+
+// AttachDatasetWithToken adds datasetID to an app's retrieval configuration,
+// leaving the rest of the configuration alone.
+//
+// Same read-modify-write shape as updateSystemPromptWithToken, and for the same
+// reason: POST /apps/{id}/model-config replaces the whole configuration object,
+// so anything not read back first is silently dropped. The write is verified
+// rather than trusted — Dify answers a model-config write that changed nothing
+// with the same 200 as one that took effect, and a binding that quietly failed
+// looks exactly like a knowledge base the customer filled with useless
+// documents.
+func (b *DifyBridge) AttachDatasetWithToken(ctx context.Context, appID, datasetID, token string) error {
+	if appID == "" {
+		return fmt.Errorf("app ID is empty")
+	}
+	if datasetID == "" {
+		return fmt.Errorf("dataset ID is empty")
+	}
+
+	body, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/apps/"+appID, nil, token)
+	if err != nil {
+		return fmt.Errorf("attach dataset: read current config: %w", err)
+	}
+	var envelope struct {
+		ModelConfig map[string]interface{} `json:"model_config"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return fmt.Errorf("attach dataset: unmarshal current config: %w", err)
+	}
+	cfg := envelope.ModelConfig
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
+
+	cfg["dataset_configs"] = difyapp.WithDataset(cfg["dataset_configs"], datasetID)
+
+	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPost, "/apps/"+appID+"/model-config", cfg, token); err != nil {
+		return fmt.Errorf("attach dataset: %w", err)
+	}
+
+	verify, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/apps/"+appID, nil, token)
+	if err != nil {
+		return fmt.Errorf("attach dataset: verify: %w", err)
+	}
+	if err := json.Unmarshal(verify, &envelope); err != nil {
+		return fmt.Errorf("attach dataset: unmarshal verified config: %w", err)
+	}
+	for _, id := range difyapp.BoundDatasetIDs(envelope.ModelConfig["dataset_configs"]) {
+		if id == datasetID {
+			log.Printf("[dify-bridge] attached dataset_id=%s to app_id=%s", datasetID, appID)
+			return nil
+		}
+	}
+	return fmt.Errorf("attach dataset: app %s still does not list dataset %s after write", appID, datasetID)
 }
 
 // contextVariables are the app variables the router passes in the chat-messages

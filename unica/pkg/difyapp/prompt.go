@@ -50,6 +50,14 @@ var ContextVariables = []ContextVariable{
 // persuasive pre-sales register can never smuggle in a number the ontology
 // does not assert.
 //
+// Rules 1-6 are all prohibitions, and a model given only prohibitions answers
+// by declining: asked a question it could have answered from the injected
+// context, it would open with a clarifying question instead. Rule 7 is the
+// counterweight — the one rule that says what to do rather than what not to —
+// and it carries the single/multiple-match behaviour because that is content
+// structure, identical across every commercial stage, rather than the phrasing
+// a per-stage strategy governs.
+//
 // The product line name is substituted here rather than passed as a Dify
 // variable: one app serves one product line, so the name is a constant of the
 // app, and the router's product_line input carries the ID rather than the name.
@@ -73,7 +81,8 @@ func DefaultSystemPrompt(productLineName string) string {
 3. 若某项事实按情形不同（如按商品类别、服务阶段、客户类型分档），回答时必须说明适用情形，不得只给一个数字。
 4. 确定性事实中没有的具体数值（价格、参数、库存、个人订单进度），不要编造，请客户提供具体信息或转人工。
 5. 每引用一条确定性事实，在该句末尾附加标签 [FACT:属性名=取值]；若该事实分情形，写作 [FACT:情形.属性名=取值]。标签不会展示给客户。
-6. 上方"应答策略"只影响表达方式与提问顺序，不改变可陈述的内容；任何数值、政策与承诺仍以"确定性事实"为准。`
+6. 上方"应答策略"只影响表达方式与提问顺序，不改变可陈述的内容；任何数值、政策与承诺仍以"确定性事实"为准。
+7. 在以上约束内能回答的问题必须直接回答，先给结论再给依据。客户所指的对象在确定性事实或参考知识中能唯一确定时，直接作答；匹配到多个时，简要列出这些候选请客户选择；只有在无法定位所指、且缺失信息会改变答案时，才提出一个直接针对该缺失信息的问题。不得要求客户先说明自己所处的阶段、身份或类别再作答。`
 	return strings.Replace(template, "{product_line_name}", productLineName, 1)
 }
 

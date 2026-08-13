@@ -384,7 +384,9 @@
   "use strict";
 
   var TOKEN_KEY = "unica_access_token";
-  var DIFY_CONSOLE_BASE = "http://100.122.83.20:3402";
+  // Same host as this page, Dify's own port. A literal address here outlives
+  // the machine it names — this one pointed at a decommissioned server.
+  var DIFY_CONSOLE_BASE = window.location.protocol + "//" + window.location.hostname + ":3402";
 
   var state = {
     productLines: [], editingId: null, provisioningIds: {}, aiConfigPL: null,

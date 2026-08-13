@@ -1,0 +1,90 @@
+# Chatwoot for a single-host local/WSL environment.
+#
+# Separate from deploy/chatwoot-preview/, which targets the two-server remote
+# preview: that file hardcodes the remote addresses, publishes the portal on
+# 3401, and runs the UNICA admin service as a compose service. Here the portal
+# already owns 3401, and admin and router run as host processes against the
+# Dify stack's Postgres, so this file carries Chatwoot and nothing else.
+#
+# Chatwoot's Postgres is deliberately its own: it holds chatwoot_production,
+# while the UNICA business database lives in the Dify stack's Postgres. Nothing
+# is shared between them but the network.
+
+name: unica-chatwoot
+
+networks:
+  default:
+    name: unica-chatwoot-net
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: unica-chatwoot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chatwoot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_DB: chatwoot_production
+    volumes:
+      - chatwoot-pgdata:/var/lib/postgresql/data
+    ports:
+      # Published so migrations and the admin bootstrap can be driven from the
+      # host without exec-ing into the container. 5434 avoids the Dify stack on
+      # 5433.
+      - "5434:5432"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatwoot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: unica-chatwoot-redis
+    restart: unless-stopped
+    volumes:
+      - chatwoot-redis:/data
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  rails:
+    image: chatwoot/chatwoot:v3.15.0
+    container_name: unica-chatwoot-rails
+    restart: unless-stopped
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    env_file: .env
+    ports:
+      - "3400:3000"
+    volumes:
+      - chatwoot-storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 1400m
+
+  sidekiq:
+    image: chatwoot/chatwoot:v3.15.0
+    container_name: unica-chatwoot-sidekiq
+    restart: unless-stopped
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    env_file: .env
+    volumes:
+      - chatwoot-storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 1g
+
+volumes:
+  chatwoot-pgdata:
+  chatwoot-redis:
+  chatwoot-storage:

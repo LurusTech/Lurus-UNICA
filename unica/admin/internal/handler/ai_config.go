@@ -50,6 +50,18 @@ type AIConfigHandler struct {
 	// indexingTechnique rides along with every document create. A workspace
 	// whose model provider has no embedding model must run "economy"; sending
 	// "high_quality" there makes Dify reject the upload outright.
+	//
+	// "economy" is a materially weaker knowledge base, not a cheaper equivalent
+	// one. It builds a keyword index from a bounded set of terms extracted per
+	// segment instead of embedding the text, so a term the extractor did not
+	// pick — most proper nouns, and any word the tokenizer does not hold as a
+	// unit, which in Chinese is most compound terms — cannot be matched at all,
+	// however many times the document repeats it. Uploads still succeed and
+	// indexing still completes, so the deployment reports a healthy knowledge
+	// base that answers a large share of questions with "no information".
+	// Deploying without an embedding model is a decision about answer quality
+	// and belongs in the deployment's logs, not only in whoever set the
+	// variable's memory.
 	indexingTechnique string
 }
 
@@ -68,6 +80,11 @@ func NewAIConfigHandler(
 ) *AIConfigHandler {
 	if indexingTechnique != "economy" {
 		indexingTechnique = "high_quality"
+	} else {
+		log.Printf("[ai-config] WARN: knowledge indexing is set to economy (DIFY_INDEXING_TECHNIQUE); " +
+			"uploaded documents are matched by extracted keywords rather than meaning, so many questions " +
+			"they answer will be met with \"no information\". Configure a text-embedding model in the Dify " +
+			"workspace and switch to high_quality to retrieve on meaning")
 	}
 	h := &AIConfigHandler{
 		configRepo:        configRepo,
@@ -190,6 +207,17 @@ func (h *AIConfigHandler) HandleAIConfig(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		h.updateHandoffRules(w, r, pl)
+	case "dataset":
+		// POST .../dataset/bind repairs an app whose dataset was never bound.
+		if len(segments) > 2 && segments[2] == "bind" {
+			if r.Method != http.MethodPost {
+				ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			h.bindDataset(w, r, pl)
+			return
+		}
+		ErrorJSON(w, http.StatusNotFound, "unknown dataset action")
 	case "knowledge":
 		h.handleKnowledge(w, r, pl, segments[2:])
 	case "test":
@@ -303,6 +331,43 @@ func (h *AIConfigHandler) resetPrompt(w http.ResponseWriter, r *http.Request, pl
 		"message":         "system prompt reset to platform default",
 		"product_line_id": pl.ID,
 		"prompt_length":   len(prompt),
+	})
+}
+
+// bindDataset re-binds the product line's dataset to its Dify app, so an app
+// provisioned before the binding step existed starts consulting the knowledge
+// base its customer has been filling.
+//
+// Repair, not configuration: the dataset ID comes from the product line's own
+// binding, so there is nothing for the caller to get wrong and nothing to
+// choose. Idempotent, and safe to call on an app that is already bound.
+// super_admin only, matching resetPrompt — both reach into an app's
+// configuration on the platform's behalf.
+func (h *AIConfigHandler) bindDataset(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	claims := auth.GetClaims(r.Context())
+	if claims != nil && claims.Role != string(rbac.RoleSuperAdmin) {
+		ErrorJSON(w, http.StatusForbidden, "dataset bind requires super_admin")
+		return
+	}
+	if pl.DifyAgentID == nil || *pl.DifyAgentID == "" {
+		ErrorJSON(w, http.StatusBadRequest, "no Dify app configured for this product line")
+		return
+	}
+	if pl.DifyDatasetID == nil || *pl.DifyDatasetID == "" {
+		ErrorJSON(w, http.StatusBadRequest, "no Dify dataset configured for this product line")
+		return
+	}
+
+	if err := h.difyBridge.AttachDataset(r.Context(), *pl.DifyAgentID, *pl.DifyDatasetID); err != nil {
+		log.Printf("[ai-config] bind dataset error: %v", err)
+		ErrorJSON(w, http.StatusBadGateway, "failed to bind dataset in Dify: "+err.Error())
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message":         "dataset bound to Dify app",
+		"product_line_id": pl.ID,
+		"dify_dataset_id": *pl.DifyDatasetID,
 	})
 }
 
@@ -520,7 +585,36 @@ const knowledgeUploadWindow = 5 * time.Minute
 // defaultProcessRule accompanies every document create. Dify falls back to the
 // dataset's latest process rule when none is sent — and a freshly provisioned
 // dataset has none to fall back to, so the very first upload would fail.
-var defaultProcessRule = map[string]interface{}{"mode": "automatic"}
+//
+// Not "automatic": that mode splits on single newlines at roughly 250 tokens,
+// which cuts a record apart from the heading that says what it describes. Every
+// segment after the first then states attributes — figures, dates, terms —
+// without naming their subject, and retrieval hands those orphans to the model
+// as answers to a question about some other subject entirely. The failure is
+// not a missing answer but a confidently wrong one, attributing one record's
+// values to another, and it appears wherever a document lists several entities
+// with their attributes: a catalogue, a price list, a spec sheet, a policy
+// table.
+//
+// Splitting on blank lines widens each segment to the author's own paragraph
+// boundaries, which is where a subject and its attributes usually stay
+// together. It reduces orphaning rather than eliminating it: a long document
+// still divides, and segments after the first still carry no title. Retrieval
+// that can match on meaning rather than extracted keywords is what actually
+// fixes this — see the embedding-model note on NewAIConfigHandler.
+var defaultProcessRule = map[string]interface{}{
+	"mode": "custom",
+	"rules": map[string]interface{}{
+		"pre_processing_rules": []interface{}{
+			map[string]interface{}{"id": "remove_extra_spaces", "enabled": true},
+			map[string]interface{}{"id": "remove_urls_emails", "enabled": false},
+		},
+		"segmentation": map[string]interface{}{
+			"separator":  "\n\n",
+			"max_tokens": 1000,
+		},
+	},
+}
 
 // uploadKnowledgeDocument creates a document from either a multipart file part
 // or a JSON {name, text} body.

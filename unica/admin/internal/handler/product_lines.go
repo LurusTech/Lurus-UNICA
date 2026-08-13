@@ -205,10 +205,16 @@ func (h *ProductLineHandler) updateProductLine(w http.ResponseWriter, r *http.Re
 const difyAdminUnconfiguredMessage = "未配置 Dify 管理员账号，请联系系统管理员设置 DIFY_ADMIN_EMAIL 和 DIFY_ADMIN_PASSWORD 环境变量"
 
 // provisionDifyResponse is the response body for POST /api/v1/product-lines/:id/provision-dify.
+//
+// Warnings carries the steps that failed without aborting provisioning. They
+// have to reach the caller rather than the log alone: the dataset binding used
+// to be missing entirely, and because nothing reported its absence, every
+// product line ran for months with a knowledge base its app never read.
 type provisionDifyResponse struct {
-	Provisioned   bool   `json:"provisioned"`
-	DifyAgentID   string `json:"dify_agent_id"`
-	DifyDatasetID string `json:"dify_dataset_id"`
+	Provisioned   bool     `json:"provisioned"`
+	DifyAgentID   string   `json:"dify_agent_id"`
+	DifyDatasetID string   `json:"dify_dataset_id"`
+	Warnings      []string `json:"warnings,omitempty"`
 }
 
 // difyProvisionError is a provisioning failure that already knows how the HTTP
@@ -291,6 +297,19 @@ func (h *ProductLineHandler) provisionDifyLine(ctx context.Context, id string) (
 		return nil, &difyProvisionError{http.StatusBadGateway, "创建 Dify API Key 失败: " + err.Error()}
 	}
 
+	// Without this the app and its dataset stay unconnected: uploads succeed,
+	// indexing completes, and not one answer ever draws on them.
+	//
+	// Non-fatal for the same reason the default prompt is: this writes through
+	// POST /apps/{id}/model-config, which a workspace with no model provider yet
+	// rejects, and that must not block onboarding. Unlike before, it is reported
+	// — silence here is exactly how the missing binding survived undetected.
+	var warnings []string
+	if err := h.difyBridge.AttachDatasetWithToken(ctx, app.ID, dataset.ID, token); err != nil {
+		log.Printf("[product-lines] WARN: dataset %s not bound to app %s; the knowledge base will not be consulted until it is: %v", dataset.ID, app.ID, err)
+		warnings = append(warnings, "知识库未能绑定到 Dify 应用，上传的文档暂不会参与回答，请稍后重试绑定: "+err.Error())
+	}
+
 	updated, err := h.plRepo.UpdateDifyBinding(ctx, pl.ID, app.ID, apiKey.Token, h.difyBridge.APIBaseURL(), map[string]string{
 		"dify_dataset_id": dataset.ID,
 	})
@@ -306,5 +325,6 @@ func (h *ProductLineHandler) provisionDifyLine(ctx context.Context, id string) (
 		Provisioned:   true,
 		DifyAgentID:   app.ID,
 		DifyDatasetID: dataset.ID,
+		Warnings:      warnings,
 	}, nil
 }

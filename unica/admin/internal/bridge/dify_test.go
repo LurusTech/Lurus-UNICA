@@ -297,16 +297,48 @@ func TestDifyBridge_CreateChatApp_Success(t *testing.T) {
 	}
 }
 
-func TestDifyBridge_CreateDataset_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/datasets" {
+// fakeDatasetServer stands in for Dify's dataset endpoints: create returns an
+// ID, PATCH records the retrieval settings, GET reports whatever PATCH last
+// stored. Modelling the read-back is the point — the real endpoint answers a
+// write it ignored with the same 200 as one it applied.
+func fakeDatasetServer(t *testing.T, applyPatch bool) (*httptest.Server, *map[string]interface{}) {
+	t.Helper()
+	stored := map[string]interface{}{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/datasets":
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			// Dify drops a retrieval_model sent here; a bridge that relies on
+			// it would pass this test and fail in production.
+			if _, sent := body["retrieval_model"]; sent {
+				t.Errorf("retrieval_model sent on create, where Dify ignores it")
+			}
+			json.NewEncoder(w).Encode(DifyDatasetCreated{ID: "ds-001", Name: "UNICA-Acme"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/datasets/ds-001":
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if applyPatch {
+				if rm, ok := body["retrieval_model"].(map[string]interface{}); ok {
+					stored = rm
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/datasets/ds-001":
+			json.NewEncoder(w).Encode(map[string]interface{}{"retrieval_model_dict": stored})
+		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(DifyDatasetCreated{ID: "ds-001", Name: "UNICA-Acme"})
 	}))
+	return srv, &stored
+}
+
+func TestDifyBridge_CreateDataset_Success(t *testing.T) {
+	server, stored := fakeDatasetServer(t, true)
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
 
 	ds, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme")
 	if err != nil {
@@ -314,6 +346,49 @@ func TestDifyBridge_CreateDataset_Success(t *testing.T) {
 	}
 	if ds.ID != "ds-001" {
 		t.Errorf("expected ID 'ds-001', got %q", ds.ID)
+	}
+	if got := (*stored)["search_method"]; got != "semantic_search" {
+		t.Errorf("search_method = %v, want semantic_search", got)
+	}
+	// Dify's default of 2 is what this exists to override.
+	if got, _ := (*stored)["top_k"].(float64); got < 3 {
+		t.Errorf("top_k = %v, want Dify's default to have been raised", got)
+	}
+}
+
+// A keyword-indexed deployment must not be left on semantic search: it would
+// retrieve nothing at all.
+func TestDifyBridge_CreateDataset_EconomyGetsKeywordSearch(t *testing.T) {
+	server, stored := fakeDatasetServer(t, true)
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+
+	if _, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := (*stored)["search_method"]; got != "keyword_search" {
+		t.Errorf("search_method = %v, want keyword_search for an economy deployment", got)
+	}
+}
+
+// Losing the retrieval settings must not lose the dataset — but it must be
+// noticed, which is what reading the value back is for.
+func TestDifyBridge_CreateDataset_SurvivesIgnoredRetrievalWrite(t *testing.T) {
+	server, _ := fakeDatasetServer(t, false) // PATCH answers 200 and stores nothing
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
+
+	ds, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme")
+	if err != nil {
+		t.Fatalf("dataset creation must survive a failed retrieval write: %v", err)
+	}
+	if ds.ID != "ds-001" {
+		t.Errorf("expected ID 'ds-001', got %q", ds.ID)
+	}
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err == nil {
+		t.Error("an ignored write must be reported as an error, not accepted")
 	}
 }
 
