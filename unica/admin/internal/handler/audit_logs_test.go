@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/kefu/unica/admin/internal/auth"
+	"github.com/kefu/unica/admin/internal/rbac"
 )
 
 func TestAuditLogHandler_MethodNotAllowed(t *testing.T) {
@@ -37,9 +38,8 @@ func TestAuditLogHandler_ProductAdminEmptyPLIDs(t *testing.T) {
 	h := NewAuditLogHandler(nil)
 
 	claims := &auth.Claims{
-		UserID:         "user-1",
-		Role:           "product_admin",
-		ProductLineIDs: []string{},
+		UserID: "user-1",
+		Role:   rbac.RoleUser,
 	}
 	ctx := context.WithValue(context.Background(), auth.ClaimsKey, claims)
 

@@ -1,4 +1,4 @@
-package handler
+package quality
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kefu/unica/admin/internal/auth"
+	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/pkg/domain"
 )
@@ -53,7 +54,20 @@ func (f *fakeViolationStore) ReviewViolation(ctx context.Context, id int64, stat
 	return &out, nil
 }
 
-func newViolationsFixture() (*ViolationsHandler, *fakeViolationStore, *fakePLStore) {
+// fakePLStore is the product line lookup the review surface makes before it
+// answers, narrowed to the one method this module needs.
+type fakePLStore struct {
+	pl *repository.ProductLine
+}
+
+func (f *fakePLStore) GetByID(ctx context.Context, id string) (*repository.ProductLine, error) {
+	if f.pl != nil && f.pl.ID == id {
+		return f.pl, nil
+	}
+	return nil, nil
+}
+
+func newViolationsFixture() (*Handler, *fakeViolationStore, *fakePLStore) {
 	fs := &fakeViolationStore{
 		items: []domain.ViolationRecord{{
 			ID:            7,
@@ -70,7 +84,7 @@ func newViolationsFixture() (*ViolationsHandler, *fakeViolationStore, *fakePLSto
 		total: 1,
 	}
 	fp := &fakePLStore{pl: &repository.ProductLine{ID: "pl-1", Name: "TestLine"}}
-	return NewViolationsHandler(fs, fp, nil), fs, fp
+	return NewHandler(fs, fp, nil), fs, fp
 }
 
 func TestViolationsHandler_List(t *testing.T) {
@@ -160,7 +174,7 @@ func TestViolationsHandler_ReviewScopeForbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/violations/7/review",
 		strings.NewReader(`{"status":"false_positive"}`))
 	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
-		&auth.Claims{Role: "product_admin", ProductLineIDs: []string{"some-other-line"}}))
+		&auth.Claims{Role: rbac.RoleUser, TenantID: "some-other-line"}))
 	w := httptest.NewRecorder()
 	h.HandleReview(w, req)
 

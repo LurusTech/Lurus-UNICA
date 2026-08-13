@@ -1,4 +1,13 @@
-// Command setup_dify_workspaces provisions one Dify workspace per product line.
+// Command setup_dify_workspaces is a ONE-OFF operations script, retired from
+// any production path. Tenant provisioning is owned exclusively by the admin
+// service (POST /api/v1/tenants), whose topology is one app + one dataset per
+// tenant inside the default workspace, keyed on dify_agent_id. This script's
+// workspace-per-line topology and its dify_workspace_id marker are the OTHER,
+// abandoned convention: running it against a live environment produces a second,
+// inconsistent binding for every tenant it touches. Its only remaining use is
+// migration guidance for pre-refactor environments that were laid out per
+// workspace. Do not run it against new environments.
+//
 // For each product line in the database, it creates a workspace, a Chat application,
 // a knowledge base (dataset), configures the default system prompt, generates an
 // API key, and updates the product_lines table with the resulting IDs and key.

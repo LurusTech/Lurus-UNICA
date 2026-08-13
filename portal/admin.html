@@ -1,0 +1,1478 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>平台管理 - UNICA 统一管理门户</title>
+<style>
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root {
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+    --lt-accent: #FF5D1F;
+    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
+    --lt-on-accent: #14130F;
+    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  :root {
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --ok: var(--lt-ok);
+    --bad: var(--lt-err);
+    --warn: var(--lt-warn);
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    /* Neutral elevation shadow, no brand hue — kept at original value. */
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
+    :root {
+      --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
+      --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
+      --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+      --border: var(--lt-rule); --primary: var(--lt-accent);
+      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+      --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
+  :root[data-theme="dark"] {
+    --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
+    --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
+    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule); --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+  }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root[data-theme="light"] {
+    --lt-paper: #F5F2E8; --lt-bg: #E8E4D6; --lt-ink: #14130F; --lt-rule: #D6D2C2;
+    --lt-ok: #1F7A4F; --lt-warn: #B8821F; --lt-err: #B3392B; --lt-info: #2D4A8A;
+    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule); --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: var(--lt-font-sans);
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  header .badge {
+    font-size: 0.72rem; color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 3px 10px;
+  }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  nav.tabs {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 clamp(16px, 4vw, 48px); display: flex; gap: 4px; overflow-x: auto;
+  }
+  nav.tabs button {
+    border: none; border-bottom: 2px solid transparent; background: none; color: var(--text-muted);
+    padding: 12px 14px; font-size: 0.9rem; border-radius: 0; white-space: nowrap;
+  }
+  nav.tabs button:hover { color: var(--text); }
+  nav.tabs button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1200px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: var(--lt-on-accent); border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button.danger { color: var(--bad); }
+  button.danger:hover { border-color: var(--bad); }
+  button.danger-solid {
+    background: var(--bad); border-color: var(--bad);
+    color: color-mix(in srgb, var(--lt-paper) 92%, #fff);
+  }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; }
+
+  .panel-head { margin-bottom: 18px; }
+  .panel-head h2 { font-size: 1.15rem; margin: 0 0 6px; }
+  .panel-head p { margin: 0; color: var(--text-muted); font-size: 0.85rem; line-height: 1.55; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 18px; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .filter { min-width: 150px; }
+  .toolbar .filter label { font-size: 0.75rem; color: var(--text-muted); }
+
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    overflow-x: auto; box-shadow: var(--shadow);
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 880px; }
+  th, td { text-align: left; padding: 12px 16px; font-size: 0.88rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.wrap { white-space: normal; word-break: break-word; max-width: 320px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.8rem; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row-actions button { padding: 5px 10px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; }
+  .empty-state { padding: 48px 16px; text-align: center; color: var(--text-muted); }
+  .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
+  .pager { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 0.82rem; color: var(--text-muted); }
+  .pager .spacer { flex: 1; }
+
+  /* Platform operations cards */
+  .ops-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 28px; }
+  .ops-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px;
+  }
+  .ops-card h3 { margin: 0; font-size: 1rem; }
+  .ops-card p { margin: 0; color: var(--text-muted); font-size: 0.85rem; line-height: 1.55; }
+  .ops-card .tag {
+    align-self: flex-start; font-size: 0.72rem; padding: 3px 10px; border-radius: 999px;
+    color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+  }
+  .ops-card a.go {
+    margin-top: auto; color: var(--primary); text-decoration: none; font-size: 0.85rem; font-weight: 500;
+  }
+  .ops-card a.go:hover { text-decoration: underline; }
+
+  /* Spinner for pending actions */
+  .spinner {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+    border-top-color: var(--primary);
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Modal — the scrim rgba() and the drop-shadow rgba() below are neutral dimming/depth,
+     not brand hues, so they keep their original literal values. */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(10, 12, 16, 0.45); display: none;
+    align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
+    max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 26px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  }
+  .modal h3 { margin: 0 0 4px; font-size: 1.1rem; }
+  .modal .modal-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 18px; line-height: 1.55; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--lt-info);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  .toast.warn { border-left-color: var(--warn); }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  /* One-click onboarding report */
+  .report-steps { margin-top: 4px; }
+  .report-step {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .report-step:last-child { border-bottom: none; }
+  .report-mark { flex: none; font-size: 0.95rem; line-height: 1.35; }
+  .report-mark.ok { color: var(--ok); }
+  .report-mark.warn { color: var(--warn); }
+  .report-body { min-width: 0; }
+  .report-title { font-size: 0.88rem; font-weight: 600; }
+  .report-msg { font-size: 0.82rem; color: var(--text-muted); margin-top: 3px; word-break: break-word; }
+  .cred-box {
+    margin-top: 18px; padding: 14px 16px; border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+  }
+  .cred-warn { color: var(--warn); font-size: 0.85rem; font-weight: 600; margin-bottom: 12px; }
+  .cred-item { margin-bottom: 12px; }
+  .cred-item:last-child { margin-bottom: 0; }
+  .cred-label { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 5px; }
+  .cred-row { display: flex; gap: 8px; }
+  .cred-row input { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; }
+  .cred-row button { flex: none; }
+
+  /* Tenant removal */
+  .danger-box {
+    padding: 14px 16px; border-radius: 12px; margin-bottom: 16px;
+    border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent);
+    background: color-mix(in srgb, var(--bad) 10%, transparent);
+  }
+  .danger-box h4 { margin: 0 0 8px; font-size: 0.85rem; color: var(--bad); }
+  .danger-box ul { margin: 0; padding-left: 18px; font-size: 0.83rem; line-height: 1.7; }
+  .cleanup-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px; margin-top: 10px;
+  }
+  .cleanup-item {
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 0.8rem;
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .cleanup-item .n { font-weight: 600; }
+  .warn-list {
+    margin-top: 14px; padding: 12px 14px; border-radius: 10px; font-size: 0.82rem; line-height: 1.6;
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    word-break: break-word;
+  }
+  .warn-list ul { margin: 6px 0 0; padding-left: 18px; }
+
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <h1>平台管理</h1>
+    <span class="badge">管理员</span>
+  </div>
+  <div id="user-info">
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="active" data-panel="panel-tenants">租户管理</button>
+  <button data-panel="panel-users">用户管理</button>
+  <button data-panel="panel-ops">平台运维</button>
+</nav>
+
+<main>
+  <!-- ---------- Tenants ---------- -->
+  <section id="panel-tenants">
+    <div class="panel-head">
+      <h2>租户管理</h2>
+      <p>一次开户即建立产品线、AI 应用与知识库、门户账号与人工客服工作台。销户会连同外部系统一并清理。</p>
+    </div>
+    <div class="toolbar">
+      <div class="spacer"></div>
+      <button class="primary" id="onboard-btn">⚡ 一键开户</button>
+      <button id="tenant-refresh-btn">刷新</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>显示名</th>
+            <th>AI/知识库</th>
+            <th>工作台账户</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tenant-tbody">
+          <tr><td colspan="6" class="loading-text">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ---------- Users ---------- -->
+  <section id="panel-users" hidden>
+    <div class="panel-head">
+      <h2>用户管理</h2>
+      <p>账号的角色与所属租户决定它能到达的一切：管理员管平台，租户用户只管自己的租户。</p>
+    </div>
+    <div class="toolbar">
+      <div class="filter">
+        <label for="user-tenant-filter">按租户筛选</label>
+        <select id="user-tenant-filter"><option value="">全部租户</option></select>
+      </div>
+      <div class="spacer"></div>
+      <button class="primary" id="create-user-btn">＋ 新建用户</button>
+      <button id="user-refresh-btn">刷新</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>邮箱</th>
+            <th>显示名</th>
+            <th>角色</th>
+            <th>所属租户</th>
+            <th>状态</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="user-tbody">
+          <tr><td colspan="7" class="loading-text">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ---------- Platform operations ---------- -->
+  <section id="panel-ops" hidden>
+    <div class="panel-head">
+      <h2>平台运维</h2>
+      <p>平台级工具与全量审计。这里的入口面向运维本身，不属于任何单个租户。</p>
+    </div>
+
+    <div class="ops-cards">
+      <div class="ops-card">
+        <h3>Dify 控制台</h3>
+        <span class="tag">平台运维工具 · 共享凭证</span>
+        <p>模型供应商、应用编排与知识库索引的底层控制台。全平台共用一套凭证，请勿转交给租户用户。</p>
+        <a class="go" id="dify-link" href="#" target="_blank" rel="noopener">打开控制台 →</a>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="filter">
+        <label for="audit-tenant">租户</label>
+        <select id="audit-tenant"><option value="">全部租户</option></select>
+      </div>
+      <div class="filter">
+        <label for="audit-action">动作</label>
+        <input id="audit-action" placeholder="如 create / delete" />
+      </div>
+      <div class="filter">
+        <label for="audit-resource">资源类型</label>
+        <input id="audit-resource" placeholder="如 customer / channel" />
+      </div>
+      <div class="spacer"></div>
+      <button class="primary" id="audit-apply-btn">查询</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>操作者</th>
+            <th>角色</th>
+            <th>动作</th>
+            <th>资源类型</th>
+            <th>资源 ID</th>
+            <th>租户</th>
+            <th>来源 IP</th>
+          </tr>
+        </thead>
+        <tbody id="audit-tbody">
+          <tr><td colspan="8" class="loading-text">尚未查询</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span id="audit-range">—</span>
+      <div class="spacer"></div>
+      <button id="audit-prev" disabled>上一页</button>
+      <button id="audit-next" disabled>下一页</button>
+    </div>
+  </section>
+</main>
+
+<!-- 一键开户 modal -->
+<div class="modal-backdrop" id="onboard-modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="onboard-modal-title">
+    <h3 id="onboard-modal-title">一键开户</h3>
+    <p class="modal-sub" id="onboard-modal-sub">一次完成产品线、AI 应用与知识库、门户账号和人工客服工作台的开通</p>
+    <form id="onboard-form">
+      <div class="field">
+        <label for="f-cust-name">客户名称 (name)</label>
+        <input id="f-cust-name" required />
+        <div class="hint">用于系统内部标识，建议使用英文/拼音，不含空格</div>
+      </div>
+      <div class="field">
+        <label for="f-cust-display-name">显示名 (display_name)</label>
+        <input id="f-cust-display-name" required />
+      </div>
+      <div class="field">
+        <label for="f-cust-admin-email">管理员邮箱 (admin_email)</label>
+        <input id="f-cust-admin-email" type="email" autocomplete="off" required />
+        <div class="hint">同时作为门户账号与人工客服工作台账号的登录邮箱</div>
+      </div>
+      <div class="field">
+        <label for="f-cust-admin-password">初始密码 (admin_password)</label>
+        <input id="f-cust-admin-password" type="password" autocomplete="new-password" placeholder="留空则自动生成" />
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="onboard-modal-cancel">取消</button>
+        <button type="submit" class="primary" id="onboard-modal-submit">开始开户</button>
+      </div>
+    </form>
+    <div id="onboard-result" hidden></div>
+  </div>
+</div>
+
+<!-- 销户 modal -->
+<div class="modal-backdrop" id="delete-modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+    <h3 id="delete-modal-title">删除租户</h3>
+    <p class="modal-sub" id="delete-modal-sub"></p>
+    <form id="delete-form">
+      <div class="danger-box">
+        <h4>⚠ 此操作不可撤销，将连同外部系统一并清理</h4>
+        <ul>
+          <li>该租户的会话、消息、终端客户与渠道配置</li>
+          <li>知识库文档、事实版本与违规记录</li>
+          <li>该租户的全部门户账号</li>
+          <li>Chatwoot 账户（含其收件箱与会话）</li>
+          <li>Dify 应用与知识库</li>
+        </ul>
+      </div>
+      <div class="field">
+        <label for="f-delete-confirm">请输入租户名称以确认</label>
+        <input id="f-delete-confirm" autocomplete="off" />
+        <div class="hint" id="delete-confirm-hint"></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="delete-modal-cancel">取消</button>
+        <button type="submit" class="danger-solid" id="delete-modal-submit" disabled>确认删除</button>
+      </div>
+    </form>
+    <div id="delete-result" hidden></div>
+  </div>
+</div>
+
+<!-- 新建用户 modal -->
+<div class="modal-backdrop" id="user-modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
+    <h3 id="user-modal-title">新建用户</h3>
+    <p class="modal-sub">管理员不属于任何租户；租户用户必须选定唯一所属租户。</p>
+    <form id="user-form">
+      <div class="field">
+        <label for="f-user-email">邮箱</label>
+        <input id="f-user-email" type="email" autocomplete="off" required />
+      </div>
+      <div class="field">
+        <label for="f-user-display-name">显示名</label>
+        <input id="f-user-display-name" required />
+      </div>
+      <div class="field">
+        <label for="f-user-password">初始密码</label>
+        <input id="f-user-password" type="password" autocomplete="new-password" required />
+        <div class="hint">系统不会再次展示，请通过安全渠道转交给用户</div>
+      </div>
+      <div class="field">
+        <label for="f-user-role">角色</label>
+        <select id="f-user-role">
+          <option value="user">租户用户 (user)</option>
+          <option value="admin">管理员 (admin)</option>
+        </select>
+      </div>
+      <div class="field" id="user-tenant-field">
+        <label for="f-user-tenant">所属租户</label>
+        <select id="f-user-tenant"></select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="user-modal-cancel">取消</button>
+        <button type="submit" class="primary" id="user-modal-submit">创建</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN_KEY = "unica_access_token";
+  var LOGIN_PAGE = "./index.html";
+  var TENANT_HOME = "./home.html";
+  // Dify runs as its own deployment on this host's console port. A literal
+  // address here outlives the machine it names — deriving it keeps the link
+  // valid wherever the portal is served from.
+  var DIFY_CONSOLE_BASE = window.location.protocol + "//" + window.location.hostname + ":3402";
+  var AUDIT_PAGE_SIZE = 25;
+
+  var state = {
+    tenants: [],
+    tenantsById: {},
+    users: [],
+    deleteTenant: null,
+    // deleteDone: the removal succeeded, so closing the dialog must refresh the
+    // roster even though the form itself is gone.
+    deleteDone: false,
+    // onboardDone / onboardSecrets: the run succeeded, and one-time credentials
+    // may be on screen — a stray click or Escape must not discard them.
+    onboardDone: false,
+    onboardSecrets: false,
+    onboardSummary: "",
+    auditOffset: 0,
+    auditTotal: 0,
+    auditLoaded: false
+  };
+
+  var els = {
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    tabs: document.querySelectorAll("nav.tabs button"),
+
+    tenantTbody: document.getElementById("tenant-tbody"),
+    tenantRefreshBtn: document.getElementById("tenant-refresh-btn"),
+    onboardBtn: document.getElementById("onboard-btn"),
+
+    userTbody: document.getElementById("user-tbody"),
+    userRefreshBtn: document.getElementById("user-refresh-btn"),
+    createUserBtn: document.getElementById("create-user-btn"),
+    userTenantFilter: document.getElementById("user-tenant-filter"),
+
+    difyLink: document.getElementById("dify-link"),
+    auditTbody: document.getElementById("audit-tbody"),
+    auditTenant: document.getElementById("audit-tenant"),
+    auditAction: document.getElementById("audit-action"),
+    auditResource: document.getElementById("audit-resource"),
+    auditApplyBtn: document.getElementById("audit-apply-btn"),
+    auditRange: document.getElementById("audit-range"),
+    auditPrev: document.getElementById("audit-prev"),
+    auditNext: document.getElementById("audit-next"),
+
+    onboardModalBackdrop: document.getElementById("onboard-modal-backdrop"),
+    onboardModalTitle: document.getElementById("onboard-modal-title"),
+    onboardModalSub: document.getElementById("onboard-modal-sub"),
+    onboardForm: document.getElementById("onboard-form"),
+    onboardModalCancel: document.getElementById("onboard-modal-cancel"),
+    onboardModalSubmit: document.getElementById("onboard-modal-submit"),
+    onboardResult: document.getElementById("onboard-result"),
+    fCustName: document.getElementById("f-cust-name"),
+    fCustDisplayName: document.getElementById("f-cust-display-name"),
+    fCustAdminEmail: document.getElementById("f-cust-admin-email"),
+    fCustAdminPassword: document.getElementById("f-cust-admin-password"),
+
+    deleteModalBackdrop: document.getElementById("delete-modal-backdrop"),
+    deleteModalTitle: document.getElementById("delete-modal-title"),
+    deleteModalSub: document.getElementById("delete-modal-sub"),
+    deleteForm: document.getElementById("delete-form"),
+    deleteModalCancel: document.getElementById("delete-modal-cancel"),
+    deleteModalSubmit: document.getElementById("delete-modal-submit"),
+    deleteConfirmInput: document.getElementById("f-delete-confirm"),
+    deleteConfirmHint: document.getElementById("delete-confirm-hint"),
+    deleteResult: document.getElementById("delete-result"),
+
+    userModalBackdrop: document.getElementById("user-modal-backdrop"),
+    userForm: document.getElementById("user-form"),
+    userModalCancel: document.getElementById("user-modal-cancel"),
+    userModalSubmit: document.getElementById("user-modal-submit"),
+    fUserEmail: document.getElementById("f-user-email"),
+    fUserDisplayName: document.getElementById("f-user-display-name"),
+    fUserPassword: document.getElementById("f-user-password"),
+    fUserRole: document.getElementById("f-user-role"),
+    fUserTenant: document.getElementById("f-user-tenant"),
+    userTenantField: document.getElementById("user-tenant-field"),
+
+    toastHost: document.getElementById("toast-host")
+  };
+
+  var ONBOARD_SUB_TEXT = els.onboardModalSub.textContent;
+
+  // What a removal reports having erased, in the order an operator reads it.
+  var CLEANUP_LABELS = [
+    ["conversations", "会话"],
+    ["messages", "消息"],
+    ["customers", "终端客户"],
+    ["channels", "渠道"],
+    ["channel_configs", "渠道配置"],
+    ["knowledge_docs", "知识库文档"],
+    ["ontology_versions", "事实版本"],
+    ["claim_violations", "违规记录"],
+    ["users", "门户账号"]
+  ];
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, 3200);
+  }
+
+  // ---------- Token / API ----------
+  // Storage access can throw under restrictive privacy settings; a failure
+  // simply means there is no session and the visitor goes back to the door.
+  function getToken() {
+    try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+  }
+  function clearToken() {
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* nothing to clear */ }
+  }
+
+  // Read-only decode of the access token payload. The server remains the
+  // authority on what this account may reach; this only decides which page it
+  // starts on.
+  function decodeClaims(token) {
+    if (!token || typeof token !== "string") return null;
+    var parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4 !== 0) b64 += "=";
+      var claims = JSON.parse(atob(b64));
+      return claims && typeof claims === "object" ? claims : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function goLogin() {
+    clearToken();
+    window.location.replace(LOGIN_PAGE);
+  }
+
+  // Wraps fetch with the Authorization header, JSON parsing, and 401 handling.
+  function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    var token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+    return fetch(path, Object.assign({}, options, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          goLogin();
+          throw new Error("unauthorized");
+        }
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
+          }
+          if (!res.ok) {
+            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
+            var err = new Error(msg);
+            err.status = res.status;
+            throw err;
+          }
+          return data;
+        });
+      });
+  }
+
+  els.logoutBtn.addEventListener("click", goLogin);
+
+  // ---------- Tabs ----------
+  Array.prototype.forEach.call(els.tabs, function (btn) {
+    btn.addEventListener("click", function () {
+      Array.prototype.forEach.call(els.tabs, function (other) {
+        other.classList.toggle("active", other === btn);
+        document.getElementById(other.dataset.panel).hidden = other !== btn;
+      });
+      // The trail is a query, not a subscription: it loads when first opened
+      // and then only on demand.
+      if (btn.dataset.panel === "panel-ops" && !state.auditLoaded) loadAuditLogs(0);
+    });
+  });
+
+  // ---------- Tenants ----------
+  function loadTenants() {
+    els.tenantTbody.innerHTML = '<tr><td colspan="6" class="loading-text">加载中…</td></tr>';
+    return api("/api/v1/tenants")
+      .then(function (data) {
+        state.tenants = Array.isArray(data) ? data : [];
+        state.tenantsById = {};
+        state.tenants.forEach(function (t) { state.tenantsById[t.id] = t; });
+        renderTenants();
+        fillTenantSelects();
+        // A user row names its tenant, so the roster is re-rendered once the
+        // names are known.
+        if (state.users.length > 0) renderUsers();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.tenantTbody.innerHTML = '<tr><td colspan="6" class="empty-state">加载失败: ' + escapeHtml(err.message) + "</td></tr>";
+        toast("加载租户失败: " + err.message, "error");
+      });
+  }
+
+  function renderTenants() {
+    if (state.tenants.length === 0) {
+      els.tenantTbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无租户，点击“一键开户”开始</td></tr>';
+      return;
+    }
+    els.tenantTbody.innerHTML = state.tenants.map(tenantRowHtml).join("");
+    state.tenants.forEach(function (t) {
+      var delBtn = document.getElementById("del-" + t.id);
+      if (delBtn) delBtn.addEventListener("click", function () { openDeleteModal(t); });
+    });
+  }
+
+  function tenantRowHtml(t) {
+    var bound = !!(t.has_dify_binding || t.dify_dataset_id || t.dify_agent_id);
+    var bindPill = bound ? '<span class="pill ok">已挂载</span>' : '<span class="pill muted">未挂载</span>';
+    var cw = t.chatwoot_account_id
+      ? '<span class="pill ok">账户 ' + escapeHtml(String(t.chatwoot_account_id)) + "</span>"
+      : '<span class="pill muted">未开通</span>';
+    return (
+      "<tr>" +
+      "<td>" + escapeHtml(t.name) + "</td>" +
+      "<td>" + escapeHtml(t.display_name) + "</td>" +
+      "<td>" + bindPill + "</td>" +
+      "<td>" + cw + "</td>" +
+      "<td>" + formatDate(t.created_at) + "</td>" +
+      '<td><div class="row-actions">' +
+      '<button class="danger" id="del-' + escapeAttr(t.id) + '">删除租户</button>' +
+      "</div></td>" +
+      "</tr>"
+    );
+  }
+
+  els.tenantRefreshBtn.addEventListener("click", loadTenants);
+
+  // ---------- Tenant removal ----------
+  function openDeleteModal(t) {
+    state.deleteTenant = t;
+    state.deleteDone = false;
+    els.deleteModalTitle.textContent = "删除租户";
+    els.deleteModalSub.textContent = (t.display_name || t.name) + "（" + t.name + "）· ID " + t.id;
+    els.deleteConfirmHint.textContent = "需与租户名称完全一致：" + t.name;
+    els.deleteForm.reset();
+    els.deleteForm.hidden = false;
+    els.deleteModalSubmit.disabled = true;
+    els.deleteModalSubmit.textContent = "确认删除";
+    els.deleteResult.innerHTML = "";
+    els.deleteResult.hidden = true;
+    els.deleteModalBackdrop.classList.add("open");
+    els.deleteConfirmInput.focus();
+  }
+
+  function closeDeleteModal() {
+    var reload = state.deleteDone;
+    els.deleteModalBackdrop.classList.remove("open");
+    state.deleteTenant = null;
+    state.deleteDone = false;
+    els.deleteForm.reset();
+    els.deleteForm.hidden = false;
+    els.deleteResult.innerHTML = "";
+    els.deleteResult.hidden = true;
+    if (reload) {
+      loadTenants();
+      // Removing a tenant deletes its accounts, so the user roster is stale too.
+      loadUsers();
+    }
+  }
+
+  // Typing the tenant name is the second confirmation: the first is opening this
+  // dialog at all, and nothing here can be undone.
+  els.deleteConfirmInput.addEventListener("input", function () {
+    var t = state.deleteTenant;
+    els.deleteModalSubmit.disabled = !t || els.deleteConfirmInput.value.trim() !== t.name;
+  });
+
+  els.deleteModalCancel.addEventListener("click", closeDeleteModal);
+  els.deleteModalBackdrop.addEventListener("click", function (e) {
+    // While the cleanup manifest is on screen it is the only record of what was
+    // left behind, so a misplaced click must not discard it.
+    if (e.target === els.deleteModalBackdrop && !state.deleteDone) closeDeleteModal();
+  });
+
+  els.deleteForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var t = state.deleteTenant;
+    if (!t || els.deleteConfirmInput.value.trim() !== t.name) return;
+
+    els.deleteModalSubmit.disabled = true;
+    els.deleteModalCancel.disabled = true;
+    els.deleteModalSubmit.innerHTML = '<span class="spinner"></span>删除中…';
+
+    api("/api/v1/tenants/" + encodeURIComponent(t.id), { method: "DELETE" })
+      .then(function (data) {
+        state.deleteDone = true;
+        renderDeleteResult(t, data || {});
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("删除失败: " + err.message, "error");
+      })
+      .finally(function () {
+        els.deleteModalCancel.disabled = false;
+        els.deleteModalSubmit.disabled = false;
+        els.deleteModalSubmit.textContent = "确认删除";
+      });
+  });
+
+  // The external systems cannot be rolled back, so what did and did not go is
+  // the only way an operator learns what is left to remove by hand.
+  function renderDeleteResult(t, data) {
+    var counts = data.data || {};
+    var chatwoot = data.chatwoot || {};
+    var dify = data.dify || {};
+    var warnings = Array.isArray(data.warnings) ? data.warnings : [];
+
+    var html = '<div class="cleanup-grid">' + CLEANUP_LABELS.map(function (pair) {
+      var n = counts[pair[0]];
+      return '<div class="cleanup-item"><span>' + escapeHtml(pair[1]) + '</span>' +
+        '<span class="n">' + escapeHtml(String(n == null ? 0 : n)) + "</span></div>";
+    }).join("") + "</div>";
+
+    var external = [];
+    if (chatwoot.account_id) {
+      external.push({
+        title: "Chatwoot 账户 " + chatwoot.account_id,
+        ok: !!chatwoot.deleted,
+        message: chatwoot.deleted ? "已删除" : "未删除，需人工清理"
+      });
+    }
+    if (dify.app_id) {
+      external.push({
+        title: "Dify 应用 " + dify.app_id,
+        ok: !!dify.app_deleted,
+        message: dify.app_deleted ? "已删除" : "未删除，需在 Dify 控制台清理"
+      });
+    }
+    if (dify.dataset_id) {
+      external.push({
+        title: "Dify 知识库 " + dify.dataset_id,
+        ok: !!dify.dataset_deleted,
+        message: dify.dataset_deleted ? "已删除" : "未删除，需在 Dify 控制台清理"
+      });
+    }
+    if (external.length > 0) {
+      html += '<div class="report-steps">' + external.map(function (s) {
+        return '<div class="report-step">' +
+          '<span class="report-mark ' + (s.ok ? "ok" : "warn") + '">' + (s.ok ? "✓" : "⚠") + "</span>" +
+          '<div class="report-body">' +
+          '<div class="report-title">' + escapeHtml(s.title) + "</div>" +
+          '<div class="report-msg">' + escapeHtml(s.message) + "</div>" +
+          "</div></div>";
+      }).join("") + "</div>";
+    }
+
+    if (warnings.length > 0) {
+      html += '<div class="warn-list">⚠ 以下步骤需要人工跟进：<ul>' +
+        warnings.map(function (wmsg) { return "<li>" + escapeHtml(wmsg) + "</li>"; }).join("") +
+        "</ul></div>";
+    }
+
+    html += '<div class="modal-actions"><button type="button" class="primary" id="delete-close">关闭</button></div>';
+
+    els.deleteModalTitle.textContent = warnings.length > 0 ? "删除完成（部分步骤需人工处理）" : "删除完成";
+    els.deleteModalSub.textContent = (t.display_name || t.name) + " 已从平台移除";
+    els.deleteForm.hidden = true;
+    els.deleteResult.innerHTML = html;
+    els.deleteResult.hidden = false;
+
+    var closeBtn = document.getElementById("delete-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", closeDeleteModal);
+      closeBtn.focus();
+    }
+
+    toast(warnings.length > 0 ? "删除完成，部分步骤需人工处理" : "租户已删除", warnings.length > 0 ? "warn" : "success");
+  }
+
+  // ---------- Users ----------
+  function loadUsers() {
+    var tenantID = els.userTenantFilter.value;
+    var path = "/api/v1/users";
+    if (tenantID) path += "?tenant_id=" + encodeURIComponent(tenantID);
+    els.userTbody.innerHTML = '<tr><td colspan="7" class="loading-text">加载中…</td></tr>';
+    return api(path)
+      .then(function (data) {
+        state.users = Array.isArray(data) ? data : [];
+        renderUsers();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.userTbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载失败: ' + escapeHtml(err.message) + "</td></tr>";
+        toast("加载用户失败: " + err.message, "error");
+      });
+  }
+
+  function renderUsers() {
+    if (state.users.length === 0) {
+      els.userTbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无用户</td></tr>';
+      return;
+    }
+    els.userTbody.innerHTML = state.users.map(userRowHtml).join("");
+    state.users.forEach(function (u) {
+      var btn = document.getElementById("toggle-" + u.id);
+      if (btn) btn.addEventListener("click", function () { setUserActive(u, !u.is_active, btn); });
+    });
+  }
+
+  function tenantLabel(id) {
+    if (!id) return "—";
+    var t = state.tenantsById[id];
+    return t ? (t.display_name || t.name) : id;
+  }
+
+  function userRowHtml(u) {
+    var rolePill = u.role === "admin"
+      ? '<span class="pill warn">管理员</span>'
+      : '<span class="pill muted">租户用户</span>';
+    var statePill = u.is_active
+      ? '<span class="pill ok">启用</span>'
+      : '<span class="pill bad">已停用</span>';
+    return (
+      "<tr>" +
+      "<td>" + escapeHtml(u.email) + "</td>" +
+      "<td>" + escapeHtml(u.display_name) + "</td>" +
+      "<td>" + rolePill + "</td>" +
+      "<td>" + escapeHtml(tenantLabel(u.tenant_id)) + "</td>" +
+      "<td>" + statePill + "</td>" +
+      "<td>" + formatDate(u.created_at) + "</td>" +
+      '<td><div class="row-actions">' +
+      '<button id="toggle-' + escapeAttr(u.id) + '"' + (u.is_active ? ' class="danger"' : "") + ">" +
+      (u.is_active ? "停用" : "启用") + "</button>" +
+      "</div></td>" +
+      "</tr>"
+    );
+  }
+
+  // Deactivation is an update, not a removal: the account keeps its audit trail
+  // and can be restored by the same switch.
+  function setUserActive(u, active, btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>' + (active ? "启用中…" : "停用中…");
+    api("/api/v1/users/" + encodeURIComponent(u.id), {
+      method: "PUT",
+      body: JSON.stringify({ is_active: active })
+    })
+      .then(function () {
+        toast(active ? "账号已启用" : "账号已停用", "success");
+        loadUsers();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("操作失败: " + err.message, "error");
+        btn.disabled = false;
+        btn.textContent = u.is_active ? "停用" : "启用";
+      });
+  }
+
+  els.userRefreshBtn.addEventListener("click", loadUsers);
+  els.userTenantFilter.addEventListener("change", loadUsers);
+
+  // ---------- Create user ----------
+  els.createUserBtn.addEventListener("click", openUserModal);
+  els.userModalCancel.addEventListener("click", closeUserModal);
+  els.userModalBackdrop.addEventListener("click", function (e) {
+    if (e.target === els.userModalBackdrop) closeUserModal();
+  });
+  els.fUserRole.addEventListener("change", syncUserTenantField);
+
+  // An admin belongs to no tenant and a user belongs to exactly one, which the
+  // users table also constrains — so the field appears with the role that needs it.
+  function syncUserTenantField() {
+    var isTenantUser = els.fUserRole.value === "user";
+    els.userTenantField.hidden = !isTenantUser;
+    els.fUserTenant.required = isTenantUser;
+  }
+
+  function openUserModal() {
+    els.userForm.reset();
+    els.fUserRole.value = "user";
+    syncUserTenantField();
+    els.userModalBackdrop.classList.add("open");
+    els.fUserEmail.focus();
+  }
+
+  function closeUserModal() {
+    els.userModalBackdrop.classList.remove("open");
+    els.userForm.reset();
+  }
+
+  els.userForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var role = els.fUserRole.value;
+    var payload = {
+      email: els.fUserEmail.value.trim(),
+      display_name: els.fUserDisplayName.value.trim(),
+      password: els.fUserPassword.value,
+      role: role
+    };
+    if (!payload.email || !payload.display_name || !payload.password) {
+      toast("邮箱、显示名与初始密码均为必填", "error");
+      return;
+    }
+    if (role === "user") {
+      var tenantID = els.fUserTenant.value;
+      if (!tenantID) {
+        toast("租户用户必须选择所属租户", "error");
+        return;
+      }
+      payload.tenant_id = tenantID;
+    }
+
+    els.userModalSubmit.disabled = true;
+    els.userModalSubmit.innerHTML = '<span class="spinner"></span>创建中…';
+
+    api("/api/v1/users", { method: "POST", body: JSON.stringify(payload) })
+      .then(function () {
+        toast("用户已创建", "success");
+        closeUserModal();
+        loadUsers();
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("创建失败: " + err.message, "error");
+      })
+      .finally(function () {
+        els.userModalSubmit.disabled = false;
+        els.userModalSubmit.textContent = "创建";
+      });
+  });
+
+  // Every tenant-valued control is filled from the one roster, so none of them
+  // can offer a tenant that no longer exists.
+  function fillTenantSelects() {
+    var options = state.tenants.map(function (t) {
+      return '<option value="' + escapeAttr(t.id) + '">' +
+        escapeHtml(t.display_name || t.name) + "</option>";
+    }).join("");
+
+    var keepFilter = els.userTenantFilter.value;
+    els.userTenantFilter.innerHTML = '<option value="">全部租户</option>' + options;
+    els.userTenantFilter.value = state.tenantsById[keepFilter] ? keepFilter : "";
+
+    var keepAudit = els.auditTenant.value;
+    els.auditTenant.innerHTML = '<option value="">全部租户</option>' + options;
+    els.auditTenant.value = state.tenantsById[keepAudit] ? keepAudit : "";
+
+    els.fUserTenant.innerHTML = state.tenants.length > 0
+      ? options
+      : '<option value="">（尚无租户，请先开户）</option>';
+  }
+
+  // ---------- 一键开户 ----------
+  els.onboardBtn.addEventListener("click", openOnboardModal);
+  els.onboardModalCancel.addEventListener("click", closeOnboardModal);
+  els.onboardModalBackdrop.addEventListener("click", function (e) {
+    // A misplaced click must not discard credentials that are shown once.
+    if (e.target === els.onboardModalBackdrop && !state.onboardSecrets) closeOnboardModal();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (els.userModalBackdrop.classList.contains("open")) closeUserModal();
+    // Escape is ignored while one-time credentials or a cleanup manifest are on
+    // screen; both carry an explicit 关闭 button for that case.
+    if (els.onboardModalBackdrop.classList.contains("open") && !state.onboardSecrets) closeOnboardModal();
+    if (els.deleteModalBackdrop.classList.contains("open") && !state.deleteDone) closeDeleteModal();
+  });
+
+  function openOnboardModal() {
+    state.onboardDone = false;
+    state.onboardSecrets = false;
+    state.onboardSummary = "";
+    els.onboardModalTitle.textContent = "一键开户";
+    els.onboardModalSub.textContent = ONBOARD_SUB_TEXT;
+    els.onboardForm.reset();
+    els.onboardForm.hidden = false;
+    els.onboardResult.innerHTML = "";
+    els.onboardResult.hidden = true;
+    els.onboardModalBackdrop.classList.add("open");
+    els.fCustName.focus();
+  }
+
+  function closeOnboardModal() {
+    var reload = state.onboardDone;
+    els.onboardModalBackdrop.classList.remove("open");
+    state.onboardDone = false;
+    state.onboardSecrets = false;
+    state.onboardSummary = "";
+    // Emptying the report is what takes the one-time passwords out of the DOM.
+    els.onboardResult.innerHTML = "";
+    els.onboardResult.hidden = true;
+    els.onboardForm.reset();
+    els.onboardForm.hidden = false;
+    els.onboardModalTitle.textContent = "一键开户";
+    els.onboardModalSub.textContent = ONBOARD_SUB_TEXT;
+    if (reload) {
+      loadTenants();
+      // Onboarding creates the tenant's first account too.
+      loadUsers();
+    }
+  }
+
+  els.onboardForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+
+    var payload = {
+      name: els.fCustName.value.trim(),
+      display_name: els.fCustDisplayName.value.trim(),
+      admin_email: els.fCustAdminEmail.value.trim()
+    };
+    if (!payload.name || !payload.display_name || !payload.admin_email) {
+      toast("客户名称、显示名与管理员邮箱均为必填", "error");
+      return;
+    }
+    // admin_password is omitted when blank rather than sent empty: the server
+    // generates a password only for an absent field.
+    var password = els.fCustAdminPassword.value;
+    if (password) payload.admin_password = password;
+
+    els.onboardModalSubmit.disabled = true;
+    els.onboardModalCancel.disabled = true;
+    els.onboardModalSubmit.innerHTML = '<span class="spinner"></span>开户中…';
+
+    api("/api/v1/tenants", { method: "POST", body: JSON.stringify(payload) })
+      .then(function (data) {
+        if (!data) throw new Error("开户响应异常");
+        state.onboardDone = true;
+        renderOnboardResult(data);
+      })
+      .catch(function (err) {
+        if (err.message !== "unauthorized") toast("开户失败: " + err.message, "error");
+      })
+      .finally(function () {
+        els.onboardModalSubmit.disabled = false;
+        els.onboardModalCancel.disabled = false;
+        els.onboardModalSubmit.textContent = "开始开户";
+      });
+  });
+
+  // Step rows are derived once and feed both the on-screen report and the
+  // plain-text summary, so the two can never drift apart.
+  function onboardSteps(data) {
+    var pl = data.product_line || {};
+    var dify = data.dify || {};
+    var portal = data.portal_account || {};
+    var chatwoot = data.chatwoot || {};
+    var steps = [];
+
+    var plLabel = (pl.display_name || "") + "（" + (pl.name || "") + "）";
+    steps.push({
+      title: "租户与产品线",
+      ok: true,
+      message: (pl.created ? "已创建：" : "已存在，直接复用：") + plLabel
+    });
+
+    var difyIds = [];
+    if (dify.dify_agent_id) difyIds.push("应用 " + dify.dify_agent_id);
+    if (dify.dataset_id) difyIds.push("知识库 " + dify.dataset_id);
+    var difySuffix = difyIds.length ? "（" + difyIds.join(" / ") + "）" : "";
+    // A message is present only when the step degraded; a clean run with
+    // provisioned=false simply means the binding was already there. The
+    // warnings sit inside this block and describe partial results, so they are
+    // appended rather than reported as a separate step.
+    var difyWarnings = Array.isArray(dify.warnings) && dify.warnings.length > 0
+      ? "。" + dify.warnings.join("；")
+      : "";
+    if (dify.message) {
+      steps.push({ title: "AI 应用与知识库", ok: false, message: "未完成：" + dify.message + difyWarnings });
+    } else if (dify.provisioned) {
+      steps.push({
+        title: "AI 应用与知识库",
+        ok: !difyWarnings,
+        message: "已创建并绑定" + difySuffix + difyWarnings
+      });
+    } else {
+      steps.push({
+        title: "AI 应用与知识库",
+        ok: !difyWarnings,
+        message: "已存在绑定，未重复创建" + difySuffix + difyWarnings
+      });
+    }
+
+    steps.push({
+      title: "门户账号",
+      ok: true,
+      message: (portal.created ? "已创建：" : "账号已存在，已确保授权：") +
+        (portal.email || "") + "，角色 " + (portal.role || "")
+    });
+
+    var cwDetails = [];
+    if (chatwoot.account_id) cwDetails.push("账户 ID " + chatwoot.account_id);
+    if (chatwoot.inbox_id) cwDetails.push("收件箱 ID " + chatwoot.inbox_id);
+    var cwSuffix = cwDetails.length ? "：" + cwDetails.join("，") : "";
+    // configured=true with a reason is the graceful path: the tenant exists but
+    // one part of it still needs a human.
+    if (chatwoot.configured && !chatwoot.reason) {
+      steps.push({ title: "人工客服工作台", ok: true, message: "已开通" + cwSuffix });
+    } else if (chatwoot.configured) {
+      steps.push({ title: "人工客服工作台", ok: false, message: "部分完成" + cwSuffix + "。" + chatwoot.reason });
+    } else {
+      steps.push({ title: "人工客服工作台", ok: false, message: "未完成：" + (chatwoot.reason || "服务端未返回原因") });
+    }
+
+    return steps;
+  }
+
+  // Generated passwords appear in this response and nowhere else, ever.
+  function onboardCredentials(data) {
+    var portal = data.portal_account || {};
+    var chatwoot = data.chatwoot || {};
+    var creds = [];
+    if (portal.generated_password) {
+      creds.push({
+        label: "门户账号密码（" + (portal.email || "") + "）",
+        value: portal.generated_password
+      });
+    }
+    if (chatwoot.generated_password) {
+      creds.push({
+        label: "人工客服工作台密码（" + (chatwoot.agent_email || portal.email || "") + "）",
+        value: chatwoot.generated_password
+      });
+    }
+    return creds;
+  }
+
+  function renderOnboardResult(data) {
+    var pl = data.product_line || {};
+    var steps = onboardSteps(data);
+    var creds = onboardCredentials(data);
+    var allOk = true;
+    for (var i = 0; i < steps.length; i++) {
+      if (!steps[i].ok) allOk = false;
+    }
+
+    state.onboardSecrets = creds.length > 0;
+    state.onboardSummary = buildOnboardSummary(data, steps, creds);
+
+    els.onboardModalTitle.textContent = allOk ? "开户完成" : "开户完成（部分步骤需人工处理）";
+    els.onboardModalSub.textContent = "客户 " + (pl.display_name || pl.name || "") +
+      " · 租户 ID " + (data.product_line_id || data.id || "");
+
+    var html = '<div class="report-steps">' + steps.map(function (s) {
+      return '<div class="report-step">' +
+        '<span class="report-mark ' + (s.ok ? "ok" : "warn") + '">' + (s.ok ? "✓" : "⚠") + "</span>" +
+        '<div class="report-body">' +
+        '<div class="report-title">' + escapeHtml(s.title) + "</div>" +
+        '<div class="report-msg">' + escapeHtml(s.message) + "</div>" +
+        "</div>" +
+        "</div>";
+    }).join("") + "</div>";
+
+    if (creds.length > 0) {
+      html += '<div class="cred-box">' +
+        '<div class="cred-warn">⚠ 仅此一次显示，请立即保存</div>' +
+        creds.map(function (c, idx) {
+          return '<div class="cred-item">' +
+            '<div class="cred-label">' + escapeHtml(c.label) + "</div>" +
+            '<div class="cred-row">' +
+            '<input id="onboard-cred-' + idx + '" readonly value="' + escapeAttr(c.value) + '" />' +
+            '<button type="button" id="onboard-cred-copy-' + idx + '">复制</button>' +
+            "</div>" +
+            "</div>";
+        }).join("") +
+        "</div>";
+    }
+
+    html += '<div class="modal-actions">' +
+      '<button type="button" id="onboard-copy-all">复制全部</button>' +
+      '<button type="button" class="primary" id="onboard-close">关闭</button>' +
+      "</div>";
+
+    els.onboardForm.hidden = true;
+    els.onboardResult.innerHTML = html;
+    els.onboardResult.hidden = false;
+
+    creds.forEach(function (c, idx) {
+      var copyBtn = document.getElementById("onboard-cred-copy-" + idx);
+      if (copyBtn) {
+        copyBtn.addEventListener("click", function () { copyText(c.value, "密码已复制"); });
+      }
+    });
+    var copyAllBtn = document.getElementById("onboard-copy-all");
+    if (copyAllBtn) {
+      copyAllBtn.addEventListener("click", function () { copyText(state.onboardSummary, "开户结果已复制"); });
+    }
+    var closeBtn = document.getElementById("onboard-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", closeOnboardModal);
+      closeBtn.focus();
+    }
+
+    toast(allOk ? "开户完成" : "开户完成，部分步骤需人工处理", allOk ? "success" : "warn");
+  }
+
+  // Plain text, not HTML: this is what lands on the clipboard.
+  function buildOnboardSummary(data, steps, creds) {
+    var pl = data.product_line || {};
+    var lines = [];
+    lines.push("UNICA 一键开户结果");
+    lines.push("客户: " + (pl.display_name || "") + " (" + (pl.name || "") + ")");
+    lines.push("租户 ID: " + (data.product_line_id || data.id || ""));
+    lines.push("");
+    steps.forEach(function (s) {
+      lines.push((s.ok ? "[OK] " : "[!] ") + s.title + ": " + s.message);
+    });
+    if (creds.length > 0) {
+      lines.push("");
+      lines.push("凭据（仅此一次显示，请立即保存）:");
+      creds.forEach(function (c) {
+        lines.push("  " + c.label + ": " + c.value);
+      });
+    }
+    return lines.join("\n");
+  }
+
+  // ---------- Audit trail ----------
+  els.auditApplyBtn.addEventListener("click", function () { loadAuditLogs(0); });
+  els.auditPrev.addEventListener("click", function () {
+    loadAuditLogs(Math.max(0, state.auditOffset - AUDIT_PAGE_SIZE));
+  });
+  els.auditNext.addEventListener("click", function () {
+    loadAuditLogs(state.auditOffset + AUDIT_PAGE_SIZE);
+  });
+
+  function loadAuditLogs(offset) {
+    state.auditLoaded = true;
+    var params = ["limit=" + AUDIT_PAGE_SIZE, "offset=" + offset];
+    if (els.auditTenant.value) params.push("product_line_id=" + encodeURIComponent(els.auditTenant.value));
+    var action = els.auditAction.value.trim();
+    if (action) params.push("action=" + encodeURIComponent(action));
+    var resource = els.auditResource.value.trim();
+    if (resource) params.push("resource_type=" + encodeURIComponent(resource));
+
+    els.auditTbody.innerHTML = '<tr><td colspan="8" class="loading-text">加载中…</td></tr>';
+    return api("/api/v1/audit-logs?" + params.join("&"))
+      .then(function (data) {
+        data = data || {};
+        var entries = Array.isArray(data.entries) ? data.entries : [];
+        state.auditOffset = offset;
+        state.auditTotal = typeof data.total === "number" ? data.total : entries.length;
+        renderAuditLogs(entries);
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.auditTbody.innerHTML = '<tr><td colspan="8" class="empty-state">加载失败: ' + escapeHtml(err.message) + "</td></tr>";
+        toast("加载审计日志失败: " + err.message, "error");
+      });
+  }
+
+  function renderAuditLogs(entries) {
+    if (entries.length === 0) {
+      els.auditTbody.innerHTML = '<tr><td colspan="8" class="empty-state">没有符合条件的记录</td></tr>';
+    } else {
+      els.auditTbody.innerHTML = entries.map(function (e) {
+        return "<tr>" +
+          "<td>" + formatDate(e.created_at) + "</td>" +
+          '<td class="mono">' + escapeHtml(e.actor_id || "—") + "</td>" +
+          "<td>" + escapeHtml(e.actor_role || "—") + "</td>" +
+          "<td>" + escapeHtml(e.action || "—") + "</td>" +
+          "<td>" + escapeHtml(e.resource_type || "—") + "</td>" +
+          '<td class="mono">' + escapeHtml(e.resource_id || "—") + "</td>" +
+          "<td>" + escapeHtml(tenantLabel(e.product_line_id)) + "</td>" +
+          '<td class="mono">' + escapeHtml(e.ip_address || "—") + "</td>" +
+          "</tr>";
+      }).join("");
+    }
+
+    var from = state.auditTotal === 0 ? 0 : state.auditOffset + 1;
+    var to = state.auditOffset + entries.length;
+    els.auditRange.textContent = "第 " + from + "–" + to + " 条，共 " + state.auditTotal + " 条";
+    els.auditPrev.disabled = state.auditOffset <= 0;
+    els.auditNext.disabled = to >= state.auditTotal;
+  }
+
+  // ---------- Clipboard ----------
+  // Falls back to a temporary textarea because the portal is often served over
+  // plain HTTP, where the async clipboard API is unavailable.
+  function copyText(text, okMessage) {
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+      navigator.clipboard.writeText(text)
+        .then(function () { toast(okMessage, "success"); })
+        .catch(function () { legacyCopy(text, okMessage); });
+      return;
+    }
+    legacyCopy(text, okMessage);
+  }
+
+  function legacyCopy(text, okMessage) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove();
+    toast(ok ? okMessage : "复制失败，请手动选择", ok ? "success" : "warn");
+  }
+
+  // ---------- Utils ----------
+  function formatDate(iso) {
+    if (!iso) return "—";
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString("zh-CN", { hour12: false });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function escapeAttr(str) { return escapeHtml(str); }
+
+  // ---------- Init ----------
+  // The page is administrator territory. The server refuses everything here to
+  // anyone else, so the check below is only about not showing a workspace the
+  // account cannot use — an expired or missing token goes back to the door, and
+  // a tenant user goes to its own home.
+  var claims = decodeClaims(getToken());
+  if (!claims) {
+    goLogin();
+    return;
+  }
+  if (claims.role !== "admin") {
+    window.location.replace(TENANT_HOME);
+    return;
+  }
+
+  els.userEmail.textContent = claims.email || "";
+  els.difyLink.href = DIFY_CONSOLE_BASE + "/";
+  syncUserTenantField();
+
+  // The tenant roster resolves the names the user rows and the trail display,
+  // so it is loaded first.
+  loadTenants().then(loadUsers);
+})();
+</script>

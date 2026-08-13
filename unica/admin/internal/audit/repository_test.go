@@ -16,7 +16,7 @@ func TestAuditEntry_Fields(t *testing.T) {
 	entry := &AuditEntry{
 		ID:            1,
 		ActorID:       "user-1",
-		ActorRole:     "super_admin",
+		ActorRole:     "admin",
 		Action:        "update",
 		ResourceType:  "channel_config",
 		ResourceID:    "ch-1",
@@ -93,7 +93,7 @@ func TestAuditEntry_JSONMarshal(t *testing.T) {
 	entry := &AuditEntry{
 		ID:           1,
 		ActorID:      "user-1",
-		ActorRole:    "super_admin",
+		ActorRole:    "admin",
 		Action:       "create",
 		ResourceType: "channel_config",
 		ResourceID:   "ch-1",

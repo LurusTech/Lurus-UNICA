@@ -239,10 +239,11 @@
 
 <header>
   <div class="left">
-    <a class="back" href="./index.html">← 返回首页</a>
+    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
     <h1>知识库管理</h1>
   </div>
   <div id="user-info" hidden>
+    <span id="tenant-name"></span>
     <span id="user-email"></span>
     <button id="logout-btn">退出登录</button>
   </div>
@@ -270,9 +271,9 @@
   <!-- App view -->
   <section id="app-view" hidden>
     <div class="toolbar">
-      <div class="field">
-        <label for="pl-select">产品线</label>
-        <select id="pl-select"><option value="">请选择产品线</option></select>
+      <div class="field" id="pl-field" hidden>
+        <label for="pl-select">租户</label>
+        <select id="pl-select"><option value="">请选择租户</option></select>
       </div>
       <div class="field">
         <label for="keyword-input">搜索文档</label>
@@ -367,8 +368,8 @@
   };
 
   var state = {
-    productLines: [],
-    currentPL: null,
+    tenants: [],
+    currentTenant: null,
     docs: [],
     page: 1,
     total: 0,
@@ -392,6 +393,9 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
+    backLink: document.getElementById("back-link"),
+    tenantName: document.getElementById("tenant-name"),
+    plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
     keywordInput: document.getElementById("keyword-input"),
     uploadBtn: document.getElementById("upload-btn"),
@@ -450,26 +454,42 @@
     }
   }
 
-  function isSuperAdmin(claims) {
-    if (!claims) return false;
-    if (claims.role === "super_admin") return true;
-    var roles = claims.roles;
-    if (!Array.isArray(roles)) return false;
-    for (var i = 0; i < roles.length; i++) {
-      if (roles[i] === "super_admin") return true;
-    }
-    return false;
+  // ---------- Tenant scope ----------
+  // Every tenant resource hangs under /api/v1/tenants/{id}/. A user belongs to
+  // exactly one tenant and never names it: "me" is the alias the server resolves
+  // from the token. An administrator belongs to none and must name one, which it
+  // does with the selector or with ?tenant=<id> on the address.
+  var TENANT_ME = "me";
+
+  function accountRole() {
+    var claims = decodeClaims(getToken());
+    return claims && typeof claims.role === "string" ? claims.role : "";
   }
 
-  // A non-super-admin bound to exactly one product line has nothing to pick:
-  // returns that id so the selector can be locked, null in every other case.
-  function scopedProductLineId() {
-    var claims = decodeClaims(getToken());
-    if (!claims || isSuperAdmin(claims)) return null;
-    var ids = claims.product_line_ids;
-    if (!Array.isArray(ids) || ids.length !== 1) return null;
-    var id = ids[0];
-    return (id === null || id === undefined || id === "") ? null : String(id);
+  function isAdmin() { return accountRole() === "admin"; }
+
+  // The tenant named on the address. Only an administrator can act on a tenant
+  // other than its own, so for anyone else the parameter means nothing.
+  function requestedTenant() {
+    if (!isAdmin()) return "";
+    var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  // The path segment this page addresses its tenant by.
+  function tenantSegment() {
+    if (!isAdmin()) return TENANT_ME;
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function tenantPath(suffix) {
+    return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
+  }
+
+  // Carries the acting tenant across to another page, so an administrator
+  // working on one tenant stays on it.
+  function tenantQuery() {
+    return isAdmin() && state.currentTenant ? "?tenant=" + encodeURIComponent(state.currentTenant.id) : "";
   }
 
   function showLogin(message) {
@@ -575,54 +595,73 @@
 
   // ---------- Bootstrap after login ----------
   function bootstrap() {
-    loadProductLines();
+    loadTenants();
   }
 
-  function loadProductLines() {
-    return api("/api/v1/product-lines")
+  // The tenant roster is an administrator surface; a user reads its one tenant
+  // through the "me" alias, which is why the two roles load different addresses.
+  function loadTenants() {
+    if (!isAdmin()) {
+      return api("/api/v1/tenants/" + TENANT_ME)
+        .then(function (tenant) {
+          state.tenants = tenant ? [tenant] : [];
+          renderTenantOptions();
+        })
+        .catch(reportTenantLoadError);
+    }
+    return api("/api/v1/tenants")
       .then(function (data) {
-        state.productLines = Array.isArray(data) ? data : [];
-        renderProductLineOptions();
+        state.tenants = Array.isArray(data) ? data : [];
+        renderTenantOptions();
       })
-      .catch(function (err) {
-        if (err.message === "unauthorized") return;
-        toast("加载产品线失败：" + err.message, "error");
-        els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">加载失败：' + escapeHtml(err.message) + "</td></tr>";
-      });
+      .catch(reportTenantLoadError);
   }
 
-  function renderProductLineOptions() {
-    if (state.productLines.length === 0) {
-      els.plSelect.innerHTML = '<option value="">暂无产品线</option>';
-      selectProductLine("");
+  function reportTenantLoadError(err) {
+    if (err.message === "unauthorized") return;
+    toast("加载租户失败：" + err.message, "error");
+    els.tbody.innerHTML = '<tr><td colspan="5" class="empty-state">加载失败：' + escapeHtml(err.message) + "</td></tr>";
+  }
+
+  function renderTenantOptions() {
+    // A user has one tenant and nothing to choose between, so the selector is
+    // an administrator's control only.
+    els.plField.hidden = !isAdmin();
+    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
+
+    if (state.tenants.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无租户</option>';
+      selectTenant("");
       // Constant markup, no interpolation.
-      showNotice("info", "还没有产品线",
-        "知识库文档挂在产品线下，请先创建一条产品线。",
-        ' <a href="./product-lines.html">前往创建 →</a>');
+      showNotice("info", "还没有租户",
+        "知识库文档挂在租户下，请先开户。",
+        ' <a href="./admin.html">前往租户管理 →</a>');
       els.tableWrap.hidden = true;
       els.pager.hidden = true;
       return;
     }
-    els.plSelect.innerHTML = state.productLines.map(function (pl) {
+    els.plSelect.innerHTML = state.tenants.map(function (pl) {
       return '<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
     }).join("");
     els.tableWrap.hidden = false;
-    // Auto-select the first line: the knowledge base always belongs to one line.
-    // An account scoped to that same single line gets the selector locked on it.
-    var scopedId = scopedProductLineId();
-    els.plSelect.disabled = !!scopedId && state.productLines.length === 1 &&
-      String(state.productLines[0].id) === scopedId;
-    els.plSelect.value = String(state.productLines[0].id);
-    selectProductLine(els.plSelect.value);
+    // The address may name the tenant to act on; otherwise the first one, since
+    // a knowledge base always belongs to exactly one tenant.
+    var wanted = requestedTenant();
+    var initial = findTenant(wanted) || state.tenants[0];
+    els.plSelect.value = String(initial.id);
+    selectTenant(els.plSelect.value);
   }
 
   els.plSelect.addEventListener("change", function () {
-    selectProductLine(els.plSelect.value);
+    selectTenant(els.plSelect.value);
   });
 
-  function selectProductLine(id) {
+  function selectTenant(id) {
     cancelPolling();
-    state.currentPL = findProductLine(id);
+    state.currentTenant = findTenant(id);
+    els.tenantName.textContent = state.currentTenant
+      ? (state.currentTenant.display_name || state.currentTenant.name)
+      : "";
     state.page = 1;
     state.keyword = "";
     state.docs = [];
@@ -630,7 +669,7 @@
     state.hasMore = false;
     state.noDataset = false;
     els.keywordInput.value = "";
-    if (!state.currentPL) {
+    if (!state.currentTenant) {
       setUploadEnabled(false);
       els.keywordInput.disabled = true;
       els.pager.hidden = true;
@@ -641,16 +680,16 @@
     loadDocs();
   }
 
-  function findProductLine(id) {
-    for (var i = 0; i < state.productLines.length; i++) {
-      if (String(state.productLines[i].id) === String(id)) return state.productLines[i];
+  function findTenant(id) {
+    for (var i = 0; i < state.tenants.length; i++) {
+      if (String(state.tenants[i].id) === String(id)) return state.tenants[i];
     }
     return null;
   }
 
   // ---------- Paths ----------
   function knowledgePath(sub, params) {
-    var path = "/api/v1/ai-config/" + encodeURIComponent(state.currentPL.id) + "/knowledge" + (sub || "");
+    var path = tenantPath("/knowledge" + (sub || ""));
     var qs = [];
     var p = params || {};
     Object.keys(p).forEach(function (k) {
@@ -663,7 +702,7 @@
 
   // ---------- Document list ----------
   function loadDocs() {
-    if (!state.currentPL) return Promise.resolve();
+    if (!state.currentTenant) return Promise.resolve();
     var gen = state.gen;
     els.tableWrap.hidden = false;
     els.tbody.innerHTML = '<tr><td colspan="5" class="loading-text">加载中…</td></tr>';
@@ -682,8 +721,13 @@
           // instead of a list; surface the server's own wording.
           state.noDataset = true;
           setUploadEnabled(false);
-          showNotice("warn", "该产品线还没有绑定知识库", data.message,
-            ' <a href="./product-lines.html">前往产品线管理 →</a>');
+          // Binding an app to its dataset is a platform repair, so a tenant's
+          // own people are told who can do it rather than sent to a page that
+          // would refuse them.
+          showNotice("warn", "该租户还没有绑定知识库", data.message,
+            isAdmin()
+              ? ' <a href="./ai-settings.html' + tenantQuery() + '">前往 AI 设置修复绑定 →</a>'
+              : " 请联系管理员完成知识库绑定。");
           render();
           return;
         }
@@ -826,8 +870,8 @@
   });
 
   els.refreshBtn.addEventListener("click", function () {
-    if (state.currentPL) loadDocs();
-    else loadProductLines();
+    if (state.currentTenant) loadDocs();
+    else loadTenants();
   });
 
   // ---------- Search ----------
@@ -859,7 +903,7 @@
   });
 
   function deleteDoc(docID, name) {
-    if (!docID || !state.currentPL) return;
+    if (!docID || !state.currentTenant) return;
     if (!confirm("确认删除文档「" + (name || docID) + "」吗？该文档及其索引分段会一并移除，此操作不可撤销。")) return;
     dropPending(docID);
     api(knowledgePath("/documents/" + encodeURIComponent(docID)), { method: "DELETE" })
@@ -941,7 +985,7 @@
 
   els.textForm.addEventListener("submit", function (e) {
     e.preventDefault();
-    if (!state.currentPL) return;
+    if (!state.currentTenant) return;
     var name = els.fName.value.trim();
     var text = els.fText.value.trim();
     if (!name || !text) {
@@ -982,7 +1026,7 @@
       // The operator switched product line (or logged out) while the upload
       // was in flight: the document landed in the original line, and neither
       // its pending row nor its status poll belongs in the current view.
-      toast("「" + (name || "文档") + "」已上传至原产品线，切换回该产品线可查看", "success");
+      toast("「" + (name || "文档") + "」已上传至原租户，切换回该租户可查看", "success");
       return;
     }
     toast("「" + (name || "文档") + "」已上传，正在建立索引", "success");
@@ -1033,7 +1077,7 @@
     }
 
     function tick() {
-      if (!alive() || !state.currentPL) return;
+      if (!alive() || !state.currentTenant) return;
       api(knowledgePath("/status/" + encodeURIComponent(entry.batch)))
         .then(function (data) {
           if (!alive()) return;
@@ -1093,7 +1137,8 @@
   // ---------- Notices / upload availability ----------
   function showNotice(kind, title, detail, extraHtml) {
     els.notice.className = "notice " + kind;
-    // extraHtml is only ever a constant link written here in the page.
+    // extraHtml is only ever written here in the page: constant text, or a link
+    // whose one variable part is percent-encoded before it gets here.
     els.notice.innerHTML =
       '<span class="title">' + escapeHtml(title) + "</span>" +
       (detail ? '<span class="detail">' + escapeHtml(detail) + "</span>" : "") +

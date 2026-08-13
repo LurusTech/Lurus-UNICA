@@ -1,9 +1,18 @@
-package handler
+// Package quality serves one tenant's review queue: the claim violations the
+// runtime recorded in shadow mode, and the verdict a reviewer files against
+// them — evidence is only worth collecting if a person can judge it and feed
+// the judgement back into the ontology or the validator.
+//
+// Both surfaces are confined to the tenant in the route, including the review
+// addressed by a violation's own id. The module reaches no other tenant module.
+package quality
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kefu/unica/admin/internal/audit"
@@ -24,18 +33,18 @@ type productLineByID interface {
 	GetByID(ctx context.Context, id string) (*repository.ProductLine, error)
 }
 
-// ViolationsHandler serves the review queue: the evidence shadow mode collects
+// Handler serves the review queue: the evidence shadow mode collects
 // is only worth collecting if a person can see it, judge it, and feed the
 // verdict back — ontology_wrong into an ontology fix, false_positive into a
 // validator fix.
-type ViolationsHandler struct {
+type Handler struct {
 	store  violationStore
 	pls    productLineByID
 	logger *audit.Logger
 }
 
-func NewViolationsHandler(store violationStore, pls productLineByID, logger *audit.Logger) *ViolationsHandler {
-	return &ViolationsHandler{store: store, pls: pls, logger: logger}
+func NewHandler(store violationStore, pls productLineByID, logger *audit.Logger) *Handler {
+	return &Handler{store: store, pls: pls, logger: logger}
 }
 
 type violationItem struct {
@@ -85,41 +94,41 @@ type violationListResponse struct {
 }
 
 // HandleByProductLine serves GET /api/v1/product-lines/{id}/violations.
-func (h *ViolationsHandler) HandleByProductLine(w http.ResponseWriter, r *http.Request) {
-	segments := ExtractPathSegments(r.URL.Path, "/api/v1/product-lines/")
+func (h *Handler) HandleByProductLine(w http.ResponseWriter, r *http.Request) {
+	segments := pathSegments(r.URL.Path, "/api/v1/product-lines/")
 	if len(segments) != 2 || segments[1] != "violations" {
-		ErrorJSON(w, http.StatusNotFound, "not found")
+		errorJSON(w, http.StatusNotFound, "not found")
 		return
 	}
 	if r.Method != http.MethodGet {
-		ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	plID := segments[0]
 
 	pl, err := h.pls.GetByID(r.Context(), plID)
 	if err != nil {
-		ErrorJSON(w, http.StatusInternalServerError, "failed to load product line")
+		errorJSON(w, http.StatusInternalServerError, "failed to load product line")
 		return
 	}
 	if pl == nil {
-		ErrorJSON(w, http.StatusNotFound, "product line not found")
+		errorJSON(w, http.StatusNotFound, "product line not found")
 		return
 	}
-	if !productLineScopeAllowed(r, plID) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+	if !auth.TenantScopeAllowed(r, plID) {
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
 	filter, errText := parseViolationFilter(r)
 	if errText != "" {
-		ErrorJSON(w, http.StatusBadRequest, errText)
+		errorJSON(w, http.StatusBadRequest, errText)
 		return
 	}
 
 	items, total, err := h.store.ListViolations(r.Context(), plID, filter)
 	if err != nil {
-		ErrorJSON(w, http.StatusInternalServerError, "failed to list violations")
+		errorJSON(w, http.StatusInternalServerError, "failed to list violations")
 		return
 	}
 
@@ -127,7 +136,7 @@ func (h *ViolationsHandler) HandleByProductLine(w http.ResponseWriter, r *http.R
 	for _, v := range items {
 		resp.Items = append(resp.Items, toViolationItem(v))
 	}
-	JSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func parseViolationFilter(r *http.Request) (domain.ViolationFilter, string) {
@@ -168,49 +177,49 @@ type reviewRequest struct {
 }
 
 // HandleReview serves PUT /api/v1/violations/{id}/review.
-func (h *ViolationsHandler) HandleReview(w http.ResponseWriter, r *http.Request) {
-	segments := ExtractPathSegments(r.URL.Path, "/api/v1/violations/")
+func (h *Handler) HandleReview(w http.ResponseWriter, r *http.Request) {
+	segments := pathSegments(r.URL.Path, "/api/v1/violations/")
 	if len(segments) != 2 || segments[1] != "review" {
-		ErrorJSON(w, http.StatusNotFound, "not found")
+		errorJSON(w, http.StatusNotFound, "not found")
 		return
 	}
 	if r.Method != http.MethodPut {
-		ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	id, err := strconv.ParseInt(segments[0], 10, 64)
 	if err != nil || id <= 0 {
-		ErrorJSON(w, http.StatusBadRequest, "invalid violation id")
+		errorJSON(w, http.StatusBadRequest, "invalid violation id")
 		return
 	}
 
 	var req reviewRequest
-	if err := DecodeJSON(r, &req); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if !domain.ValidReviewStatus(req.Status) {
-		ErrorJSON(w, http.StatusBadRequest, "unknown review status "+req.Status)
+		errorJSON(w, http.StatusBadRequest, "unknown review status "+req.Status)
 		return
 	}
 
 	existing, err := h.store.GetViolation(r.Context(), id)
 	if err != nil {
-		ErrorJSON(w, http.StatusInternalServerError, "failed to load violation")
+		errorJSON(w, http.StatusInternalServerError, "failed to load violation")
 		return
 	}
 	if existing == nil {
-		ErrorJSON(w, http.StatusNotFound, "violation not found")
+		errorJSON(w, http.StatusNotFound, "violation not found")
 		return
 	}
-	if !productLineScopeAllowed(r, existing.ProductLineID) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+	if !auth.TenantScopeAllowed(r, existing.ProductLineID) {
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
 	updated, err := h.store.ReviewViolation(r.Context(), id, req.Status, reviewerName(r))
 	if err != nil {
-		ErrorJSON(w, http.StatusBadRequest, err.Error())
+		errorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -226,7 +235,7 @@ func (h *ViolationsHandler) HandleReview(w http.ResponseWriter, r *http.Request)
 			map[string]string{"review_status": req.Status}, audit.ExtractIP(r))
 	}
 
-	JSON(w, http.StatusOK, toViolationItem(*updated))
+	writeJSON(w, http.StatusOK, toViolationItem(*updated))
 }
 
 // reviewerName prefers the email — the review trail is read by people, and an
@@ -240,4 +249,33 @@ func reviewerName(r *http.Request) string {
 		return claims.Email
 	}
 	return claims.UserID
+}
+
+// writeJSON writes a JSON response with the given status code.
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if data != nil {
+		json.NewEncoder(w).Encode(data)
+	}
+}
+
+// errorJSON writes a JSON error response.
+func errorJSON(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// decodeJSON decodes JSON from the request body into the given value.
+func decodeJSON(r *http.Request, v interface{}) error {
+	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// pathSegments splits the remaining path after a prefix into segments.
+func pathSegments(p, prefix string) []string {
+	trimmed := strings.TrimPrefix(p, prefix)
+	trimmed = strings.Trim(trimmed, "/")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "/")
 }

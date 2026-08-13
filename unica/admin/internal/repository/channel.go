@@ -58,7 +58,7 @@ func (r *ChannelRepository) GetByID(ctx context.Context, id string) (*ChannelCon
 }
 
 // List returns channel configs filtered by product line IDs.
-// If plIDs is empty, returns all channels (for SuperAdmin).
+// If plIDs is empty, returns all channels, which only an administrator is ever unscoped enough to ask for.
 func (r *ChannelRepository) List(ctx context.Context, plIDs []string) ([]ChannelConfig, error) {
 	var rows *sql.Rows
 	var err error
@@ -94,6 +94,38 @@ func (r *ChannelRepository) List(ctx context.Context, plIDs []string) ([]Channel
 		configs = append(configs, c)
 	}
 	return configs, rows.Err()
+}
+
+// ListIDs returns the ids of every channel belonging to one product line, from
+// both channel tables.
+//
+// Two of them exist for historical reasons: `channels` predates the admin
+// service and `channel_configs` is what the admin API writes, and the runtime
+// resolves a route against both. A caller invalidating cached routes therefore
+// has to name both, or a hand-provisioned channel keeps serving the old
+// configuration until its cache entry expires.
+//
+// Disabled rows are included: a channel that was enabled when its route was
+// cached still has an entry to drop.
+func (r *ChannelRepository) ListIDs(ctx context.Context, productLineID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id::text FROM channel_configs WHERE product_line_id = $1
+		 UNION
+		 SELECT id::text FROM channels WHERE product_line_id = $1`, productLineID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list channel ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan channel id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // Update modifies a channel configuration.

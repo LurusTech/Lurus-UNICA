@@ -1,4 +1,12 @@
-package handler
+// Package channels serves one tenant's inbound channels: the platform accounts
+// its conversations arrive from, their credentials, and the connection test
+// that says whether a credential still works.
+//
+// The tenant a row belongs to comes from the route, which resolved and
+// authorised it before any handler here runs, and a row of another tenant is
+// out of reach whatever the request names. The module reaches no other tenant
+// module.
+package channels
 
 import (
 	"context"
@@ -6,11 +14,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/channel"
 	"github.com/kefu/unica/admin/internal/crypto"
-	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/redis/go-redis/v9"
 )
@@ -56,8 +64,8 @@ type channelConfigInvalidationMsg struct {
 	Platform      string `json:"platform"`
 }
 
-// ChannelHandler handles channel configuration CRUD endpoints.
-type ChannelHandler struct {
+// Handler handles channel configuration CRUD endpoints.
+type Handler struct {
 	channelRepo *repository.ChannelRepository
 	tester      *channel.Tester
 	aesKey      []byte
@@ -65,9 +73,9 @@ type ChannelHandler struct {
 	rdb         *redis.Client
 }
 
-// NewChannelHandler creates a new channel handler.
-func NewChannelHandler(channelRepo *repository.ChannelRepository, aesKey []byte, gatewayHost string, rdb *redis.Client) *ChannelHandler {
-	return &ChannelHandler{
+// NewHandler creates a new channel handler.
+func NewHandler(channelRepo *repository.ChannelRepository, aesKey []byte, gatewayHost string, rdb *redis.Client) *Handler {
+	return &Handler{
 		channelRepo: channelRepo,
 		tester:      channel.NewTester(),
 		aesKey:      aesKey,
@@ -79,7 +87,7 @@ func NewChannelHandler(channelRepo *repository.ChannelRepository, aesKey []byte,
 // publishInvalidation publishes a channel_config invalidation event to Redis so
 // subscribers can drop/refresh any cached copy of this channel's config.
 // It is a no-op when no Redis client was configured (e.g. in unit tests).
-func (h *ChannelHandler) publishInvalidation(ctx context.Context, action string, cfg *repository.ChannelConfig) {
+func (h *Handler) publishInvalidation(ctx context.Context, action string, cfg *repository.ChannelConfig) {
 	if h.rdb == nil || cfg == nil {
 		return
 	}
@@ -141,7 +149,7 @@ type channelResponse struct {
 }
 
 // toChannelResponse converts a ChannelConfig to a safe API response with masked secrets.
-func (h *ChannelHandler) toChannelResponse(cfg *repository.ChannelConfig) *channelResponse {
+func (h *Handler) toChannelResponse(cfg *repository.ChannelConfig) *channelResponse {
 	resp := &channelResponse{
 		ID:            cfg.ID,
 		ProductLineID: cfg.ProductLineID,
@@ -164,7 +172,7 @@ func (h *ChannelHandler) toChannelResponse(cfg *repository.ChannelConfig) *chann
 	return resp
 }
 
-func (h *ChannelHandler) buildWebhookURL(cfg *repository.ChannelConfig) string {
+func (h *Handler) buildWebhookURL(cfg *repository.ChannelConfig) string {
 	host := h.gatewayHost
 	if host == "" {
 		host = "localhost:8080"
@@ -173,22 +181,22 @@ func (h *ChannelHandler) buildWebhookURL(cfg *repository.ChannelConfig) string {
 }
 
 // HandleChannels handles GET (list) and POST (create) on /api/v1/channels.
-func (h *ChannelHandler) HandleChannels(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleChannels(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		h.listChannels(w, r)
 	case http.MethodPost:
 		h.createChannel(w, r)
 	default:
-		ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 // HandleChannel handles GET/PUT/DELETE on /api/v1/channels/:id.
-func (h *ChannelHandler) HandleChannel(w http.ResponseWriter, r *http.Request) {
-	segments := ExtractPathSegments(r.URL.Path, "/api/v1/channels/")
+func (h *Handler) HandleChannel(w http.ResponseWriter, r *http.Request) {
+	segments := pathSegments(r.URL.Path, "/api/v1/channels/")
 	if len(segments) == 0 {
-		ErrorJSON(w, http.StatusBadRequest, "channel id required")
+		errorJSON(w, http.StatusBadRequest, "channel id required")
 		return
 	}
 
@@ -201,25 +209,25 @@ func (h *ChannelHandler) HandleChannel(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost {
 				h.testConnection(w, r, id)
 			} else {
-				ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 			}
 			return
 		case "toggle":
 			if r.Method == http.MethodPut {
 				h.toggleChannel(w, r, id)
 			} else {
-				ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 			}
 			return
 		case "webhook-url":
 			if r.Method == http.MethodGet {
 				h.getWebhookURL(w, r, id)
 			} else {
-				ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 			}
 			return
 		default:
-			ErrorJSON(w, http.StatusNotFound, "not found")
+			errorJSON(w, http.StatusNotFound, "not found")
 			return
 		}
 	}
@@ -232,40 +240,23 @@ func (h *ChannelHandler) HandleChannel(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		h.deleteChannel(w, r, id)
 	default:
-		ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
-func (h *ChannelHandler) listChannels(w http.ResponseWriter, r *http.Request) {
-	claims := auth.GetClaims(r.Context())
+func (h *Handler) listChannels(w http.ResponseWriter, r *http.Request) {
+	// The tenant comes from the route, which resolved and authorised it before
+	// this handler ran; a query parameter would be a second, weaker way to say
+	// the same thing.
 	var plIDs []string
-	if claims != nil && claims.Role != string(rbac.RoleSuperAdmin) {
-		plIDs = claims.ProductLineIDs
-	}
-
-	// Allow filtering by product_line_id query param
-	if plID := r.URL.Query().Get("product_line_id"); plID != "" {
-		// Verify access for non-SuperAdmin
-		if claims != nil && claims.Role != string(rbac.RoleSuperAdmin) {
-			found := false
-			for _, id := range claims.ProductLineIDs {
-				if id == plID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
-				return
-			}
-		}
+	if plID := auth.RequestTenant(r); plID != "" {
 		plIDs = []string{plID}
 	}
 
 	configs, err := h.channelRepo.List(r.Context(), plIDs)
 	if err != nil {
 		log.Printf("[channels] list error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to list channels")
+		errorJSON(w, http.StatusInternalServerError, "failed to list channels")
 		return
 	}
 
@@ -273,54 +264,52 @@ func (h *ChannelHandler) listChannels(w http.ResponseWriter, r *http.Request) {
 	for i, c := range configs {
 		resp[i] = *h.toChannelResponse(&c)
 	}
-	JSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *ChannelHandler) createChannel(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createChannel(w http.ResponseWriter, r *http.Request) {
 	var req createChannelRequest
-	if err := DecodeJSON(r, &req); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
+	// The tenant the route resolved owns the row; a body may repeat it but not
+	// contradict it, or one tenant's route would become a way to write into
+	// another's channel list.
+	if tenant := auth.RequestTenant(r); tenant != "" {
+		if req.ProductLineID == "" {
+			req.ProductLineID = tenant
+		}
+	}
+
 	if req.ProductLineID == "" || req.Platform == "" || req.DisplayName == "" || req.AppID == "" || req.AppSecret == "" {
-		ErrorJSON(w, http.StatusBadRequest, "product_line_id, platform, display_name, app_id, and app_secret are required")
+		errorJSON(w, http.StatusBadRequest, "product_line_id, platform, display_name, app_id, and app_secret are required")
 		return
 	}
 
 	if !channel.IsValidPlatform(req.Platform) {
-		ErrorJSON(w, http.StatusBadRequest, "invalid platform; must be one of: wechat, douyin, xiaohongshu, taobao, kuaishou")
+		errorJSON(w, http.StatusBadRequest, "invalid platform; must be one of: wechat, douyin, xiaohongshu, taobao, kuaishou")
 		return
 	}
 
 	// Only creation is gated. Existing rows of any platform stay editable,
 	// toggleable and deletable so operators can disable or clean up legacy configs.
 	if !isDynamicallyServedPlatform(req.Platform) {
-		ErrorJSON(w, http.StatusBadRequest, unservedPlatformCreateMessage)
+		errorJSON(w, http.StatusBadRequest, unservedPlatformCreateMessage)
 		return
 	}
 
-	// Verify product line access
-	claims := auth.GetClaims(r.Context())
-	if claims != nil && claims.Role != string(rbac.RoleSuperAdmin) {
-		found := false
-		for _, id := range claims.ProductLineIDs {
-			if id == req.ProductLineID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
-			return
-		}
+	if !auth.TenantScopeAllowed(r, req.ProductLineID) {
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
+		return
 	}
 
 	// Encrypt app_secret
 	encryptedSecret, err := crypto.Encrypt([]byte(req.AppSecret), h.aesKey)
 	if err != nil {
 		log.Printf("[channels] encrypt secret error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to encrypt credentials")
+		errorJSON(w, http.StatusInternalServerError, "failed to encrypt credentials")
 		return
 	}
 
@@ -329,13 +318,13 @@ func (h *ChannelHandler) createChannel(w http.ResponseWriter, r *http.Request) {
 	if len(req.ExtraConfig) > 0 {
 		extraJSON, err := json.Marshal(req.ExtraConfig)
 		if err != nil {
-			ErrorJSON(w, http.StatusBadRequest, "invalid extra_config")
+			errorJSON(w, http.StatusBadRequest, "invalid extra_config")
 			return
 		}
 		encryptedExtra, err = crypto.Encrypt(extraJSON, h.aesKey)
 		if err != nil {
 			log.Printf("[channels] encrypt extra config error: %v", err)
-			ErrorJSON(w, http.StatusInternalServerError, "failed to encrypt credentials")
+			errorJSON(w, http.StatusInternalServerError, "failed to encrypt credentials")
 			return
 		}
 	}
@@ -355,56 +344,56 @@ func (h *ChannelHandler) createChannel(w http.ResponseWriter, r *http.Request) {
 	created, err := h.channelRepo.Create(r.Context(), cfg)
 	if err != nil {
 		log.Printf("[channels] create error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to create channel config")
+		errorJSON(w, http.StatusInternalServerError, "failed to create channel config")
 		return
 	}
 
 	h.publishInvalidation(r.Context(), "upsert", created)
 
-	JSON(w, http.StatusCreated, h.toChannelResponse(created))
+	writeJSON(w, http.StatusCreated, h.toChannelResponse(created))
 }
 
-func (h *ChannelHandler) getChannel(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) getChannel(w http.ResponseWriter, r *http.Request, id string) {
 	cfg, err := h.channelRepo.GetByID(r.Context(), id)
 	if err != nil {
 		log.Printf("[channels] get error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "internal error")
+		errorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if cfg == nil {
-		ErrorJSON(w, http.StatusNotFound, "channel not found")
+		errorJSON(w, http.StatusNotFound, "channel not found")
 		return
 	}
 
 	// Verify product line access
 	if !h.hasAccessToChannel(r, cfg) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
-	JSON(w, http.StatusOK, h.toChannelResponse(cfg))
+	writeJSON(w, http.StatusOK, h.toChannelResponse(cfg))
 }
 
-func (h *ChannelHandler) updateChannel(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) updateChannel(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.channelRepo.GetByID(r.Context(), id)
 	if err != nil {
 		log.Printf("[channels] get error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "internal error")
+		errorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if existing == nil {
-		ErrorJSON(w, http.StatusNotFound, "channel not found")
+		errorJSON(w, http.StatusNotFound, "channel not found")
 		return
 	}
 
 	if !h.hasAccessToChannel(r, existing) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
 	var req updateChannelRequest
-	if err := DecodeJSON(r, &req); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -419,7 +408,7 @@ func (h *ChannelHandler) updateChannel(w http.ResponseWriter, r *http.Request, i
 		encryptedSecret, err := crypto.Encrypt([]byte(req.AppSecret), h.aesKey)
 		if err != nil {
 			log.Printf("[channels] encrypt secret error: %v", err)
-			ErrorJSON(w, http.StatusInternalServerError, "failed to encrypt credentials")
+			errorJSON(w, http.StatusInternalServerError, "failed to encrypt credentials")
 			return
 		}
 		existing.AppSecretEncrypted = encryptedSecret
@@ -429,13 +418,13 @@ func (h *ChannelHandler) updateChannel(w http.ResponseWriter, r *http.Request, i
 	if len(req.ExtraConfig) > 0 {
 		extraJSON, err := json.Marshal(req.ExtraConfig)
 		if err != nil {
-			ErrorJSON(w, http.StatusBadRequest, "invalid extra_config")
+			errorJSON(w, http.StatusBadRequest, "invalid extra_config")
 			return
 		}
 		encryptedExtra, err := crypto.Encrypt(extraJSON, h.aesKey)
 		if err != nil {
 			log.Printf("[channels] encrypt extra config error: %v", err)
-			ErrorJSON(w, http.StatusInternalServerError, "failed to encrypt credentials")
+			errorJSON(w, http.StatusInternalServerError, "failed to encrypt credentials")
 			return
 		}
 		existing.ExtraConfigEncrypted = encryptedExtra
@@ -447,57 +436,57 @@ func (h *ChannelHandler) updateChannel(w http.ResponseWriter, r *http.Request, i
 	updated, err := h.channelRepo.Update(r.Context(), existing)
 	if err != nil {
 		log.Printf("[channels] update error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to update channel config")
+		errorJSON(w, http.StatusInternalServerError, "failed to update channel config")
 		return
 	}
 
 	h.publishInvalidation(r.Context(), "upsert", updated)
 
-	JSON(w, http.StatusOK, h.toChannelResponse(updated))
+	writeJSON(w, http.StatusOK, h.toChannelResponse(updated))
 }
 
-func (h *ChannelHandler) deleteChannel(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) deleteChannel(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.channelRepo.GetByID(r.Context(), id)
 	if err != nil {
 		log.Printf("[channels] get error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "internal error")
+		errorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if existing == nil {
-		ErrorJSON(w, http.StatusNotFound, "channel not found")
+		errorJSON(w, http.StatusNotFound, "channel not found")
 		return
 	}
 
 	if !h.hasAccessToChannel(r, existing) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
 	if err := h.channelRepo.Delete(r.Context(), id); err != nil {
 		log.Printf("[channels] delete error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to delete channel")
+		errorJSON(w, http.StatusInternalServerError, "failed to delete channel")
 		return
 	}
 
 	h.publishInvalidation(r.Context(), "delete", existing)
 
-	JSON(w, http.StatusOK, map[string]string{"message": "channel deleted"})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "channel deleted"})
 }
 
-func (h *ChannelHandler) testConnection(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) testConnection(w http.ResponseWriter, r *http.Request, id string) {
 	cfg, err := h.channelRepo.GetByID(r.Context(), id)
 	if err != nil {
 		log.Printf("[channels] get error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "internal error")
+		errorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if cfg == nil {
-		ErrorJSON(w, http.StatusNotFound, "channel not found")
+		errorJSON(w, http.StatusNotFound, "channel not found")
 		return
 	}
 
 	if !h.hasAccessToChannel(r, cfg) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
@@ -505,7 +494,7 @@ func (h *ChannelHandler) testConnection(w http.ResponseWriter, r *http.Request, 
 	appSecret, err := crypto.Decrypt(cfg.AppSecretEncrypted, h.aesKey)
 	if err != nil {
 		log.Printf("[channels] decrypt secret error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to decrypt credentials")
+		errorJSON(w, http.StatusInternalServerError, "failed to decrypt credentials")
 		return
 	}
 
@@ -514,7 +503,7 @@ func (h *ChannelHandler) testConnection(w http.ResponseWriter, r *http.Request, 
 		extraJSON, err := crypto.Decrypt(cfg.ExtraConfigEncrypted, h.aesKey)
 		if err != nil {
 			log.Printf("[channels] decrypt extra config error: %v", err)
-			ErrorJSON(w, http.StatusInternalServerError, "failed to decrypt credentials")
+			errorJSON(w, http.StatusInternalServerError, "failed to decrypt credentials")
 			return
 		}
 		json.Unmarshal(extraJSON, &extraConfig)
@@ -523,7 +512,7 @@ func (h *ChannelHandler) testConnection(w http.ResponseWriter, r *http.Request, 
 	result, err := h.tester.Test(r.Context(), cfg.Platform, cfg.AppID, string(appSecret), extraConfig)
 	if err != nil {
 		log.Printf("[channels] test error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "connection test failed")
+		errorJSON(w, http.StatusInternalServerError, "connection test failed")
 		return
 	}
 
@@ -536,77 +525,95 @@ func (h *ChannelHandler) testConnection(w http.ResponseWriter, r *http.Request, 
 		h.publishInvalidation(r.Context(), "upsert", cfg)
 	}
 
-	JSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *ChannelHandler) toggleChannel(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) toggleChannel(w http.ResponseWriter, r *http.Request, id string) {
 	existing, err := h.channelRepo.GetByID(r.Context(), id)
 	if err != nil {
 		log.Printf("[channels] get error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "internal error")
+		errorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if existing == nil {
-		ErrorJSON(w, http.StatusNotFound, "channel not found")
+		errorJSON(w, http.StatusNotFound, "channel not found")
 		return
 	}
 
 	if !h.hasAccessToChannel(r, existing) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
 	var req toggleRequest
-	if err := DecodeJSON(r, &req); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	updated, err := h.channelRepo.SetEnabled(r.Context(), id, req.Enabled)
 	if err != nil {
 		log.Printf("[channels] toggle error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to toggle channel")
+		errorJSON(w, http.StatusInternalServerError, "failed to toggle channel")
 		return
 	}
 
-	JSON(w, http.StatusOK, h.toChannelResponse(updated))
+	writeJSON(w, http.StatusOK, h.toChannelResponse(updated))
 }
 
-func (h *ChannelHandler) getWebhookURL(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) getWebhookURL(w http.ResponseWriter, r *http.Request, id string) {
 	cfg, err := h.channelRepo.GetByID(r.Context(), id)
 	if err != nil {
 		log.Printf("[channels] get error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "internal error")
+		errorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if cfg == nil {
-		ErrorJSON(w, http.StatusNotFound, "channel not found")
+		errorJSON(w, http.StatusNotFound, "channel not found")
 		return
 	}
 
 	if !h.hasAccessToChannel(r, cfg) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
-	JSON(w, http.StatusOK, map[string]string{
+	writeJSON(w, http.StatusOK, map[string]string{
 		"webhook_url": h.buildWebhookURL(cfg),
 	})
 }
 
-// hasAccessToChannel checks if the current user has access to the channel's product line.
-func (h *ChannelHandler) hasAccessToChannel(r *http.Request, cfg *repository.ChannelConfig) bool {
-	claims := auth.GetClaims(r.Context())
-	if claims == nil {
-		return false
+// hasAccessToChannel checks whether the request's tenant scope covers the
+// channel's product line.
+func (h *Handler) hasAccessToChannel(r *http.Request, cfg *repository.ChannelConfig) bool {
+	return auth.TenantScopeAllowed(r, cfg.ProductLineID)
+}
+
+// writeJSON writes a JSON response with the given status code.
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if data != nil {
+		json.NewEncoder(w).Encode(data)
 	}
-	if claims.Role == string(rbac.RoleSuperAdmin) {
-		return true
+}
+
+// errorJSON writes a JSON error response.
+func errorJSON(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// decodeJSON decodes JSON from the request body into the given value.
+func decodeJSON(r *http.Request, v interface{}) error {
+	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// pathSegments splits the remaining path after a prefix into segments.
+func pathSegments(p, prefix string) []string {
+	trimmed := strings.TrimPrefix(p, prefix)
+	trimmed = strings.Trim(trimmed, "/")
+	if trimmed == "" {
+		return nil
 	}
-	for _, id := range claims.ProductLineIDs {
-		if id == cfg.ProductLineID {
-			return true
-		}
-	}
-	return false
+	return strings.Split(trimmed, "/")
 }

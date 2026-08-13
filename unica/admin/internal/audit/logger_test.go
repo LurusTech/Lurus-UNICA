@@ -39,7 +39,7 @@ func TestLogger_LogEvent(t *testing.T) {
 	afterJSON := json.RawMessage(`{"name":"test"}`)
 	entry := &AuditEntry{
 		ActorID:      "user-1",
-		ActorRole:    "super_admin",
+		ActorRole:    "admin",
 		Action:       "create",
 		ResourceType: "channel_config",
 		ResourceID:   "ch-1",
@@ -122,7 +122,7 @@ func TestLogger_LogEventConvenience(t *testing.T) {
 	before := map[string]string{"name": "old"}
 	after := map[string]string{"name": "new"}
 
-	logger.LogEvent("user-1", "product_admin", "update", "channel_config", "ch-1",
+	logger.LogEvent("user-1", "user", "update", "channel_config", "ch-1",
 		&plID, before, after, "192.168.1.1")
 
 	got := <-logger.entries

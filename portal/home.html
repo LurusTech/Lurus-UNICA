@@ -1,0 +1,502 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的工作台 - UNICA 统一管理门户</title>
+<style>
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root {
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+    --lt-accent: #FF5D1F;
+    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
+    --lt-on-accent: #14130F;
+    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  :root {
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --ok: var(--lt-ok);
+    --bad: var(--lt-err);
+    --warn: var(--lt-warn);
+    /* Neutral elevation shadow, no brand hue — kept at original value. */
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
+    :root {
+      --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
+      --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
+      --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+      --border: var(--lt-rule); --primary: var(--lt-accent);
+      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
+  :root[data-theme="dark"] {
+    --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
+    --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
+    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule); --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+  }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root[data-theme="light"] {
+    --lt-paper: #F5F2E8; --lt-bg: #E8E4D6; --lt-ink: #14130F; --lt-rule: #D6D2C2;
+    --lt-ok: #1F7A4F; --lt-warn: #B8821F; --lt-err: #B3392B; --lt-info: #2D4A8A;
+    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule); --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: var(--lt-font-sans);
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  header .badge {
+    font-size: 0.72rem; color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 3px 10px;
+  }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(24px, 5vw, 48px) clamp(16px, 4vw, 48px);
+    max-width: 1080px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+
+  .intro { margin-bottom: 26px; }
+  .intro h2 { font-size: 1.45rem; margin: 0 0 8px; }
+  .intro p { color: var(--text-muted); margin: 0; line-height: 1.65; font-size: 0.92rem; }
+
+  .banner {
+    background: color-mix(in srgb, var(--lt-info) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--lt-info) 30%, transparent);
+    border-radius: 12px; padding: 12px 16px; font-size: 0.85rem; margin-bottom: 22px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px; line-height: 1.6;
+  }
+  .banner a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .banner a:hover { text-decoration: underline; }
+  .banner.bad {
+    background: color-mix(in srgb, var(--bad) 8%, transparent);
+    border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+  }
+  .banner .detail { color: var(--text-muted); word-break: break-word; }
+
+  .cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 24px; text-decoration: none; color: var(--text); box-shadow: var(--shadow);
+    transition: transform 0.15s ease, border-color 0.15s ease;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+    text-align: left; font-family: inherit; font-size: 1rem; cursor: pointer;
+  }
+  .card:hover, .card:focus-visible { transform: translateY(-2px); border-color: var(--primary); }
+  .card:disabled { transform: none; opacity: 0.55; cursor: progress; }
+  .card .icon {
+    font-size: 1.7rem; width: 48px; height: 48px; display: flex;
+    align-items: center; justify-content: center; border-radius: 10px;
+    background: color-mix(in srgb, var(--lt-info) 12%, transparent);
+  }
+  .card h3 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  .card p { margin: 0; color: var(--text-muted); font-size: 0.86rem; line-height: 1.55; }
+  .card .go { margin-top: auto; font-size: 0.82rem; color: var(--primary); font-weight: 500; }
+
+  footer { text-align: center; color: var(--text-muted); font-size: 0.8rem; padding: 20px; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--lt-info);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  /* .card sets display:flex, which would otherwise beat the UA rule for [hidden]. */
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <h1>我的工作台</h1>
+    <span class="badge" id="tenant-badge" hidden></span>
+  </div>
+  <div id="user-info">
+    <a id="admin-link" href="./admin.html" hidden>平台管理</a>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <div class="intro">
+    <h2 id="greeting">欢迎回来</h2>
+    <p>这里是本租户的全部自助功能：知识库、渠道、确定性事实、AI 设置、客服工作台与质量复核。</p>
+  </div>
+
+  <!-- An administrator has no tenant of its own, so it works here on behalf of
+       one named on the address. -->
+  <div class="banner" id="proxy-banner" hidden></div>
+
+  <!-- The workbench answers with an explanation rather than a link when the
+       tenant or the account cannot be signed in; it is shown here in full. -->
+  <div class="banner bad" id="workbench-banner" hidden></div>
+
+  <div class="cards">
+    <a class="card" id="card-knowledge" href="./knowledge.html">
+      <div class="icon">📚</div>
+      <h3>我的知识库</h3>
+      <p>上传与维护文档，跟踪索引进度。索引完成后 AI 才会引用。</p>
+      <span class="go">进入管理 →</span>
+    </a>
+    <a class="card" id="card-channels" href="./channels.html">
+      <div class="icon">🔌</div>
+      <h3>渠道接入</h3>
+      <p>接入小红书等平台账号，配置凭证与回调地址。</p>
+      <span class="go">进入配置 →</span>
+    </a>
+    <a class="card" id="card-facts" href="./ontology.html">
+      <div class="icon">🧩</div>
+      <h3>确定性事实</h3>
+      <p>声明政策、时效、价目、资质等确定口径，校验、发布与回滚。</p>
+      <span class="go">进入编辑 →</span>
+    </a>
+    <a class="card" id="card-ai-settings" href="./ai-settings.html">
+      <div class="icon">🤖</div>
+      <h3>AI 设置</h3>
+      <p>系统提示词、置信度阈值、转人工关键词与屏蔽话题。</p>
+      <span class="go">进入设置 →</span>
+    </a>
+    <button class="card" id="card-workbench" type="button">
+      <div class="icon">💬</div>
+      <h3>客服工作台</h3>
+      <p>接待会话、处理工单。用当前账号免密进入，无需第二个密码。</p>
+      <span class="go" id="workbench-go">免密进入 →</span>
+    </button>
+    <a class="card" id="card-violations" href="./violations.html">
+      <div class="icon">🔍</div>
+      <h3>质量复核</h3>
+      <p>复核 AI 回答与确定性事实冲突的证据，并回流到本体修正。</p>
+      <span class="go">进入复核 →</span>
+    </a>
+  </div>
+</main>
+
+<footer>UNICA 统一管理门户</footer>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN_KEY = "unica_access_token";
+  var LOGIN_PAGE = "./index.html";
+  var ADMIN_PAGE = "./admin.html";
+  // Every tenant resource hangs under this root. "me" is the alias the server
+  // resolves from the caller's own claims, so a tenant's people never name
+  // their tenant; an administrator belongs to none and names one on the address.
+  var TENANT_ROOT = "/api/v1/tenants/";
+  var TENANT_ME = "me";
+
+  var state = { tenant: null, claims: null, workbenchBusy: false };
+
+  var els = {
+    tenantBadge: document.getElementById("tenant-badge"),
+    adminLink: document.getElementById("admin-link"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    greeting: document.getElementById("greeting"),
+    proxyBanner: document.getElementById("proxy-banner"),
+    workbenchBanner: document.getElementById("workbench-banner"),
+    workbenchCard: document.getElementById("card-workbench"),
+    workbenchGo: document.getElementById("workbench-go"),
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // Cards that open another page of this portal; an administrator acting for a
+  // tenant carries that tenant across to them.
+  var PAGE_CARDS = ["card-knowledge", "card-channels", "card-facts", "card-ai-settings", "card-violations"];
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, 4200);
+  }
+
+  // ---------- Token / claims ----------
+  // Storage access can throw under restrictive privacy settings; a failure
+  // simply means there is no session and the visitor goes back to the door.
+  function getToken() {
+    try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+  }
+  function clearToken() {
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* nothing to clear */ }
+  }
+
+  // Read-only decode of the access token payload. The server remains the
+  // authority on what this account may reach; this only decides what to show.
+  function decodeClaims(token) {
+    if (!token || typeof token !== "string") return null;
+    var parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4 !== 0) b64 += "=";
+      var claims = JSON.parse(atob(b64));
+      return claims && typeof claims === "object" ? claims : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isAdmin() {
+    return !!state.claims && state.claims.role === "admin";
+  }
+
+  function goLogin() {
+    clearToken();
+    window.location.replace(LOGIN_PAGE);
+  }
+
+  // The tenant named on the address. Only an administrator can act on a tenant
+  // other than its own, so for anyone else the parameter means nothing.
+  function requestedTenant() {
+    if (!isAdmin()) return "";
+    var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  // The path segment this page addresses its tenant by.
+  function tenantSegment() {
+    return isAdmin() ? requestedTenant() : TENANT_ME;
+  }
+
+  function tenantPath(suffix) {
+    return TENANT_ROOT + encodeURIComponent(tenantSegment()) + suffix;
+  }
+
+  // ---------- API ----------
+  // Wraps fetch with the Authorization header, JSON parsing, and 401 handling.
+  // The HTTP status travels on the error so a caller can tell an explanation
+  // (409) from an ordinary failure.
+  function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    var token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+    return fetch(path, Object.assign({}, options, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          goLogin();
+          throw new Error("unauthorized");
+        }
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
+          }
+          if (!res.ok) {
+            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
+            var err = new Error(msg);
+            err.status = res.status;
+            throw err;
+          }
+          return data;
+        });
+      });
+  }
+
+  els.logoutBtn.addEventListener("click", goLogin);
+
+  // ---------- Tenant ----------
+  function loadTenant() {
+    return api(tenantPath(""))
+      .then(function (tenant) {
+        state.tenant = tenant || null;
+        renderTenant();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        showBanner(els.proxyBanner, "加载租户信息失败：" + err.message, true);
+        toast("加载租户信息失败：" + err.message, "error");
+      });
+  }
+
+  function renderTenant() {
+    var name = state.tenant ? (state.tenant.display_name || state.tenant.name) : "";
+    if (name) {
+      els.tenantBadge.textContent = name;
+      els.tenantBadge.hidden = false;
+      els.greeting.textContent = isAdmin() ? "代管租户：" + name : name;
+    }
+    if (isAdmin()) {
+      showBanner(els.proxyBanner,
+        "你正以管理员身份代该租户操作。租户的人看到的就是这个页面。", false, ADMIN_PAGE, "返回平台管理 →");
+    }
+    // The tenant travels with the visitor: an administrator that reached this
+    // page for one tenant stays on it in the pages the cards open.
+    var query = isAdmin() && state.tenant ? "?tenant=" + encodeURIComponent(state.tenant.id) : "";
+    if (!query) return;
+    PAGE_CARDS.forEach(function (id) {
+      var card = document.getElementById(id);
+      if (card) card.href = card.getAttribute("href").split("?")[0] + query;
+    });
+  }
+
+  function showBanner(el, message, bad, linkHref, linkText) {
+    el.className = "banner" + (bad ? " bad" : "");
+    el.textContent = "";
+    var span = document.createElement("span");
+    span.className = "detail";
+    span.textContent = message;
+    el.appendChild(span);
+    if (linkHref) {
+      var a = document.createElement("a");
+      a.href = linkHref;
+      a.textContent = linkText || linkHref;
+      el.appendChild(a);
+    }
+    el.hidden = false;
+  }
+
+  // ---------- Workbench ----------
+  // The agent workbench is a separate deployment whose address the server mints
+  // a one-time signed link for; nothing about it is hardcoded here.
+  els.workbenchCard.addEventListener("click", function () {
+    if (state.workbenchBusy) return;
+    state.workbenchBusy = true;
+    els.workbenchCard.disabled = true;
+    els.workbenchGo.textContent = "正在签发链接…";
+    els.workbenchBanner.hidden = true;
+
+    // A window opened from inside the response handler counts as unrequested and
+    // is blocked, so it is opened on the click itself and pointed at the link
+    // once it arrives. A blocked window leaves win null and the link is offered
+    // to click instead. The address is spelled out: an empty one leaves the
+    // browser to pick, and it picks a navigation that lands after this one.
+    var win = window.open("about:blank", "_blank");
+
+    api(tenantPath("/workbench/sso"))
+      .then(function (data) {
+        var url = data && data.url;
+        if (!url) throw new Error("服务端未返回登录链接");
+        if (win) {
+          win.opener = null;
+          win.location.replace(url);
+          return;
+        }
+        offerWorkbenchLink(url);
+      })
+      .catch(function (err) {
+        if (win) win.close();
+        if (err.message === "unauthorized") return;
+        // 409 and 503 carry the server's own explanation of why this account or
+        // tenant has no workbench to enter; it is shown as written.
+        showBanner(els.workbenchBanner, err.message, true);
+        toast("无法进入客服工作台", "error");
+      })
+      .finally(function () {
+        state.workbenchBusy = false;
+        els.workbenchCard.disabled = false;
+        els.workbenchGo.textContent = "免密进入 →";
+      });
+  });
+
+  // The link is single-use and short-lived, so it is handed over as something
+  // to click now rather than stored anywhere.
+  function offerWorkbenchLink(url) {
+    els.workbenchBanner.className = "banner";
+    els.workbenchBanner.textContent = "";
+    var span = document.createElement("span");
+    span.className = "detail";
+    span.textContent = "浏览器拦截了新窗口，请点击链接进入（链接一次性有效）：";
+    var a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = "打开客服工作台 →";
+    els.workbenchBanner.appendChild(span);
+    els.workbenchBanner.appendChild(a);
+    els.workbenchBanner.hidden = false;
+  }
+
+  // ---------- Init ----------
+  // This page is a tenant's own workspace. An administrator may stand in for a
+  // tenant, but only for one it names on the address — without that there is no
+  // tenant for the page to be about.
+  state.claims = decodeClaims(getToken());
+  if (!state.claims) {
+    goLogin();
+    return;
+  }
+  els.userEmail.textContent = state.claims.email || "";
+
+  if (isAdmin()) {
+    els.adminLink.hidden = false;
+    if (!requestedTenant()) {
+      showBanner(els.proxyBanner,
+        "管理员账号不属于任何租户。请在平台管理中选择一个租户后再进入本页。",
+        true, ADMIN_PAGE, "前往平台管理 →");
+      Array.prototype.forEach.call(document.querySelectorAll("a.card"), function (card) {
+        card.removeAttribute("href");
+      });
+      els.workbenchCard.disabled = true;
+      return;
+    }
+  } else if (!state.claims.tenant_id) {
+    // A user with no tenant cannot be scoped by any page here.
+    goLogin();
+    return;
+  }
+
+  loadTenant();
+})();
+</script>

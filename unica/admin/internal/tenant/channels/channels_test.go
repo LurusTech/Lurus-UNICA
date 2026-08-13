@@ -1,4 +1,4 @@
-package handler
+package channels
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/kefu/unica/admin/internal/auth"
+	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 )
 
@@ -27,7 +28,7 @@ func newTestChannelRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 
 func TestChannelHandler_PublishInvalidation_Create(t *testing.T) {
 	client, _ := newTestChannelRedis(t)
-	h := &ChannelHandler{rdb: client}
+	h := &Handler{rdb: client}
 
 	ctx := context.Background()
 	sub := client.Subscribe(ctx, channelConfigInvalidationChannel)
@@ -62,7 +63,7 @@ func TestChannelHandler_PublishInvalidation_Create(t *testing.T) {
 
 func TestChannelHandler_PublishInvalidation_Delete(t *testing.T) {
 	client, _ := newTestChannelRedis(t)
-	h := &ChannelHandler{rdb: client}
+	h := &Handler{rdb: client}
 
 	ctx := context.Background()
 	sub := client.Subscribe(ctx, channelConfigInvalidationChannel)
@@ -96,7 +97,7 @@ func TestChannelHandler_PublishInvalidation_Delete(t *testing.T) {
 }
 
 func TestChannelHandler_PublishInvalidation_NilRedisIsSafe(t *testing.T) {
-	h := &ChannelHandler{} // no redis client configured, matches existing zero-value test style
+	h := &Handler{} // no redis client configured, matches existing zero-value test style
 	cfg := &repository.ChannelConfig{ID: "chan-3", ProductLineID: "pl-3", Platform: "kuaishou"}
 
 	// Must not panic when rdb is nil.
@@ -105,7 +106,7 @@ func TestChannelHandler_PublishInvalidation_NilRedisIsSafe(t *testing.T) {
 
 func TestChannelHandler_PublishInvalidation_NilConfigIsSafe(t *testing.T) {
 	client, _ := newTestChannelRedis(t)
-	h := &ChannelHandler{rdb: client}
+	h := &Handler{rdb: client}
 
 	// Must not panic when cfg is nil.
 	h.publishInvalidation(context.Background(), "upsert", nil)
@@ -135,11 +136,11 @@ func newCreateChannelRequest(platform string) *http.Request {
 		`","display_name":"demo","app_id":"app","app_secret":"secret"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels", strings.NewReader(body))
 	return req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
-		&auth.Claims{Role: "product_admin", ProductLineIDs: []string{"some-other-line"}}))
+		&auth.Claims{Role: rbac.RoleUser, TenantID: "some-other-line"}))
 }
 
 func TestChannelHandler_CreateChannel_AllowsServedPlatform(t *testing.T) {
-	h := &ChannelHandler{}
+	h := &Handler{}
 
 	w := httptest.NewRecorder()
 	h.HandleChannels(w, newCreateChannelRequest("xiaohongshu"))
@@ -155,7 +156,7 @@ func TestChannelHandler_CreateChannel_AllowsServedPlatform(t *testing.T) {
 
 func TestChannelHandler_CreateChannel_RejectsUnservedPlatform(t *testing.T) {
 	for _, platform := range []string{"douyin", "wechat", "taobao", "kuaishou"} {
-		h := &ChannelHandler{}
+		h := &Handler{}
 
 		w := httptest.NewRecorder()
 		h.HandleChannels(w, newCreateChannelRequest(platform))
@@ -175,7 +176,7 @@ func TestChannelHandler_CreateChannel_RejectsUnservedPlatform(t *testing.T) {
 }
 
 func TestChannelHandler_CreateChannel_RejectsUnknownPlatformBeforeServedCheck(t *testing.T) {
-	h := &ChannelHandler{}
+	h := &Handler{}
 
 	w := httptest.NewRecorder()
 	h.HandleChannels(w, newCreateChannelRequest("bilibili"))

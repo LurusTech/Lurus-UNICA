@@ -72,7 +72,20 @@ ChannelID 为空 → `no adapter registered for channel` → 重试三次
 
 ---
 
-## D4 后台 AI 配置对线上路由无任何效果（优先级最高）
+## D4 后台 AI 配置对线上路由无任何效果（已在代码中消除，待部署实测）
+
+**状态（2026-08-13）**：双层租户重构里的 `tenant/aisettings` 模块已经把写入
+路径接上——`PUT /api/v1/tenants/{id}/ai-settings/{threshold,handoff-rules}`
+现在写 `product_lines.config_json -> "guardrail"`（与 ontology 同构，即下文
+「修的方向」推荐的那一支），保存后立即失效 `channel_route:*` 缓存，router
+下一条消息就按新值走。`ai_agent_configs` 表连同它的 `max_ai_turns` 已随迁移
+017 删除，两套存储只剩一套。
+
+**这条为什么还留着**：本文件的记录规则是"修掉**并验证**才删"。目前只有单元
+测试与代码走查，还没有在部署环境上重跑一遍"门户改阈值 → 发消息 → 行为变化"
+的实机验证。等步骤 7 的实测通过后，按记录规则把本条整条删除。
+
+以下为原始记录，留作验收对照。
 
 存在两套互不相通的存储：
 
@@ -155,7 +168,16 @@ merge 进会话 metadata，`metrics.MarketingIntentDetectedTotal` 计数。
 
 两者判据不同，混用会对同一产品线产生两套互不一致的绑定。
 
-**修的方向**：确认哪一套是长期形态，另一套降级为纯引导脚本或删除。
+**已定案（2026-08-13）**：`admin/internal/bridge/dify.go` 是**唯一的
+provisioning 实现**——开户走 `POST /api/v1/tenants`，拓扑固定为"默认工作区内
+一线一 app + 一 dataset"，"已配置"判据只认 `dify_agent_id`。
+`router/cmd/setup_dify_workspaces` 降级为**一次性运维脚本**：它只用于给早于
+本次重构、按 workspace 划分的存量环境做迁移引导，不参与任何生产路径，
+也不再被视为一种可选拓扑。新环境不要跑它。
+
+**剩余动作**：该脚本与 `router/internal/bridge/dify_admin.go` 的注释需写明
+上述定位（避免下一个人把它当成"另一种开户方式"）；存量环境按 D8 的表回填后
+即可停用。做完这两件即可删除本条。
 
 ---
 
@@ -172,7 +194,7 @@ DrillCo…）三项全部还是旧状态：
 
 | 项 | 存量现状 | 回填手段 |
 |---|---|---|
-| dataset 未挂到 app | `dataset_configs.datasets.datasets` 为空数组 | `POST /api/v1/ai-config/{id}/dataset/bind`（已实现，super_admin，幂等） |
+| dataset 未挂到 app | `dataset_configs.datasets.datasets` 为空数组 | `POST /api/v1/tenants/{id}/ai-settings/dataset/bind`（已实现，幂等；`{id}` 可写 `me`，admin 可对任意租户执行） |
 | 检索方式与索引不自洽 | 建库时默认 `semantic_search`，但文档按 economy 建的关键词索引 | 控制台 PATCH 数据集，见 `deploy/embeddings/README.md`「已有知识库的迁移」 |
 | 文档按旧规则分段 | 每段约 250 字、单换行切分，标题与数据分离 | 删除并重新上传该库全部文档 |
 

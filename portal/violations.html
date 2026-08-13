@@ -276,10 +276,11 @@
 
 <header>
   <div class="left">
-    <a class="back" href="./index.html">← 返回首页</a>
+    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
     <h1>质量复核</h1>
   </div>
   <div id="user-info" hidden>
+    <span id="tenant-name"></span>
     <span id="user-email"></span>
     <button id="logout-btn">退出登录</button>
   </div>
@@ -307,9 +308,9 @@
   <!-- App view -->
   <section id="app-view" hidden>
     <div class="toolbar">
-      <div class="field">
-        <label for="pl-select">产品线</label>
-        <select id="pl-select"><option value="">请选择产品线</option></select>
+      <div class="field" id="pl-field" hidden>
+        <label for="pl-select">租户</label>
+        <select id="pl-select"><option value="">请选择租户</option></select>
       </div>
       <div class="field narrow">
         <label id="status-label">状态</label>
@@ -335,7 +336,7 @@
       <button id="refresh-btn">刷新</button>
     </div>
 
-    <div class="card empty-state" id="no-pl-hint">请先在上方选择一条产品线</div>
+    <div class="card empty-state" id="no-pl-hint">请先在上方选择一个租户</div>
 
     <div class="card" id="queue-card" hidden>
       <div class="card-head">
@@ -415,8 +416,8 @@
   };
 
   var state = {
-    productLines: [],
-    currentPL: null,
+    tenants: [],
+    currentTenant: null,
     status: "pending",
     kind: "",
     enforcedOnly: false,
@@ -437,7 +438,10 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
+    backLink: document.getElementById("back-link"),
+    tenantName: document.getElementById("tenant-name"),
 
+    plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
     statusChips: document.getElementById("status-chips"),
     kindSelect: document.getElementById("kind-select"),
@@ -504,26 +508,36 @@
     }
   }
 
-  function isSuperAdmin(claims) {
-    if (!claims) return false;
-    if (claims.role === "super_admin") return true;
-    var roles = claims.roles;
-    if (!Array.isArray(roles)) return false;
-    for (var i = 0; i < roles.length; i++) {
-      if (roles[i] === "super_admin") return true;
-    }
-    return false;
+  // ---------- Tenant scope ----------
+  // Every tenant resource hangs under /api/v1/tenants/{id}/. A user belongs to
+  // exactly one tenant and never names it: "me" is the alias the server resolves
+  // from the token. An administrator belongs to none and must name one, which it
+  // does with the selector or with ?tenant=<id> on the address.
+  var TENANT_ME = "me";
+
+  function accountRole() {
+    var claims = decodeClaims(getToken());
+    return claims && typeof claims.role === "string" ? claims.role : "";
   }
 
-  // A non-super-admin bound to exactly one product line has nothing to pick:
-  // returns that id so the selector can be locked, null in every other case.
-  function scopedProductLineId() {
-    var claims = decodeClaims(getToken());
-    if (!claims || isSuperAdmin(claims)) return null;
-    var ids = claims.product_line_ids;
-    if (!Array.isArray(ids) || ids.length !== 1) return null;
-    var id = ids[0];
-    return (id === null || id === undefined || id === "") ? null : String(id);
+  function isAdmin() { return accountRole() === "admin"; }
+
+  // The tenant named on the address. Only an administrator can act on a tenant
+  // other than its own, so for anyone else the parameter means nothing.
+  function requestedTenant() {
+    if (!isAdmin()) return "";
+    var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  // The path segment this page addresses its tenant by.
+  function tenantSegment() {
+    if (!isAdmin()) return TENANT_ME;
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function tenantPath(suffix) {
+    return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
   }
 
   function showLogin(message) {
@@ -630,47 +644,61 @@
 
   // ---------- Bootstrap after login ----------
   function bootstrap() {
-    loadProductLines();
+    loadTenants();
   }
 
-  function loadProductLines() {
-    return api("/api/v1/product-lines")
+  // The tenant roster is an administrator surface; a user reads its one tenant
+  // through the "me" alias, which is why the two roles load different addresses.
+  function loadTenants() {
+    if (!isAdmin()) {
+      return api("/api/v1/tenants/" + TENANT_ME)
+        .then(function (tenant) {
+          state.tenants = tenant ? [tenant] : [];
+          renderTenantOptions();
+        })
+        .catch(function (err) { reportError("加载租户失败", err); });
+    }
+    return api("/api/v1/tenants")
       .then(function (data) {
-        state.productLines = Array.isArray(data) ? data : [];
-        renderProductLineOptions();
+        state.tenants = Array.isArray(data) ? data : [];
+        renderTenantOptions();
       })
-      .catch(function (err) {
-        reportError("加载产品线失败", err);
-      });
+      .catch(function (err) { reportError("加载租户失败", err); });
   }
 
-  function renderProductLineOptions() {
-    if (state.productLines.length === 0) {
-      els.plSelect.innerHTML = '<option value="">暂无产品线</option>';
-      els.noPlHint.innerHTML = '还没有产品线，先去<a href="./product-lines.html">创建 →</a>';
+  function renderTenantOptions() {
+    // A user has one tenant and nothing to choose between, so the selector is
+    // an administrator's control only.
+    els.plField.hidden = !isAdmin();
+    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
+
+    if (state.tenants.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无租户</option>';
+      els.noPlHint.innerHTML = '还没有租户，先去<a href="./admin.html">开户 →</a>';
       els.noPlHint.hidden = false;
       els.queueCard.hidden = true;
       return;
     }
-    els.plSelect.innerHTML = state.productLines.map(function (pl) {
+    els.plSelect.innerHTML = state.tenants.map(function (pl) {
       return '<option value="' + escapeHtml(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
     }).join("");
-    // Auto-select the first line: this page is meaningless without one.
-    // An account scoped to that same single line gets the selector locked on it.
-    var scopedId = scopedProductLineId();
-    els.plSelect.disabled = !!scopedId && state.productLines.length === 1 &&
-      String(state.productLines[0].id) === scopedId;
-    els.plSelect.value = String(state.productLines[0].id);
-    selectProductLine(els.plSelect.value);
+    // The address may name the tenant to act on; otherwise the first one, since
+    // this page is meaningless without one.
+    var initial = findTenant(requestedTenant()) || state.tenants[0];
+    els.plSelect.value = String(initial.id);
+    selectTenant(els.plSelect.value);
   }
 
   els.plSelect.addEventListener("change", function () {
-    selectProductLine(els.plSelect.value);
+    selectTenant(els.plSelect.value);
   });
 
-  function selectProductLine(id) {
-    state.currentPL = findProductLine(id);
-    if (!state.currentPL) {
+  function selectTenant(id) {
+    state.currentTenant = findTenant(id);
+    els.tenantName.textContent = state.currentTenant
+      ? (state.currentTenant.display_name || state.currentTenant.name)
+      : "";
+    if (!state.currentTenant) {
       els.queueCard.hidden = true;
       els.noPlHint.hidden = false;
       return;
@@ -685,9 +713,9 @@
     loadViolations();
   }
 
-  function findProductLine(id) {
-    for (var i = 0; i < state.productLines.length; i++) {
-      if (String(state.productLines[i].id) === String(id)) return state.productLines[i];
+  function findTenant(id) {
+    for (var i = 0; i < state.tenants.length; i++) {
+      if (String(state.tenants[i].id) === String(id)) return state.tenants[i];
     }
     return null;
   }
@@ -722,8 +750,8 @@
   });
 
   els.refreshBtn.addEventListener("click", function () {
-    if (state.currentPL) loadViolations();
-    else loadProductLines();
+    if (state.currentTenant) loadViolations();
+    else loadTenants();
   });
 
   els.prevBtn.addEventListener("click", function () {
@@ -769,19 +797,18 @@
       if (v === "" || v === null || v === undefined) return;
       qs.push(encodeURIComponent(k) + "=" + encodeURIComponent(v));
     });
-    return "/api/v1/product-lines/" + encodeURIComponent(state.currentPL.id) +
-      "/violations" + (qs.length ? "?" + qs.join("&") : "");
+    return tenantPath("/violations") + (qs.length ? "?" + qs.join("&") : "");
   }
 
   function loadViolations() {
-    if (!state.currentPL) return Promise.resolve();
+    if (!state.currentTenant) return Promise.resolve();
     state.loading = true;
     els.emptyBox.hidden = true;
     els.pager.hidden = true;
     els.tableWrap.hidden = false;
     els.tbody.innerHTML = '<tr><td colspan="7" class="loading-text">加载中…</td></tr>';
 
-    var plId = state.currentPL.id;
+    var plId = state.currentTenant.id;
     return api(violationsPath({
       kind: state.kind,
       review_status: state.status,
@@ -790,7 +817,7 @@
       offset: state.offset
     }))
       .then(function (data) {
-        if (String(plId) !== String(state.currentPL.id)) return; // stale response
+        if (String(plId) !== String(state.currentTenant.id)) return; // stale response
         data = data || {};
         state.items = Array.isArray(data.items) ? data.items : [];
         state.total = typeof data.total === "number" ? data.total : state.items.length;
@@ -823,10 +850,10 @@
   // Distinguishes an empty queue from a product line with no ontology activity
   // at all. Only runs when the current page came back empty.
   function probeEmptyReason() {
-    var plId = state.currentPL.id;
+    var plId = state.currentTenant.id;
     api(violationsPath({ limit: 1, offset: 0 }))
       .then(function (data) {
-        if (String(plId) !== String(state.currentPL.id)) return;
+        if (String(plId) !== String(state.currentTenant.id)) return;
         var anyAtAll = data && typeof data.total === "number" ? data.total : 0;
         renderEmptyState(anyAtAll > 0);
       })
@@ -901,8 +928,8 @@
       els.emptyBox.className = "empty-state";
       els.emptyBox.innerHTML =
         '<span class="big">🗂️</span>' +
-        '<span class="title">该产品线还没有任何本体校验记录</span><br />' +
-        '需要先在<a href="./ontology.html">领域本体</a>发布本体，并把回答校验开到 shadow 或 enforce，' +
+        '<span class="title">该租户还没有任何本体校验记录</span><br />' +
+        '需要先在<a href="./ontology.html">确定性事实</a>发布本体，并把回答校验开到 shadow 或 enforce，' +
         "AI 回答与本体冲突时才会在这里留下证据。";
     } else if (state.status === "pending" && !state.kind && !state.enforcedOnly) {
       els.emptyBox.className = "empty-state celebrate";
@@ -1058,7 +1085,7 @@
     var original = btn.textContent;
     btn.textContent = "提交中…";
 
-    api("/api/v1/violations/" + encodeURIComponent(id) + "/review", {
+    api(tenantPath("/violations/" + encodeURIComponent(id) + "/review"), {
       method: "PUT",
       body: JSON.stringify({ status: status })
     })
@@ -1068,7 +1095,7 @@
         if (status === "ontology_wrong") {
           toast("已标记为「本体错了」。请修正本体并重新发布，同类回答才会真正停止。", "success", {
             href: "./ontology.html",
-            text: "前往领域本体 →"
+            text: "前往确定性事实 →"
           });
         } else if (status === "pending") {
           toast("已重开，回到待复核队列", "success");

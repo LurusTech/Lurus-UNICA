@@ -1,15 +1,21 @@
-package handler
+// Package facts serves one tenant's deterministic facts: the ontology an
+// operator authors, its validation and version history, and the switches that
+// decide whether the runtime injects it and checks answers against it.
+//
+// Everything acts on the tenant in the route, which was resolved and authorised
+// before any handler here runs. The module reaches no other tenant module.
+package facts
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/kefu/unica/admin/internal/audit"
 	"github.com/kefu/unica/admin/internal/auth"
-	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/pkg/domain"
 )
@@ -32,60 +38,43 @@ type ontologyProductLines interface {
 	SetConfigKey(ctx context.Context, id, key string, value interface{}) error
 }
 
-// OntologyHandler serves the ontology editing surface: validate, preview,
+// Handler serves the ontology editing surface: validate, preview,
 // publish, rollback, version history, and the per-line ontology switches.
 // Everything an operator needed the CLI and a database connection for.
-type OntologyHandler struct {
+type Handler struct {
 	store  ontologyStore
 	pls    ontologyProductLines
 	logger *audit.Logger
 }
 
-func NewOntologyHandler(store ontologyStore, pls ontologyProductLines, logger *audit.Logger) *OntologyHandler {
-	return &OntologyHandler{store: store, pls: pls, logger: logger}
-}
-
-// productLineScopeAllowed applies the product-line scoping rule shared by the
-// per-line resources: a non-superadmin may only touch lines in their claims.
-// A request without claims is left to the auth middleware; by the time a
-// handler runs it means a package-internal test, which gets superadmin scope.
-func productLineScopeAllowed(r *http.Request, plID string) bool {
-	claims := auth.GetClaims(r.Context())
-	if claims == nil || claims.Role == string(rbac.RoleSuperAdmin) {
-		return true
-	}
-	for _, id := range claims.ProductLineIDs {
-		if id == plID {
-			return true
-		}
-	}
-	return false
+func NewHandler(store ontologyStore, pls ontologyProductLines, logger *audit.Logger) *Handler {
+	return &Handler{store: store, pls: pls, logger: logger}
 }
 
 // Handle dispatches /api/v1/product-lines/{id}/ontology[...] and
-// /api/v1/product-lines/{id}/ontology-config. The mux routes these sub-paths
-// here (gated by the AI-config permission) and everything else under the
-// product-lines subtree to the product-line handler.
-func (h *OntologyHandler) Handle(w http.ResponseWriter, r *http.Request) {
-	segments := ExtractPathSegments(r.URL.Path, "/api/v1/product-lines/")
+// /api/v1/product-lines/{id}/ontology-config. Clients address these as the
+// tenant's facts; the tenant dispatcher rewrites the path into the shape parsed
+// here, so the tenant is already resolved and authorised by the time it runs.
+func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
+	segments := pathSegments(r.URL.Path, "/api/v1/product-lines/")
 	if len(segments) < 2 {
-		ErrorJSON(w, http.StatusNotFound, "not found")
+		errorJSON(w, http.StatusNotFound, "not found")
 		return
 	}
 	plID := segments[0]
 
 	pl, err := h.pls.GetByID(r.Context(), plID)
 	if err != nil {
-		ErrorJSON(w, http.StatusInternalServerError, "failed to load product line")
+		errorJSON(w, http.StatusInternalServerError, "failed to load product line")
 		return
 	}
 	if pl == nil {
-		ErrorJSON(w, http.StatusNotFound, "product line not found")
+		errorJSON(w, http.StatusNotFound, "product line not found")
 		return
 	}
 
-	if !productLineScopeAllowed(r, plID) {
-		ErrorJSON(w, http.StatusForbidden, "access denied for this product line")
+	if !auth.TenantScopeAllowed(r, plID) {
+		errorJSON(w, http.StatusForbidden, "access denied for this product line")
 		return
 	}
 
@@ -101,23 +90,23 @@ func (h *OntologyHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		case len(segments) == 3 && segments[2] == "rollback" && r.Method == http.MethodPost:
 			h.rollback(w, r, pl)
 		case len(segments) == 2 || (len(segments) == 3 && (segments[2] == "validate" || segments[2] == "publish" || segments[2] == "rollback")):
-			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 		default:
-			ErrorJSON(w, http.StatusNotFound, "not found")
+			errorJSON(w, http.StatusNotFound, "not found")
 		}
 	case "ontology-config":
 		switch {
 		case len(segments) != 2:
-			ErrorJSON(w, http.StatusNotFound, "not found")
+			errorJSON(w, http.StatusNotFound, "not found")
 		case r.Method == http.MethodGet:
 			h.getConfig(w, r, pl)
 		case r.Method == http.MethodPut:
 			h.putConfig(w, r, pl)
 		default:
-			ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	default:
-		ErrorJSON(w, http.StatusNotFound, "not found")
+		errorJSON(w, http.StatusNotFound, "not found")
 	}
 }
 
@@ -137,10 +126,10 @@ type ontologyResponse struct {
 	Versions      []ontologyVersionResponse `json:"versions"`
 }
 
-func (h *OntologyHandler) getOntology(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+func (h *Handler) getOntology(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
 	versions, err := h.store.Versions(r.Context(), pl.ID)
 	if err != nil {
-		ErrorJSON(w, http.StatusInternalServerError, "failed to list ontology versions")
+		errorJSON(w, http.StatusInternalServerError, "failed to list ontology versions")
 		return
 	}
 
@@ -161,12 +150,12 @@ func (h *OntologyHandler) getOntology(w http.ResponseWriter, r *http.Request, pl
 	if resp.ActiveVersion > 0 {
 		src, err := h.store.SourceYAML(r.Context(), pl.ID, resp.ActiveVersion)
 		if err != nil {
-			ErrorJSON(w, http.StatusInternalServerError, "failed to load ontology source")
+			errorJSON(w, http.StatusInternalServerError, "failed to load ontology source")
 			return
 		}
 		resp.SourceYAML = src
 	}
-	JSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type validateRequest struct {
@@ -204,20 +193,20 @@ func estimateTokens(runes int) int {
 	return (runes*2 + 2) / 3
 }
 
-func (h *OntologyHandler) validate(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+func (h *Handler) validate(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
 	var req validateRequest
-	if err := DecodeJSON(r, &req); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	o, errText := checkYAML(req.YAML, pl)
 	if o == nil {
-		JSON(w, http.StatusOK, validateResponse{Valid: false, Error: errText})
+		writeJSON(w, http.StatusOK, validateResponse{Valid: false, Error: errText})
 		return
 	}
 	rendered := domain.Render(o)
 	runes := utf8.RuneCountInString(rendered)
-	JSON(w, http.StatusOK, validateResponse{
+	writeJSON(w, http.StatusOK, validateResponse{
 		Valid:           true,
 		Rendered:        rendered,
 		RenderedChars:   runes,
@@ -230,71 +219,71 @@ type publishRequest struct {
 	Note string `json:"note"`
 }
 
-func (h *OntologyHandler) publish(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+func (h *Handler) publish(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
 	var req publishRequest
-	if err := DecodeJSON(r, &req); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	o, errText := checkYAML(req.YAML, pl)
 	if o == nil {
-		ErrorJSON(w, http.StatusBadRequest, errText)
+		errorJSON(w, http.StatusBadRequest, errText)
 		return
 	}
 
 	prev := h.activeVersion(r.Context(), pl.ID)
 	version, err := h.store.Publish(r.Context(), pl.ID, o, req.YAML, req.Note)
 	if err != nil {
-		ErrorJSON(w, http.StatusBadRequest, err.Error())
+		errorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	h.logMutation(r, "publish", "ontology", pl.ID,
 		map[string]int{"active_version": prev},
 		map[string]interface{}{"active_version": version, "note": req.Note})
-	JSON(w, http.StatusOK, map[string]int{"version": version})
+	writeJSON(w, http.StatusOK, map[string]int{"version": version})
 }
 
 type rollbackRequest struct {
 	Version int `json:"version"`
 }
 
-func (h *OntologyHandler) rollback(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+func (h *Handler) rollback(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
 	var req rollbackRequest
-	if err := DecodeJSON(r, &req); err != nil || req.Version <= 0 {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil || req.Version <= 0 {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	prev := h.activeVersion(r.Context(), pl.ID)
 	if err := h.store.Rollback(r.Context(), pl.ID, req.Version); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, err.Error())
+		errorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	h.logMutation(r, "rollback", "ontology", pl.ID,
 		map[string]int{"active_version": prev},
 		map[string]int{"active_version": req.Version})
-	JSON(w, http.StatusOK, map[string]int{"version": req.Version})
+	writeJSON(w, http.StatusOK, map[string]int{"version": req.Version})
 }
 
-func (h *OntologyHandler) getConfig(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+func (h *Handler) getConfig(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
 	raw, err := h.pls.GetConfigJSON(r.Context(), pl.ID)
 	if err != nil {
-		ErrorJSON(w, http.StatusInternalServerError, "failed to load product line config")
+		errorJSON(w, http.StatusInternalServerError, "failed to load product line config")
 		return
 	}
-	JSON(w, http.StatusOK, domain.LoadConfig(raw))
+	writeJSON(w, http.StatusOK, domain.LoadConfig(raw))
 }
 
-func (h *OntologyHandler) putConfig(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+func (h *Handler) putConfig(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
 	var req struct {
 		InjectFacts bool                  `json:"inject_facts"`
 		Validation  string                `json:"validation"`
 		Breaker     *domain.BreakerConfig `json:"breaker"`
 	}
-	if err := DecodeJSON(r, &req); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -303,7 +292,7 @@ func (h *OntologyHandler) putConfig(w http.ResponseWriter, r *http.Request, pl *
 	// exactly the row it has to fall back on.
 	mode, err := domain.ParseValidationMode(req.Validation)
 	if err != nil {
-		ErrorJSON(w, http.StatusBadRequest, err.Error())
+		errorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -312,19 +301,19 @@ func (h *OntologyHandler) putConfig(w http.ResponseWriter, r *http.Request, pl *
 	// would read the silence as "no problems found". The pairing is enforced
 	// here, at the only place these switches can now be set.
 	if mode != domain.ValidationOff && !req.InjectFacts {
-		ErrorJSON(w, http.StatusBadRequest, "开启校验（shadow/enforce）必须同时开启事实注入 inject_facts")
+		errorJSON(w, http.StatusBadRequest, "开启校验（shadow/enforce）必须同时开启事实注入 inject_facts")
 		return
 	}
 
 	before, err := h.pls.GetConfigJSON(r.Context(), pl.ID)
 	if err != nil {
-		ErrorJSON(w, http.StatusInternalServerError, "failed to load product line config")
+		errorJSON(w, http.StatusInternalServerError, "failed to load product line config")
 		return
 	}
 
 	cfg := &domain.Config{InjectFacts: req.InjectFacts, Validation: mode, Breaker: req.Breaker}
 	if err := h.pls.SetConfigKey(r.Context(), pl.ID, "ontology", cfg); err != nil {
-		ErrorJSON(w, http.StatusInternalServerError, "failed to store ontology config")
+		errorJSON(w, http.StatusInternalServerError, "failed to store ontology config")
 		return
 	}
 
@@ -333,16 +322,16 @@ func (h *OntologyHandler) putConfig(w http.ResponseWriter, r *http.Request, pl *
 	// Respond with what a subsequent GET would return, defaults filled in.
 	after, err := h.pls.GetConfigJSON(r.Context(), pl.ID)
 	if err != nil {
-		JSON(w, http.StatusOK, cfg)
+		writeJSON(w, http.StatusOK, cfg)
 		return
 	}
-	JSON(w, http.StatusOK, domain.LoadConfig(after))
+	writeJSON(w, http.StatusOK, domain.LoadConfig(after))
 }
 
 // activeVersion returns the currently active version number for audit
 // before-states, or 0 when none exists or the lookup fails — the mutation must
 // not be blocked by a failed audit lookup.
-func (h *OntologyHandler) activeVersion(ctx context.Context, plID string) int {
+func (h *Handler) activeVersion(ctx context.Context, plID string) int {
 	versions, err := h.store.Versions(ctx, plID)
 	if err != nil {
 		return 0
@@ -357,7 +346,7 @@ func (h *OntologyHandler) activeVersion(ctx context.Context, plID string) int {
 
 // logMutation writes an audit entry for a completed ontology mutation. The
 // product-lines subtree has no audit middleware, so the trail is written here.
-func (h *OntologyHandler) logMutation(r *http.Request, action, resourceType, plID string, before, after interface{}) {
+func (h *Handler) logMutation(r *http.Request, action, resourceType, plID string, before, after interface{}) {
 	if h.logger == nil {
 		return
 	}
@@ -366,4 +355,33 @@ func (h *OntologyHandler) logMutation(r *http.Request, action, resourceType, plI
 		actorID, actorRole = claims.UserID, claims.Role
 	}
 	h.logger.LogEvent(actorID, actorRole, action, resourceType, plID, &plID, before, after, audit.ExtractIP(r))
+}
+
+// writeJSON writes a JSON response with the given status code.
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if data != nil {
+		json.NewEncoder(w).Encode(data)
+	}
+}
+
+// errorJSON writes a JSON error response.
+func errorJSON(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// decodeJSON decodes JSON from the request body into the given value.
+func decodeJSON(r *http.Request, v interface{}) error {
+	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// pathSegments splits the remaining path after a prefix into segments.
+func pathSegments(p, prefix string) []string {
+	trimmed := strings.TrimPrefix(p, prefix)
+	trimmed = strings.Trim(trimmed, "/")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "/")
 }

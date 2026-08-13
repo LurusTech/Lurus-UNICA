@@ -1,4 +1,4 @@
-package handler
+package facts
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kefu/unica/admin/internal/auth"
+	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/pkg/domain"
 )
@@ -96,13 +97,13 @@ func (f *fakePLStore) SetConfigKey(ctx context.Context, id, key string, value in
 	return nil
 }
 
-func newOntologyFixture() (*OntologyHandler, *fakeOntologyStore, *fakePLStore) {
+func newOntologyFixture() (*Handler, *fakeOntologyStore, *fakePLStore) {
 	fs := &fakeOntologyStore{sources: map[int]string{}}
 	fp := &fakePLStore{pl: &repository.ProductLine{ID: "pl-1", Name: "TestLine"}}
-	return NewOntologyHandler(fs, fp, nil), fs, fp
+	return NewHandler(fs, fp, nil), fs, fp
 }
 
-func doJSON(t *testing.T, h *OntologyHandler, method, path string, body string) *httptest.ResponseRecorder {
+func doJSON(t *testing.T, h *Handler, method, path string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var req *http.Request
 	if body == "" {
@@ -276,7 +277,7 @@ func TestOntologyHandler_ScopeForbidden(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/product-lines/pl-1/ontology", nil)
 	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
-		&auth.Claims{Role: "product_admin", ProductLineIDs: []string{"some-other-line"}}))
+		&auth.Claims{Role: rbac.RoleUser, TenantID: "some-other-line"}))
 	w := httptest.NewRecorder()
 	h.Handle(w, req)
 

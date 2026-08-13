@@ -10,12 +10,16 @@ import (
 )
 
 // Claims represents the JWT claims for an authenticated user.
+//
+// One role and one tenant, both scalars: an admin belongs to no tenant and
+// TenantID is empty, a user belongs to exactly one and TenantID names it.
+// There is no list here because there is nothing a list could hold — a second
+// tenant for the same person is a second account.
 type Claims struct {
-	UserID         string   `json:"user_id"`
-	Email          string   `json:"email"`
-	Role           string   `json:"role"`              // Highest privilege role
-	Roles          []string `json:"roles"`             // All assigned roles
-	ProductLineIDs []string `json:"product_line_ids"`  // Scoped product lines (empty = global)
+	UserID   string `json:"user_id"`
+	Email    string `json:"email"`
+	Role     string `json:"role"`
+	TenantID string `json:"tenant_id"`
 	jwt.RegisteredClaims
 }
 
@@ -43,16 +47,16 @@ func NewJWTManager(secret string, accessTTL, refreshTTL time.Duration) *JWTManag
 }
 
 // GenerateTokenPair creates a new access + refresh token pair for a user.
-func (m *JWTManager) GenerateTokenPair(userID, email, highestRole string, roles []string, productLineIDs []string) (*TokenPair, error) {
+// tenantID is empty for an admin, which belongs to no tenant.
+func (m *JWTManager) GenerateTokenPair(userID, email, role, tenantID string) (*TokenPair, error) {
 	now := time.Now()
 	accessExp := now.Add(m.accessTokenTTL)
 
 	accessClaims := &Claims{
-		UserID:         userID,
-		Email:          email,
-		Role:           highestRole,
-		Roles:          roles,
-		ProductLineIDs: productLineIDs,
+		UserID:   userID,
+		Email:    email,
+		Role:     role,
+		TenantID: tenantID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(accessExp),
 			IssuedAt:  jwt.NewNumericDate(now),

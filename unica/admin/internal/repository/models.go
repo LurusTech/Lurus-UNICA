@@ -2,32 +2,20 @@ package repository
 
 import "time"
 
-// User represents a user in the system.
+// User represents a user in the system. Role and ProductLineID are the whole
+// authorization model: an admin carries no product line, a user carries exactly
+// one and may act only on it.
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"` // Never expose in JSON
-	DisplayName  string    `json:"display_name"`
-	IsActive     bool      `json:"is_active"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-// RoleModel represents a role record.
-type RoleModel struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-}
-
-// UserRole represents a user-role-product-line assignment.
-type UserRole struct {
-	ID            string    `json:"id"`
-	UserID        string    `json:"user_id"`
-	RoleID        string    `json:"role_id"`
-	RoleName      string    `json:"role_name"`
-	ProductLineID *string   `json:"product_line_id,omitempty"` // nil for global roles
-	CreatedAt     time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	Email          string    `json:"email"`
+	PasswordHash   string    `json:"-"` // Never expose in JSON
+	DisplayName    string    `json:"display_name"`
+	Role           string    `json:"role"`
+	ProductLineID  *string   `json:"product_line_id,omitempty"`
+	ChatwootUserID *int      `json:"chatwoot_user_id,omitempty"`
+	IsActive       bool      `json:"is_active"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // ProductLine represents a product line record.
@@ -41,23 +29,6 @@ type ProductLine struct {
 	HasDifyBinding    bool      `json:"has_dify_binding"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
-}
-
-// UserWithRoles combines user info with their role assignments.
-type UserWithRoles struct {
-	User  User       `json:"user"`
-	Roles []UserRole `json:"roles"`
-}
-
-// AIAgentConfig holds per-product-line AI agent settings.
-type AIAgentConfig struct {
-	ProductLineID       string    `json:"product_line_id"`
-	ConfidenceThreshold float64   `json:"confidence_threshold"`
-	HandoffKeywords     []string  `json:"handoff_keywords"`
-	BlockedTopics       []string  `json:"blocked_topics"`
-	MaxAITurns          int       `json:"max_ai_turns"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	UpdatedBy           *string   `json:"updated_by,omitempty"`
 }
 
 // ChannelConfig represents a channel configuration record.

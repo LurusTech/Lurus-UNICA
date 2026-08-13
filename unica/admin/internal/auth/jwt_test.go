@@ -8,13 +8,7 @@ import (
 func TestGenerateAndValidateToken(t *testing.T) {
 	mgr := NewJWTManager("test-secret-key", 2*time.Hour, 7*24*time.Hour)
 
-	pair, err := mgr.GenerateTokenPair(
-		"user-123",
-		"test@example.com",
-		"super_admin",
-		[]string{"super_admin", "product_admin"},
-		[]string{"pl-1", "pl-2"},
-	)
+	pair, err := mgr.GenerateTokenPair("user-123", "test@example.com", "user", "tenant-1")
 	if err != nil {
 		t.Fatalf("GenerateTokenPair failed: %v", err)
 	}
@@ -29,7 +23,6 @@ func TestGenerateAndValidateToken(t *testing.T) {
 		t.Fatal("expires_at is zero")
 	}
 
-	// Validate access token
 	claims, err := mgr.ValidateToken(pair.AccessToken)
 	if err != nil {
 		t.Fatalf("ValidateToken failed: %v", err)
@@ -41,14 +34,32 @@ func TestGenerateAndValidateToken(t *testing.T) {
 	if claims.Email != "test@example.com" {
 		t.Errorf("expected email 'test@example.com', got '%s'", claims.Email)
 	}
-	if claims.Role != "super_admin" {
-		t.Errorf("expected role 'super_admin', got '%s'", claims.Role)
+	if claims.Role != "user" {
+		t.Errorf("expected role 'user', got '%s'", claims.Role)
 	}
-	if len(claims.Roles) != 2 {
-		t.Errorf("expected 2 roles, got %d", len(claims.Roles))
+	if claims.TenantID != "tenant-1" {
+		t.Errorf("expected tenant_id 'tenant-1', got '%s'", claims.TenantID)
 	}
-	if len(claims.ProductLineIDs) != 2 {
-		t.Errorf("expected 2 product line IDs, got %d", len(claims.ProductLineIDs))
+}
+
+// TestGenerateToken_AdminCarriesNoTenant pins the shape of an admin token: the
+// account belongs to no tenant, and an empty tenant_id is what says so.
+func TestGenerateToken_AdminCarriesNoTenant(t *testing.T) {
+	mgr := NewJWTManager("test-secret-key", 2*time.Hour, 7*24*time.Hour)
+
+	pair, err := mgr.GenerateTokenPair("user-1", "root@example.com", "admin", "")
+	if err != nil {
+		t.Fatalf("GenerateTokenPair failed: %v", err)
+	}
+	claims, err := mgr.ValidateToken(pair.AccessToken)
+	if err != nil {
+		t.Fatalf("ValidateToken failed: %v", err)
+	}
+	if claims.Role != "admin" {
+		t.Errorf("expected role 'admin', got '%s'", claims.Role)
+	}
+	if claims.TenantID != "" {
+		t.Errorf("expected empty tenant_id, got '%s'", claims.TenantID)
 	}
 }
 
@@ -56,7 +67,7 @@ func TestValidateTokenWithWrongSecret(t *testing.T) {
 	mgr1 := NewJWTManager("secret-1", 2*time.Hour, 7*24*time.Hour)
 	mgr2 := NewJWTManager("secret-2", 2*time.Hour, 7*24*time.Hour)
 
-	pair, _ := mgr1.GenerateTokenPair("user-1", "a@b.com", "agent", []string{"agent"}, nil)
+	pair, _ := mgr1.GenerateTokenPair("user-1", "a@b.com", "user", "tenant-1")
 
 	_, err := mgr2.ValidateToken(pair.AccessToken)
 	if err == nil {
@@ -68,7 +79,7 @@ func TestExpiredToken(t *testing.T) {
 	// Create a manager with very short TTL
 	mgr := NewJWTManager("test-secret", 1*time.Millisecond, 7*24*time.Hour)
 
-	pair, _ := mgr.GenerateTokenPair("user-1", "a@b.com", "agent", []string{"agent"}, nil)
+	pair, _ := mgr.GenerateTokenPair("user-1", "a@b.com", "user", "tenant-1")
 
 	// Wait for token to expire
 	time.Sleep(10 * time.Millisecond)
@@ -81,7 +92,7 @@ func TestExpiredToken(t *testing.T) {
 
 func TestValidateRefreshToken(t *testing.T) {
 	mgr := NewJWTManager("test-secret", 2*time.Hour, 7*24*time.Hour)
-	pair, _ := mgr.GenerateTokenPair("user-1", "a@b.com", "agent", []string{"agent"}, nil)
+	pair, _ := mgr.GenerateTokenPair("user-1", "a@b.com", "user", "tenant-1")
 
 	claims, err := mgr.ValidateToken(pair.RefreshToken)
 	if err != nil {

@@ -1,31 +1,27 @@
 package handler
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/kefu/unica/admin/internal/auth"
-	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/redis/go-redis/v9"
 )
 
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
-	userRepo *repository.UserRepository
-	roleRepo *repository.RoleRepository
-	jwtMgr   *auth.JWTManager
-	rdb      *redis.Client
+	userRepo   *repository.UserRepository
+	jwtMgr     *auth.JWTManager
+	rdb        *redis.Client
 	refreshTTL time.Duration
 }
 
 // NewAuthHandler creates a new auth handler.
-func NewAuthHandler(userRepo *repository.UserRepository, roleRepo *repository.RoleRepository, jwtMgr *auth.JWTManager, rdb *redis.Client, refreshTTL time.Duration) *AuthHandler {
+func NewAuthHandler(userRepo *repository.UserRepository, jwtMgr *auth.JWTManager, rdb *redis.Client, refreshTTL time.Duration) *AuthHandler {
 	return &AuthHandler{
 		userRepo:   userRepo,
-		roleRepo:   roleRepo,
 		jwtMgr:     jwtMgr,
 		rdb:        rdb,
 		refreshTTL: refreshTTL,
@@ -82,8 +78,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get user roles and product line IDs
-	tokenPair, err := h.generateTokensForUser(r.Context(), user)
+	tokenPair, err := h.generateTokensForUser(user)
 	if err != nil {
 		log.Printf("[auth] token generation error: %v", err)
 		ErrorJSON(w, http.StatusInternalServerError, "failed to generate tokens")
@@ -147,7 +142,7 @@ func (h *AuthHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenPair, err := h.generateTokensForUser(r.Context(), user)
+	tokenPair, err := h.generateTokensForUser(user)
 	if err != nil {
 		log.Printf("[auth] token refresh error: %v", err)
 		ErrorJSON(w, http.StatusInternalServerError, "failed to generate tokens")
@@ -163,19 +158,12 @@ func (h *AuthHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, tokenPair)
 }
 
-// generateTokensForUser builds role/PL info and generates a JWT token pair.
-func (h *AuthHandler) generateTokensForUser(ctx context.Context, user *repository.User) (*auth.TokenPair, error) {
-	roleNames, err := h.roleRepo.GetUserRoleNames(ctx, user.ID)
-	if err != nil {
-		return nil, err
+// generateTokensForUser issues a token pair from the account row itself: role
+// and tenant are columns on users, so signing in needs no second query.
+func (h *AuthHandler) generateTokensForUser(user *repository.User) (*auth.TokenPair, error) {
+	tenantID := ""
+	if user.ProductLineID != nil {
+		tenantID = *user.ProductLineID
 	}
-
-	plIDs, err := h.roleRepo.GetUserProductLineIDs(ctx, user.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	highestRole := rbac.HighestRole(roleNames)
-
-	return h.jwtMgr.GenerateTokenPair(user.ID, user.Email, highestRole, roleNames, plIDs)
+	return h.jwtMgr.GenerateTokenPair(user.ID, user.Email, user.Role, tenantID)
 }

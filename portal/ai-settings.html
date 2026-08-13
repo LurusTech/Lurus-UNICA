@@ -1,0 +1,957 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 设置 - UNICA 统一管理门户</title>
+<style>
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root {
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+    --lt-accent: #FF5D1F;
+    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
+    --lt-on-accent: #14130F;
+    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  :root {
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --ok: var(--lt-ok);
+    --bad: var(--lt-err);
+    --warn: var(--lt-warn);
+    /* Neutral elevation shadow, no brand hue — kept at original value. */
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
+    :root {
+      --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
+      --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
+      --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+      --border: var(--lt-rule); --primary: var(--lt-accent);
+      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+    }
+  }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
+  :root[data-theme="dark"] {
+    --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
+    --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
+    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule); --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
+  }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root[data-theme="light"] {
+    --lt-paper: #F5F2E8; --lt-bg: #E8E4D6; --lt-ink: #14130F; --lt-rule: #D6D2C2;
+    --lt-ok: #1F7A4F; --lt-warn: #B8821F; --lt-err: #B3392B; --lt-info: #2D4A8A;
+    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule); --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: var(--lt-font-sans);
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 960px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: var(--lt-on-accent); border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--primary); outline-offset: 2px;
+  }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  input:disabled, select:disabled, textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+  textarea { min-height: 240px; resize: vertical; line-height: 1.6; }
+  .field { margin-bottom: 16px; }
+  .field.narrow { max-width: 240px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.85rem; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 20px; }
+  .toolbar .field { margin-bottom: 0; min-width: 220px; }
+  .toolbar .spacer { flex: 1; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 24px; box-shadow: var(--shadow); margin-bottom: 20px;
+  }
+  .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .card-head h2 { font-size: 1.05rem; margin: 0; font-weight: 600; }
+  .card-sub { color: var(--text-muted); font-size: 0.85rem; margin: 0 0 18px; line-height: 1.65; }
+  .actions-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+  .actions-row .spacer { flex: 1; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.75rem; border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+
+  .notice {
+    border: 1px solid var(--border); border-left-width: 4px; border-radius: 10px;
+    padding: 12px 16px; margin-bottom: 18px; font-size: 0.86rem; line-height: 1.7;
+    background: var(--surface); box-shadow: var(--shadow);
+  }
+  .notice.warn { border-left-color: var(--warn); }
+  .notice.bad { border-left-color: var(--bad); }
+  .notice.info { border-left-color: var(--primary); }
+  .notice .title { display: block; font-weight: 600; margin-bottom: 2px; }
+  .notice .detail { color: var(--text-muted); word-break: break-word; }
+  .notice .actions-row { margin-top: 10px; }
+
+  .result-box {
+    margin-top: 14px; border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; background: var(--bg); font-size: 0.88rem; line-height: 1.7;
+  }
+  .result-box .answer { white-space: pre-wrap; word-break: break-word; }
+  .result-box .meta { color: var(--text-muted); font-size: 0.8rem; margin-top: 10px; }
+  .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 8px 0; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--lt-info);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  .toast.warn { border-left-color: var(--warn); }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
+    <h1>AI 设置</h1>
+  </div>
+  <div id="user-info">
+    <span id="tenant-name"></span>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <div class="toolbar">
+    <!-- A user has one tenant and nothing to choose between; the selector is an
+         administrator's control only. -->
+    <div class="field" id="tenant-field" hidden>
+      <label for="tenant-select">租户</label>
+      <select id="tenant-select"><option value="">请选择租户</option></select>
+    </div>
+    <div class="spacer"></div>
+    <button id="reload-btn">重新加载</button>
+  </div>
+
+  <div class="notice bad" id="page-error" hidden></div>
+
+  <div id="loading" class="loading-text">加载中…</div>
+
+  <div id="panels" hidden>
+    <!-- System prompt -->
+    <div class="card">
+      <div class="card-head">
+        <h2>系统提示词</h2>
+        <span class="pill" id="prompt-pill" hidden></span>
+      </div>
+      <p class="card-sub">
+        提示词决定 AI 的身份、语气与作答边界，保存后立即对新会话生效。
+        它保存在 AI 应用一侧，不在本页缓存——保存前会重新读取一次做比对，
+        避免把打开页面时的旧文本覆盖回去。
+      </p>
+
+      <div class="notice warn" id="prompt-conflict" hidden></div>
+
+      <div class="field">
+        <label for="f-prompt">提示词内容</label>
+        <textarea id="f-prompt" class="mono" spellcheck="false"></textarea>
+        <div class="hint" id="prompt-hint"></div>
+      </div>
+
+      <div class="actions-row">
+        <button class="primary" id="prompt-save-btn">保存提示词</button>
+        <button id="prompt-reset-btn" hidden>重置为平台默认</button>
+        <span class="spacer"></span>
+        <span class="hint" id="prompt-state"></span>
+      </div>
+    </div>
+
+    <!-- Guardrail: threshold + handoff -->
+    <div class="card">
+      <div class="card-head">
+        <h2>转人工与阈值</h2>
+      </div>
+      <p class="card-sub">
+        这些设置由消息管道实时读取：AI 置信度低于阈值、客户说了转人工关键词，
+        或问到屏蔽话题时，会话转交人工客服。保存后本租户已接入的渠道立即生效。
+      </p>
+
+      <div class="field narrow">
+        <label for="f-threshold">置信度阈值</label>
+        <input id="f-threshold" type="number" min="0.01" max="1" step="0.01" />
+        <div class="hint">取值 0.01 ~ 1。越高越容易转人工。</div>
+      </div>
+
+      <div class="field">
+        <label for="f-handoff">转人工关键词</label>
+        <input id="f-handoff" placeholder="以英文逗号分隔，如：转人工,人工客服,投诉" />
+        <div class="hint">留空将回退到平台默认关键词。</div>
+      </div>
+
+      <div class="field">
+        <label for="f-blocked">屏蔽话题（可选）</label>
+        <input id="f-blocked" placeholder="以英文逗号分隔" />
+        <div class="hint">命中这些话题时 AI 不作答，直接转人工。</div>
+      </div>
+
+      <div class="actions-row">
+        <button class="primary" id="guardrail-save-btn">保存</button>
+        <span class="spacer"></span>
+        <span class="hint" id="guardrail-state"></span>
+      </div>
+    </div>
+
+    <!-- Dataset binding repair -->
+    <div class="card">
+      <div class="card-head">
+        <h2>知识库绑定</h2>
+        <span class="pill" id="dataset-pill" hidden></span>
+      </div>
+      <p class="card-sub">
+        AI 应用要挂上本租户的知识库，检索才会用到上传的文档。
+        早期开通的应用可能漏挂——重新绑定一次即可修复，重复执行安全无副作用。
+      </p>
+      <div class="actions-row">
+        <button id="dataset-bind-btn">修复知识库绑定</button>
+        <span class="spacer"></span>
+        <span class="hint" id="dataset-hint"></span>
+      </div>
+    </div>
+
+    <!-- Test message -->
+    <div class="card">
+      <div class="card-head">
+        <h2>测试消息</h2>
+      </div>
+      <p class="card-sub">
+        以当前设置向 AI 应用问一句话，看看客户会得到什么回答。测试不会写入任何会话记录。
+      </p>
+      <form id="test-form">
+        <div class="field">
+          <label for="f-test">测试问题</label>
+          <input id="f-test" placeholder="例如：你们的退货时效是多久？" />
+        </div>
+        <div class="actions-row">
+          <button class="primary" type="submit" id="test-submit-btn">发送</button>
+        </div>
+      </form>
+      <div class="result-box" id="test-result" hidden></div>
+    </div>
+  </div>
+</main>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN_KEY = "unica_access_token";
+  var LOGIN_PAGE = "./index.html";
+  // Every tenant resource hangs under this root. "me" is the alias the server
+  // resolves from the caller's own claims, so a tenant's people never name their
+  // tenant; an administrator belongs to none and names one on the address.
+  var TENANT_ROOT = "/api/v1/tenants/";
+  var TENANT_ME = "me";
+
+  // What the settings endpoint answers with in place of a prompt when it could
+  // not read one. Editing is refused in that case: the textarea would otherwise
+  // hold a message rather than the prompt, and saving would publish it.
+  var PROMPT_NO_APP = "(no Dify app configured for this product line)";
+  var PROMPT_UNREADABLE_PREFIX = "(unable to fetch from Dify:";
+
+  var state = {
+    claims: null,
+    tenants: [],
+    currentTenant: null,
+    settings: null,
+    // The values the form was filled from. A write is sent only for a field the
+    // operator actually changed, and only if the server still holds what this
+    // baseline says it did.
+    baseline: null,
+    busy: false
+  };
+
+  var els = {
+    backLink: document.getElementById("back-link"),
+    tenantName: document.getElementById("tenant-name"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+
+    tenantField: document.getElementById("tenant-field"),
+    tenantSelect: document.getElementById("tenant-select"),
+    reloadBtn: document.getElementById("reload-btn"),
+
+    pageError: document.getElementById("page-error"),
+    loading: document.getElementById("loading"),
+    panels: document.getElementById("panels"),
+
+    promptPill: document.getElementById("prompt-pill"),
+    promptConflict: document.getElementById("prompt-conflict"),
+    fPrompt: document.getElementById("f-prompt"),
+    promptHint: document.getElementById("prompt-hint"),
+    promptSaveBtn: document.getElementById("prompt-save-btn"),
+    promptResetBtn: document.getElementById("prompt-reset-btn"),
+    promptState: document.getElementById("prompt-state"),
+
+    fThreshold: document.getElementById("f-threshold"),
+    fHandoff: document.getElementById("f-handoff"),
+    fBlocked: document.getElementById("f-blocked"),
+    guardrailSaveBtn: document.getElementById("guardrail-save-btn"),
+    guardrailState: document.getElementById("guardrail-state"),
+
+    datasetPill: document.getElementById("dataset-pill"),
+    datasetBindBtn: document.getElementById("dataset-bind-btn"),
+    datasetHint: document.getElementById("dataset-hint"),
+
+    testForm: document.getElementById("test-form"),
+    fTest: document.getElementById("f-test"),
+    testSubmitBtn: document.getElementById("test-submit-btn"),
+    testResult: document.getElementById("test-result"),
+
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, 4200);
+  }
+
+  // ---------- Token / claims ----------
+  // Storage access can throw under restrictive privacy settings; a failure
+  // simply means there is no session and the visitor goes back to the door.
+  function getToken() {
+    try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+  }
+  function clearToken() {
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* nothing to clear */ }
+  }
+
+  // Read-only decode of the access token payload. The server remains the
+  // authority on what this account may reach; this only decides what to show.
+  function decodeClaims(token) {
+    if (!token || typeof token !== "string") return null;
+    var parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4 !== 0) b64 += "=";
+      var claims = JSON.parse(atob(b64));
+      return claims && typeof claims === "object" ? claims : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isAdmin() { return !!state.claims && state.claims.role === "admin"; }
+
+  function goLogin() {
+    clearToken();
+    window.location.replace(LOGIN_PAGE);
+  }
+
+  // The tenant named on the address. Only an administrator can act on a tenant
+  // other than its own, so for anyone else the parameter means nothing.
+  function requestedTenant() {
+    if (!isAdmin()) return "";
+    var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  // The path segment this page addresses its tenant by.
+  function tenantSegment() {
+    if (!isAdmin()) return TENANT_ME;
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function tenantPath(suffix) {
+    return TENANT_ROOT + encodeURIComponent(tenantSegment()) + suffix;
+  }
+
+  // ---------- API ----------
+  // Wraps fetch with the Authorization header, JSON parsing, and 401 handling.
+  // The HTTP status travels on the error so a caller can tell a refusal (403)
+  // from an ordinary failure.
+  function api(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    var token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
+    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+    return fetch(path, Object.assign({}, options, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          goLogin();
+          throw new Error("unauthorized");
+        }
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
+          }
+          if (!res.ok) {
+            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
+            var err = new Error(msg);
+            err.status = res.status;
+            throw err;
+          }
+          return data;
+        });
+      });
+  }
+
+  function reportError(prefix, err) {
+    if (err.message === "unauthorized") return;
+    toast(prefix + "：" + err.message, "error");
+  }
+
+  els.logoutBtn.addEventListener("click", goLogin);
+
+  // ---------- Tenants ----------
+  // The tenant roster is an administrator surface; a user reads its one tenant
+  // through the "me" alias, which is why the two roles load different addresses.
+  function loadTenants() {
+    if (!isAdmin()) {
+      return api(TENANT_ROOT + TENANT_ME)
+        .then(function (tenant) {
+          state.tenants = tenant ? [tenant] : [];
+          renderTenantOptions();
+        })
+        .catch(function (err) { failPage("加载租户信息失败", err); });
+    }
+    return api("/api/v1/tenants")
+      .then(function (data) {
+        state.tenants = Array.isArray(data) ? data : [];
+        renderTenantOptions();
+      })
+      .catch(function (err) { failPage("加载租户列表失败", err); });
+  }
+
+  function renderTenantOptions() {
+    els.tenantField.hidden = !isAdmin();
+    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
+
+    if (state.tenants.length === 0) {
+      els.tenantSelect.innerHTML = '<option value="">暂无租户</option>';
+      els.loading.hidden = true;
+      showPageError("还没有租户", "AI 设置属于某个租户，请先开户。");
+      return;
+    }
+    els.tenantSelect.innerHTML = state.tenants.map(function (t) {
+      return '<option value="' + escapeHtml(t.id) + '">' + escapeHtml(t.display_name || t.name) + "</option>";
+    }).join("");
+
+    // The address may name the tenant to act on; otherwise the first one.
+    var initial = findTenant(requestedTenant()) || state.tenants[0];
+    els.tenantSelect.value = String(initial.id);
+    selectTenant(els.tenantSelect.value);
+  }
+
+  function findTenant(id) {
+    for (var i = 0; i < state.tenants.length; i++) {
+      if (String(state.tenants[i].id) === String(id)) return state.tenants[i];
+    }
+    return null;
+  }
+
+  function selectTenant(id) {
+    state.currentTenant = findTenant(id);
+    els.tenantName.textContent = state.currentTenant
+      ? (state.currentTenant.display_name || state.currentTenant.name)
+      : "";
+    hidePageError();
+    loadSettings();
+  }
+
+  els.tenantSelect.addEventListener("change", function () {
+    selectTenant(els.tenantSelect.value);
+  });
+
+  els.reloadBtn.addEventListener("click", function () {
+    if (state.currentTenant || !isAdmin()) loadSettings();
+    else loadTenants();
+  });
+
+  // ---------- Settings ----------
+  function loadSettings() {
+    if (isAdmin() && !state.currentTenant) return Promise.resolve();
+    els.loading.hidden = false;
+    els.loading.textContent = "加载中…";
+    els.panels.hidden = true;
+
+    return api(tenantPath("/ai-settings"))
+      .then(function (data) {
+        state.settings = data || {};
+        fillForm(state.settings);
+        els.loading.hidden = true;
+        els.panels.hidden = false;
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.loading.hidden = true;
+        showPageError("加载 AI 设置失败", err.message);
+      });
+  }
+
+  // The baseline is what the form was filled from; every later comparison —
+  // "did the operator change this?" and "did the server change under us?" — is
+  // made against it rather than against the widgets.
+  function fillForm(cfg) {
+    var prompt = typeof cfg.system_prompt === "string" ? cfg.system_prompt : "";
+    var keywords = Array.isArray(cfg.handoff_keywords) ? cfg.handoff_keywords : [];
+    var topics = Array.isArray(cfg.blocked_topics) ? cfg.blocked_topics : [];
+    var threshold = typeof cfg.confidence_threshold === "number" ? cfg.confidence_threshold : 0.7;
+
+    state.baseline = {
+      prompt: prompt,
+      threshold: threshold,
+      keywords: keywords.slice(),
+      topics: topics.slice()
+    };
+
+    els.fPrompt.value = prompt;
+    els.fThreshold.value = threshold;
+    els.fHandoff.value = keywords.join(",");
+    els.fBlocked.value = topics.join(",");
+
+    els.promptConflict.hidden = true;
+    els.promptState.textContent = "";
+    els.guardrailState.textContent = "";
+
+    applyPromptAvailability(prompt);
+    applyDatasetAvailability();
+    // Prompt reset and dataset binding reach into the AI application on the
+    // platform's behalf, and the server allows them to an administrator only.
+    els.promptResetBtn.hidden = !isAdmin();
+  }
+
+  // Whether the prompt in hand is a prompt at all. When the settings endpoint
+  // could not read one it answers with an explanation in its place — writing
+  // that back would replace the live prompt with a message about it, which is
+  // exactly the accident this page must not allow.
+  function promptIsEditable(prompt) {
+    if (prompt === PROMPT_NO_APP) return false;
+    return prompt.indexOf(PROMPT_UNREADABLE_PREFIX) !== 0;
+  }
+
+  function applyPromptAvailability(prompt) {
+    var editable = promptIsEditable(prompt);
+    els.fPrompt.disabled = !editable;
+    els.promptSaveBtn.disabled = !editable;
+    els.promptResetBtn.disabled = prompt === PROMPT_NO_APP;
+
+    if (prompt === PROMPT_NO_APP) {
+      setPill(els.promptPill, "warn", "未配置 AI 应用");
+      els.promptHint.textContent = "本租户还没有 AI 应用，提示词无处可写。请联系管理员完成开通。";
+      return;
+    }
+    if (!editable) {
+      setPill(els.promptPill, "bad", "暂时读不到");
+      els.promptHint.textContent =
+        "读取当前提示词失败，为避免把错误信息写回线上，编辑已停用。请稍后点「重新加载」重试。" +
+        "服务端说明：" + prompt;
+      return;
+    }
+    setPill(els.promptPill, "ok", "已同步");
+    els.promptHint.textContent = "保存会直接更新 AI 应用中的提示词，对新会话立即生效。";
+  }
+
+  function applyDatasetAvailability() {
+    var t = state.currentTenant;
+    var hasApp = !!(t && t.dify_agent_id);
+    var hasDataset = !!(t && t.dify_dataset_id);
+    // The endpoint is administrator-only on the server; a tenant's own people
+    // are told who can run the repair instead of meeting a refusal.
+    var allowed = isAdmin() && hasApp && hasDataset;
+
+    els.datasetBindBtn.disabled = !allowed;
+    if (!hasApp || !hasDataset) {
+      setPill(els.datasetPill, "warn", "未开通");
+      els.datasetHint.textContent = "本租户还没有 AI 应用或知识库，请联系管理员完成开通。";
+      return;
+    }
+    setPill(els.datasetPill, "ok", "已开通");
+    els.datasetHint.textContent = isAdmin()
+      ? "只在检索用不到已上传文档时才需要执行。"
+      : "该修复由管理员执行，如检索用不到已上传的文档请联系管理员。";
+  }
+
+  function setPill(el, kind, text) {
+    el.className = "pill " + kind;
+    el.textContent = text;
+    el.hidden = false;
+  }
+
+  // ---------- Prompt ----------
+  els.promptSaveBtn.addEventListener("click", function () {
+    if (state.busy) return;
+    var next = els.fPrompt.value;
+    if (next === state.baseline.prompt) {
+      toast("提示词没有改动", "warn");
+      return;
+    }
+    if (!next.trim()) {
+      toast("提示词不能为空", "error");
+      return;
+    }
+
+    // Re-read before writing. Between opening this page and pressing save, a
+    // colleague — or a platform prompt reset — may have changed the prompt; the
+    // textarea still holds what it looked like on open, and saving it blind is
+    // how that change gets silently undone.
+    setBusy(true, els.promptSaveBtn, "保存中…");
+    api(tenantPath("/ai-settings"))
+      .then(function (current) {
+        var live = current && typeof current.system_prompt === "string" ? current.system_prompt : "";
+        if (!promptIsEditable(live)) {
+          throw new Error("当前读不到线上提示词，已放弃保存：" + live);
+        }
+        if (live !== state.baseline.prompt) {
+          showPromptConflict(live);
+          throw new Error("skip");
+        }
+        return api(tenantPath("/ai-settings/prompt"), {
+          method: "PUT",
+          body: JSON.stringify({ prompt: next })
+        });
+      })
+      .then(function () {
+        state.baseline.prompt = next;
+        els.promptConflict.hidden = true;
+        els.promptState.textContent = "已保存 " + nowText();
+        toast("提示词已保存", "success");
+      })
+      .catch(function (err) {
+        if (err.message === "skip" || err.message === "unauthorized") return;
+        reportError("保存提示词失败", err);
+      })
+      .finally(function () { setBusy(false, els.promptSaveBtn, "保存提示词"); });
+  });
+
+  // The conflict is not resolved for the operator: the two texts are different
+  // intentions and only a person can say which one is meant.
+  function showPromptConflict(live) {
+    els.promptConflict.className = "notice warn";
+    els.promptConflict.textContent = "";
+
+    var title = document.createElement("span");
+    title.className = "title";
+    title.textContent = "提示词已被他人修改，未保存";
+    var detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent = "打开本页后线上提示词发生了变化。请先加载线上版本，确认后再重新编辑，" +
+      "以免覆盖别人的改动。";
+    var row = document.createElement("div");
+    row.className = "actions-row";
+    var loadBtn = document.createElement("button");
+    loadBtn.type = "button";
+    loadBtn.textContent = "加载线上版本";
+    loadBtn.addEventListener("click", function () {
+      els.fPrompt.value = live;
+      state.baseline.prompt = live;
+      els.promptConflict.hidden = true;
+      toast("已载入线上提示词", "success");
+    });
+    row.appendChild(loadBtn);
+
+    els.promptConflict.appendChild(title);
+    els.promptConflict.appendChild(detail);
+    els.promptConflict.appendChild(row);
+    els.promptConflict.hidden = false;
+  }
+
+  els.promptResetBtn.addEventListener("click", function () {
+    if (state.busy) return;
+    if (!confirm("确认把提示词恢复为平台默认模板吗？当前提示词会被覆盖。")) return;
+
+    setBusy(true, els.promptResetBtn, "重置中…");
+    api(tenantPath("/ai-settings/prompt/reset"), { method: "POST" })
+      .then(function () {
+        toast("提示词已重置为平台默认", "success");
+        // The reset wrote a prompt this page has never seen, so the baseline
+        // comes from a fresh read rather than from anything held here.
+        return loadSettings();
+      })
+      .catch(function (err) { reportError("重置提示词失败", err); })
+      .finally(function () { setBusy(false, els.promptResetBtn, "重置为平台默认"); });
+  });
+
+  // ---------- Guardrail ----------
+  els.guardrailSaveBtn.addEventListener("click", function () {
+    if (state.busy) return;
+
+    var threshold = parseFloat(els.fThreshold.value);
+    var keywords = splitCsv(els.fHandoff.value);
+    var topics = splitCsv(els.fBlocked.value);
+
+    var thresholdChanged = threshold !== state.baseline.threshold;
+    var rulesChanged = !sameList(keywords, state.baseline.keywords) ||
+      !sameList(topics, state.baseline.topics);
+
+    if (!thresholdChanged && !rulesChanged) {
+      toast("没有需要保存的改动", "warn");
+      return;
+    }
+    if (thresholdChanged && (isNaN(threshold) || threshold <= 0 || threshold > 1)) {
+      toast("置信度阈值须大于 0 且不超过 1", "error");
+      return;
+    }
+
+    // Same rule as the prompt: only the changed fields are written, and only if
+    // the server still holds what this page was filled from.
+    setBusy(true, els.guardrailSaveBtn, "保存中…");
+    api(tenantPath("/ai-settings"))
+      .then(function (current) {
+        current = current || {};
+        var liveThreshold = typeof current.confidence_threshold === "number" ? current.confidence_threshold : null;
+        var liveKeywords = Array.isArray(current.handoff_keywords) ? current.handoff_keywords : [];
+        var liveTopics = Array.isArray(current.blocked_topics) ? current.blocked_topics : [];
+
+        if (thresholdChanged && liveThreshold !== state.baseline.threshold) {
+          throw conflictError("置信度阈值");
+        }
+        if (rulesChanged && (!sameList(liveKeywords, state.baseline.keywords) ||
+            !sameList(liveTopics, state.baseline.topics))) {
+          throw conflictError("转人工关键词或屏蔽话题");
+        }
+
+        var writes = Promise.resolve();
+        if (rulesChanged) {
+          writes = writes.then(function () {
+            return api(tenantPath("/ai-settings/handoff-rules"), {
+              method: "PUT",
+              body: JSON.stringify({ handoff_keywords: keywords, blocked_topics: topics })
+            });
+          });
+        }
+        if (thresholdChanged) {
+          writes = writes.then(function () {
+            return api(tenantPath("/ai-settings/threshold"), {
+              method: "PUT",
+              body: JSON.stringify({ threshold: threshold })
+            });
+          });
+        }
+        return writes;
+      })
+      .then(function () {
+        toast("设置已保存，本租户渠道立即生效", "success");
+        // The server back-fills an empty keyword list with its defaults, so the
+        // saved state is read back rather than assumed. The stamp goes on after
+        // that read, which is what clears the form's previous state text.
+        var stamp = nowText();
+        return loadSettings().then(function () {
+          els.guardrailState.textContent = "已保存 " + stamp;
+        });
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        reportError("保存失败", err);
+      })
+      .finally(function () { setBusy(false, els.guardrailSaveBtn, "保存"); });
+  });
+
+  function conflictError(what) {
+    return new Error(what + "已被他人修改，本次未保存。请点「重新加载」查看当前设置后再改。");
+  }
+
+  // ---------- Dataset binding ----------
+  els.datasetBindBtn.addEventListener("click", function () {
+    if (state.busy) return;
+    setBusy(true, els.datasetBindBtn, "修复中…");
+    api(tenantPath("/ai-settings/dataset/bind"), { method: "POST" })
+      .then(function () { toast("知识库已重新绑定到 AI 应用", "success"); })
+      .catch(function (err) { reportError("修复绑定失败", err); })
+      .finally(function () { setBusy(false, els.datasetBindBtn, "修复知识库绑定"); });
+  });
+
+  // ---------- Test message ----------
+  els.testForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (state.busy) return;
+    var message = els.fTest.value.trim();
+    if (!message) {
+      toast("请输入测试问题", "error");
+      return;
+    }
+
+    setBusy(true, els.testSubmitBtn, "发送中…");
+    els.testResult.hidden = true;
+    api(tenantPath("/ai-settings/test"), {
+      method: "POST",
+      body: JSON.stringify({ message: message })
+    })
+      .then(function (data) { renderTestResult(data || {}); })
+      .catch(function (err) { reportError("测试消息失败", err); })
+      .finally(function () { setBusy(false, els.testSubmitBtn, "发送"); });
+  });
+
+  function renderTestResult(data) {
+    els.testResult.textContent = "";
+    var answer = document.createElement("div");
+    answer.className = "answer";
+    answer.textContent = data.answer || "(AI 没有返回内容)";
+
+    var meta = document.createElement("div");
+    meta.className = "meta";
+    var parts = [];
+    if (typeof data.confidence === "number") {
+      parts.push("置信度 " + data.confidence.toFixed(2));
+      var threshold = state.baseline ? state.baseline.threshold : null;
+      if (typeof threshold === "number") {
+        parts.push(data.confidence < threshold ? "低于当前阈值，线上会转人工" : "高于当前阈值，线上会直接作答");
+      }
+    }
+    if (typeof data.tokens_used === "number") parts.push("消耗 " + data.tokens_used + " tokens");
+    meta.textContent = parts.join(" · ");
+
+    els.testResult.appendChild(answer);
+    if (parts.length) els.testResult.appendChild(meta);
+    els.testResult.hidden = false;
+  }
+
+  // ---------- Page-level messages ----------
+  function showPageError(title, detail) {
+    els.pageError.textContent = "";
+    var t = document.createElement("span");
+    t.className = "title";
+    t.textContent = title;
+    var d = document.createElement("span");
+    d.className = "detail";
+    d.textContent = detail || "";
+    els.pageError.appendChild(t);
+    els.pageError.appendChild(d);
+    els.pageError.hidden = false;
+    els.panels.hidden = true;
+  }
+
+  function hidePageError() { els.pageError.hidden = true; }
+
+  function failPage(prefix, err) {
+    if (err.message === "unauthorized") return;
+    els.loading.hidden = true;
+    showPageError(prefix, err.message);
+  }
+
+  // ---------- Utils ----------
+  // One flag for the whole page: every action here writes to the same tenant,
+  // so letting two run at once is only a way to get a confusing result.
+  function setBusy(on, btn, label) {
+    state.busy = on;
+    btn.disabled = on;
+    if (on) {
+      btn.dataset.label = btn.textContent;
+      btn.textContent = label;
+    } else {
+      btn.textContent = btn.dataset.label || label;
+    }
+  }
+
+  function splitCsv(str) {
+    return String(str || "")
+      .split(",")
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
+  }
+
+  function sameList(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (String(a[i]) !== String(b[i])) return false;
+    }
+    return true;
+  }
+
+  function nowText() {
+    return new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---------- Init ----------
+  state.claims = decodeClaims(getToken());
+  if (!state.claims) {
+    goLogin();
+    return;
+  }
+  els.userEmail.textContent = state.claims.email || "";
+  if (state.claims.role !== "admin" && !state.claims.tenant_id) {
+    // A user with no tenant cannot be scoped by this page.
+    goLogin();
+    return;
+  }
+
+  loadTenants();
+})();
+</script>

@@ -1,4 +1,4 @@
-package handler
+package identity
 
 import (
 	"context"
@@ -16,89 +16,21 @@ import (
 	"github.com/kefu/unica/admin/internal/repository"
 )
 
-// customerScopedRole is the single role a customer's own administrator needs:
-// product_admin is the only role whose permission set covers channels,
-// AI config, the knowledge base and violation review at once, and it is scoped
-// to one product line, so it grants none of that anywhere else.
-const customerScopedRole = rbac.RoleProductAdmin
+// tenantScopedRole is the role a tenant's own people hold: it covers that
+// tenant's channels, AI settings, knowledge base and violation review, and
+// nothing outside the tenant it is bound to.
+const tenantScopedRole = rbac.RoleUser
 
 // chatwootConfigKey is the config_json key that holds a product line's Chatwoot
 // binding. Its presence is what makes the Chatwoot step skippable on a re-run.
 const chatwootConfigKey = "chatwoot"
 
 // CustomerAuditResource is the resource_type an onboarding call is filed under.
+// The value predates the move to tenant vocabulary and is kept so the whole
+// trail stays queryable under one name.
 const CustomerAuditResource = "customer"
 
 const chatwootUnconfiguredMessage = "chatwoot provisioning is unavailable: CHATWOOT_BASE_URL and CHATWOOT_PLATFORM_TOKEN are not configured for this service"
-
-// customerProductLines is the product-line access onboarding needs: resolve or
-// create a line by name, and own the Chatwoot binding on it.
-type customerProductLines interface {
-	GetByName(ctx context.Context, name string) (*repository.ProductLine, error)
-	Create(ctx context.Context, name, displayName string, chatwootAccountID *int) (*repository.ProductLine, error)
-	GetConfigJSON(ctx context.Context, id string) (json.RawMessage, error)
-	SetConfigKey(ctx context.Context, id, key string, value interface{}) error
-	SetChatwootAccountID(ctx context.Context, id string, accountID int) error
-}
-
-// customerUsers is the user access onboarding needs: look one up by email for
-// idempotency, or create it.
-type customerUsers interface {
-	GetByEmail(ctx context.Context, email string) (*repository.User, error)
-	Create(ctx context.Context, email, passwordHash, displayName string) (*repository.User, error)
-}
-
-// customerRoles is the role access onboarding needs to make the scoped grant
-// exist exactly once.
-type customerRoles interface {
-	GetByName(ctx context.Context, name string) (*repository.RoleModel, error)
-	GetUserRoles(ctx context.Context, userID string) ([]repository.UserRole, error)
-	AssignRole(ctx context.Context, userID, roleID string, productLineID *string) (*repository.UserRole, error)
-}
-
-// difyProvisioner is the product line handler's provisioning core, reached
-// without an http.ResponseWriter so a failure here can be reported as one step
-// of the onboarding result instead of ending the request.
-type difyProvisioner interface {
-	provisionDifyLine(ctx context.Context, productLineID string) (*provisionDifyResponse, *difyProvisionError)
-}
-
-// CustomerHandler onboards a customer in one call: product line, Dify
-// provisioning, a scoped portal account, and a Chatwoot tenant. Every step is
-// idempotent, so a run that failed halfway is resumed by re-POSTing the same
-// body rather than by cleaning up first.
-type CustomerHandler struct {
-	plRepo   customerProductLines
-	userRepo customerUsers
-	roleRepo customerRoles
-	dify     difyProvisioner
-	// chatwoot is nil when no deployment is configured, which is the only
-	// distinction the Chatwoot step needs between "unavailable" and "ready".
-	chatwoot           *bridge.ChatwootClient
-	chatwootWebhookURL string
-	bcryptCost         int
-}
-
-// NewCustomerHandler creates a customer onboarding handler. chatwoot may be nil.
-func NewCustomerHandler(
-	plRepo *repository.ProductLineRepository,
-	userRepo *repository.UserRepository,
-	roleRepo *repository.RoleRepository,
-	dify *ProductLineHandler,
-	chatwoot *bridge.ChatwootClient,
-	chatwootWebhookURL string,
-	bcryptCost int,
-) *CustomerHandler {
-	return &CustomerHandler{
-		plRepo:             plRepo,
-		userRepo:           userRepo,
-		roleRepo:           roleRepo,
-		dify:               dify,
-		chatwoot:           chatwoot,
-		chatwootWebhookURL: chatwootWebhookURL,
-		bcryptCost:         bcryptCost,
-	}
-}
 
 type createCustomerRequest struct {
 	Name          string `json:"name"`
@@ -117,11 +49,17 @@ type customerProductLineResult struct {
 
 // customerDifyResult reports the Dify step. Provisioned is false both when the
 // binding already existed and when the step could not run; Message says which.
+//
+// Warnings are the pieces of provisioning that failed without stopping it. They
+// belong in the response rather than the log alone: the dataset binding is the
+// one that silently did not happen for months, and this response is the only
+// thing an operator reads after onboarding a tenant.
 type customerDifyResult struct {
-	Provisioned bool   `json:"provisioned"`
-	DifyAgentID string `json:"dify_agent_id"`
-	DatasetID   string `json:"dataset_id"`
-	Message     string `json:"message,omitempty"`
+	Provisioned bool     `json:"provisioned"`
+	DifyAgentID string   `json:"dify_agent_id"`
+	DatasetID   string   `json:"dataset_id"`
+	Message     string   `json:"message,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"`
 }
 
 // customerPortalResult reports the portal account step. GeneratedPassword is
@@ -171,19 +109,22 @@ type chatwootConfigBlock struct {
 	WebhookToken string `json:"webhook_token"`
 }
 
-// HandleCustomers handles POST /api/v1/customers.
-func (h *CustomerHandler) HandleCustomers(w http.ResponseWriter, r *http.Request) {
+// HandleOnboard handles POST /api/v1/tenants: bring a tenant into existence.
+// Product line, Dify provisioning, a scoped portal account and a Chatwoot
+// tenant in one call. Every step is idempotent, so a run that failed halfway is
+// resumed by re-POSTing the same body rather than by cleaning up first.
+func (h *TenantHandler) HandleOnboard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	h.createCustomer(w, r)
+	h.onboardTenant(w, r)
 }
 
-func (h *CustomerHandler) createCustomer(w http.ResponseWriter, r *http.Request) {
+func (h *TenantHandler) onboardTenant(w http.ResponseWriter, r *http.Request) {
 	var req createCustomerRequest
-	if err := DecodeJSON(r, &req); err != nil {
-		ErrorJSON(w, http.StatusBadRequest, "invalid request body")
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -191,7 +132,7 @@ func (h *CustomerHandler) createCustomer(w http.ResponseWriter, r *http.Request)
 	req.AdminEmail = strings.TrimSpace(req.AdminEmail)
 
 	if req.Name == "" || req.DisplayName == "" || req.AdminEmail == "" {
-		ErrorJSON(w, http.StatusBadRequest, "name, display_name and admin_email required")
+		errorJSON(w, http.StatusBadRequest, "name, display_name and admin_email required")
 		return
 	}
 
@@ -199,21 +140,24 @@ func (h *CustomerHandler) createCustomer(w http.ResponseWriter, r *http.Request)
 
 	pl, plCreated, err := h.ensureProductLine(ctx, req.Name, req.DisplayName)
 	if err != nil {
-		log.Printf("[customers] product line error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to create product line")
+		log.Printf("[tenants] product line error: %v", err)
+		errorJSON(w, http.StatusInternalServerError, "failed to create product line")
 		return
 	}
 
 	dify := h.ensureDify(ctx, pl.ID)
 
-	portal, err := h.ensurePortalAccount(ctx, req, pl.ID)
+	portal, portalUser, err := h.ensurePortalAccount(ctx, req, pl.ID)
 	if err != nil {
-		log.Printf("[customers] portal account error: %v", err)
-		ErrorJSON(w, http.StatusInternalServerError, "failed to create the portal account")
+		log.Printf("[tenants] portal account error: %v", err)
+		errorJSON(w, http.StatusInternalServerError, "failed to create the portal account")
 		return
 	}
 
-	chatwoot, chatwootCreated := h.ensureChatwoot(ctx, pl, req)
+	chatwoot := h.ensureChatwoot(ctx, pl, req, portalUser)
+	if chatwoot.portalNote != "" {
+		portal.Message = joinMessages(portal.Message, chatwoot.portalNote)
+	}
 
 	resp := createCustomerResponse{
 		ID:            pl.ID,
@@ -226,20 +170,20 @@ func (h *CustomerHandler) createCustomer(w http.ResponseWriter, r *http.Request)
 		},
 		Dify:          dify,
 		PortalAccount: portal,
-		Chatwoot:      chatwoot,
+		Chatwoot:      chatwoot.result,
 	}
 
 	// A run that created nothing is a resumed run that had nothing left to do,
 	// and 200 is what says so; 201 stays reserved for a run that added something.
 	status := http.StatusOK
-	if plCreated || dify.Provisioned || portal.Created || chatwootCreated {
+	if plCreated || dify.Provisioned || portal.Created || chatwoot.created {
 		status = http.StatusCreated
 	}
-	JSON(w, status, resp)
+	writeJSON(w, status, resp)
 }
 
 // ensureProductLine reuses the line with this name or creates it.
-func (h *CustomerHandler) ensureProductLine(ctx context.Context, name, displayName string) (*repository.ProductLine, bool, error) {
+func (h *TenantHandler) ensureProductLine(ctx context.Context, name, displayName string) (*repository.ProductLine, bool, error) {
 	existing, err := h.plRepo.GetByName(ctx, name)
 	if err != nil {
 		return nil, false, fmt.Errorf("lookup product line %q: %w", name, err)
@@ -258,35 +202,37 @@ func (h *CustomerHandler) ensureProductLine(ctx context.Context, name, displayNa
 	return pl, true, nil
 }
 
-// ensureDify runs the product line's Dify provisioning. Its failures are
-// reported, not raised: the line and the portal account are still worth having,
-// and a re-POST resumes the Dify step once the platform is reachable.
-func (h *CustomerHandler) ensureDify(ctx context.Context, productLineID string) customerDifyResult {
-	resp, perr := h.dify.provisionDifyLine(ctx, productLineID)
+// ensureDify runs the tenant's Dify provisioning. Its failures are reported,
+// not raised: the line and the portal account are still worth having, and a
+// re-POST resumes the Dify step once the platform is reachable.
+func (h *TenantHandler) ensureDify(ctx context.Context, productLineID string) customerDifyResult {
+	resp, perr := h.provisionDifyLine(ctx, productLineID)
 	if perr != nil {
-		log.Printf("[customers] dify step degraded for product line %s: %v", productLineID, perr)
+		log.Printf("[tenants] dify step degraded for product line %s: %v", productLineID, perr)
 		return customerDifyResult{Message: perr.message}
 	}
 	return customerDifyResult{
 		Provisioned: resp.Provisioned,
 		DifyAgentID: resp.DifyAgentID,
 		DatasetID:   resp.DifyDatasetID,
+		Warnings:    resp.Warnings,
 	}
 }
 
-// ensurePortalAccount reuses the account with this email or creates it, and in
-// both cases makes sure the scoped role grant exists.
+// ensurePortalAccount reuses the account with this email or creates it bound to
+// the tenant. The binding is part of the insert, not a follow-up grant, so
+// there is no window in which the account exists unauthorised and nothing to
+// reconcile on a re-run.
 //
-// A failed role grant degrades into Message instead of raising: the account is
-// already there either way, and a 500 would swallow a generated password that
-// this run is the only chance to read.
-func (h *CustomerHandler) ensurePortalAccount(ctx context.Context, req createCustomerRequest, productLineID string) (customerPortalResult, error) {
-	result := customerPortalResult{Email: req.AdminEmail, Role: string(customerScopedRole)}
+// The second return value is the account only when it is this tenant's own, so
+// the Chatwoot step knows whether there is anything it may write back to.
+func (h *TenantHandler) ensurePortalAccount(ctx context.Context, req createCustomerRequest, productLineID string) (customerPortalResult, *repository.User, error) {
+	result := customerPortalResult{Email: req.AdminEmail, Role: tenantScopedRole}
 	var messages []string
 
 	user, err := h.userRepo.GetByEmail(ctx, req.AdminEmail)
 	if err != nil {
-		return result, fmt.Errorf("lookup user %q: %w", req.AdminEmail, err)
+		return result, nil, fmt.Errorf("lookup user %q: %w", req.AdminEmail, err)
 	}
 
 	if user != nil && req.AdminPassword != "" {
@@ -296,119 +242,109 @@ func (h *CustomerHandler) ensurePortalAccount(ctx context.Context, req createCus
 			"the supplied password was not applied: the portal account already existed and keeps its current password")
 	}
 
+	owned := true
 	if user == nil {
 		password := req.AdminPassword
 		generated := false
 		if password == "" {
 			password, err = generatePassword(generatedPasswordLength)
 			if err != nil {
-				return result, err
+				return result, nil, err
 			}
 			generated = true
 		}
 
 		hash, err := auth.HashPassword(password, h.bcryptCost)
 		if err != nil {
-			return result, fmt.Errorf("hash password: %w", err)
+			return result, nil, fmt.Errorf("hash password: %w", err)
 		}
 
-		user, err = h.userRepo.Create(ctx, req.AdminEmail, hash, req.DisplayName)
+		tenantID := productLineID
+		user, err = h.userRepo.Create(ctx, req.AdminEmail, hash, req.DisplayName, tenantScopedRole, &tenantID)
 		if err != nil {
-			return result, fmt.Errorf("create user %q: %w", req.AdminEmail, err)
+			return result, nil, fmt.Errorf("create user %q: %w", req.AdminEmail, err)
 		}
 		if user == nil {
-			return result, fmt.Errorf("create user %q returned no record", req.AdminEmail)
+			return result, nil, fmt.Errorf("create user %q returned no record", req.AdminEmail)
 		}
 
 		result.Created = true
 		if generated {
 			result.GeneratedPassword = password
 		}
-	}
-
-	if err := h.ensureScopedRole(ctx, user.ID, productLineID); err != nil {
-		log.Printf("[customers] role grant degraded for user %s on product line %s: %v", user.ID, productLineID, err)
+	} else if !accountBelongsToTenant(user, productLineID) {
+		// The account is somebody else's already. Rebinding it here would move
+		// a live account between tenants on the strength of a matching email,
+		// so it is reported instead.
+		owned = false
+		log.Printf("[tenants] portal account %s belongs to role %q tenant %v, not to product line %s",
+			user.ID, user.Role, user.ProductLineID, productLineID)
 		messages = append(messages,
-			"the scoped role was not granted ("+err.Error()+"); re-post this request to retry it")
+			"the portal account with this email belongs to another role or tenant and was left untouched; "+
+				"use a different admin_email or move that account by hand")
 	}
 
+	result.Role = user.Role
 	result.Message = strings.Join(messages, "; ")
-	return result, nil
+	if !owned {
+		return result, nil, nil
+	}
+	return result, user, nil
 }
 
-// ensureScopedRole grants the scoped role unless the same grant is already
-// there: AssignRole would otherwise fail the whole re-run on the unique index.
-//
-// The grant is gated on the caller's own authority. The route's permission check
-// admits every holder of manage_users, which includes product admins, so without
-// this check onboarding would be a way to hand out a role on a product line the
-// caller does not administer.
-func (h *CustomerHandler) ensureScopedRole(ctx context.Context, userID, productLineID string) error {
-	assigned, err := h.roleRepo.GetUserRoles(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("read roles of user %s: %w", userID, err)
-	}
-	for _, ur := range assigned {
-		if ur.RoleName == string(customerScopedRole) && ur.ProductLineID != nil && *ur.ProductLineID == productLineID {
-			return nil
-		}
-	}
-
-	claims := auth.GetClaims(ctx)
-	if claims == nil {
-		return fmt.Errorf("the caller carries no claims, role %s was not assigned", customerScopedRole)
-	}
-	effectiveRoles := append([]string{claims.Role}, claims.Roles...)
-	if !rbac.CanAssignRole(effectiveRoles, claims.ProductLineIDs, string(customerScopedRole), &productLineID) {
-		return fmt.Errorf("caller %s may not assign role %s on product line %s", claims.UserID, customerScopedRole, productLineID)
-	}
-
-	role, err := h.roleRepo.GetByName(ctx, string(customerScopedRole))
-	if err != nil {
-		return fmt.Errorf("lookup role %s: %w", customerScopedRole, err)
-	}
-	if role == nil {
-		return fmt.Errorf("role %s is not defined", customerScopedRole)
-	}
-
-	if _, err := h.roleRepo.AssignRole(ctx, userID, role.ID, &productLineID); err != nil {
-		return fmt.Errorf("assign role %s on product line %s: %w", customerScopedRole, productLineID, err)
-	}
-	return nil
+// accountBelongsToTenant reports whether an existing account is already the
+// tenant's own user.
+func accountBelongsToTenant(user *repository.User, productLineID string) bool {
+	return user.Role == tenantScopedRole &&
+		user.ProductLineID != nil && *user.ProductLineID == productLineID
 }
 
-// ensureChatwoot provisions a Chatwoot tenant when one is not recorded yet. The
-// second return value reports whether this run created something in Chatwoot.
+// chatwootStep is the outcome of the Chatwoot step: what to report, whether
+// this run created anything in Chatwoot, and anything the portal account's own
+// report has to gain from it.
+type chatwootStep struct {
+	result     customerChatwootResult
+	created    bool
+	portalNote string
+}
+
+// ensureChatwoot provisions a Chatwoot tenant when one is not recorded yet.
 //
 // Provisioning is a chain of calls that cannot be rolled back, so each piece is
 // stored the moment it exists and the stored block is what drives the next run:
 // a run that dies halfway leaves a partial binding, and the run after it resumes
 // from that binding instead of minting a second account.
-func (h *CustomerHandler) ensureChatwoot(ctx context.Context, pl *repository.ProductLine, req createCustomerRequest) (customerChatwootResult, bool) {
+func (h *TenantHandler) ensureChatwoot(
+	ctx context.Context,
+	pl *repository.ProductLine,
+	req createCustomerRequest,
+	portalUser *repository.User,
+) chatwootStep {
 	if !h.chatwoot.Configured() {
-		return customerChatwootResult{Reason: chatwootUnconfiguredMessage}, false
+		return chatwootStep{result: customerChatwootResult{Reason: chatwootUnconfiguredMessage}}
 	}
 
 	raw, err := h.plRepo.GetConfigJSON(ctx, pl.ID)
 	if err != nil {
-		log.Printf("[customers] chatwoot step degraded: read config_json of %s: %v", pl.ID, err)
-		return customerChatwootResult{Reason: "failed to read the product line configuration"}, false
+		log.Printf("[tenants] chatwoot step degraded: read config_json of %s: %v", pl.ID, err)
+		return chatwootStep{result: customerChatwootResult{Reason: "failed to read the product line configuration"}}
 	}
 	if existing, ok := readChatwootBlock(raw); ok {
 		// The column is denormalised from the block, so a run that wrote the
 		// block but not the column is repaired here rather than left skewed.
 		if pl.ChatwootAccountID == nil || *pl.ChatwootAccountID != existing.AccountID {
 			if err := h.plRepo.SetChatwootAccountID(ctx, pl.ID, existing.AccountID); err != nil {
-				log.Printf("[customers] WARN: chatwoot_account_id not repaired for %s: %v", pl.ID, err)
+				log.Printf("[tenants] WARN: chatwoot_account_id not repaired for %s: %v", pl.ID, err)
 			}
 		}
-		return h.completeChatwootBinding(ctx, pl, req, existing, false)
+		return h.completeChatwootBinding(ctx, pl, req, portalUser, existing, false)
 	}
 
 	account, err := h.chatwoot.CreateAccount(ctx, pl.DisplayName)
 	if err != nil {
-		log.Printf("[customers] chatwoot step degraded: %v", err)
-		return customerChatwootResult{Reason: "failed to create the chatwoot account: " + err.Error()}, false
+		log.Printf("[tenants] chatwoot step degraded: %v", err)
+		return chatwootStep{result: customerChatwootResult{
+			Reason: "failed to create the chatwoot account: " + err.Error()}}
 	}
 
 	block := chatwootConfigBlock{
@@ -422,17 +358,20 @@ func (h *CustomerHandler) ensureChatwoot(ctx context.Context, pl *repository.Pro
 	if err := h.plRepo.SetConfigKey(ctx, pl.ID, chatwootConfigKey, block); err != nil {
 		// This write is the only remaining window in which an account can exist
 		// with nothing referencing it.
-		log.Printf("[customers] chatwoot step degraded: write config_json of %s: %v", pl.ID, err)
+		log.Printf("[tenants] chatwoot step degraded: write config_json of %s: %v", pl.ID, err)
 		h.logOrphanChatwootAccount(pl.ID, account.ID)
-		return customerChatwootResult{Reason: "failed to store the chatwoot configuration"}, true
+		return chatwootStep{
+			result:  customerChatwootResult{Reason: "failed to store the chatwoot configuration"},
+			created: true,
+		}
 	}
 	if err := h.plRepo.SetChatwootAccountID(ctx, pl.ID, account.ID); err != nil {
 		// The binding is already stored, so this is a skew to repair, not a
 		// reason to report the tenant as unconfigured.
-		log.Printf("[customers] WARN: chatwoot_account_id not set for %s: %v", pl.ID, err)
+		log.Printf("[tenants] WARN: chatwoot_account_id not set for %s: %v", pl.ID, err)
 	}
 
-	return h.completeChatwootBinding(ctx, pl, req, block, true)
+	return h.completeChatwootBinding(ctx, pl, req, portalUser, block, true)
 }
 
 // completeChatwootBinding finishes a binding that is already recorded, driven by
@@ -442,53 +381,66 @@ func (h *CustomerHandler) ensureChatwoot(ctx context.Context, pl *repository.Pro
 // fails on the taken email - so every piece is persisted before the next call
 // runs, and a failure past that point is reported as manual repair work rather
 // than as something a retry can redo.
-func (h *CustomerHandler) completeChatwootBinding(
+func (h *TenantHandler) completeChatwootBinding(
 	ctx context.Context,
 	pl *repository.ProductLine,
 	req createCustomerRequest,
+	portalUser *repository.User,
 	block chatwootConfigBlock,
 	created bool,
-) (customerChatwootResult, bool) {
-	result := customerChatwootResult{AccountID: block.AccountID, InboxID: block.InboxID}
+) chatwootStep {
+	step := chatwootStep{
+		result:  customerChatwootResult{AccountID: block.AccountID, InboxID: block.InboxID},
+		created: created,
+	}
 
 	if block.APIToken == "" {
-		agentPassword, err := generatePassword(generatedPasswordLength)
-		if err != nil {
-			log.Printf("[customers] chatwoot step degraded: %v", err)
-			result.Reason = err.Error()
-			return result, created
-		}
-
-		agent, err := h.chatwoot.CreateUser(ctx, req.DisplayName, req.AdminEmail, agentPassword)
-		if err != nil {
-			log.Printf("[customers] chatwoot step degraded: %v", err)
-			result.Reason = "failed to create the chatwoot user: " + err.Error() +
+		// The tenant's first account owns the Chatwoot account, so it is
+		// provisioned as an administrator there; colleagues added later are
+		// plain agents. The agent is created and linked by the same bridge
+		// method the workbench uses, so there is one way an agent comes into
+		// existence no matter which surface asks for one.
+		agent, err := h.chatwoot.EnsureAgent(ctx, bridge.AgentSpec{
+			AccountID: block.AccountID,
+			Name:      req.DisplayName,
+			Email:     req.AdminEmail,
+			Role:      bridge.ChatwootRoleAdministrator,
+		})
+		if agent == nil {
+			log.Printf("[tenants] chatwoot step degraded: %v", err)
+			step.result.Reason = "failed to create the chatwoot user: " + err.Error() +
 				"; the user may already exist, and its access token cannot be read back, so finish this account by hand in chatwoot"
-			return result, created
+			return step
 		}
-		created = true
+		step.created = true
+
+		// The agent's id is the whole of what a password-free workbench entry
+		// needs later, and this response is the only place it is offered
+		// together with the portal account it belongs to.
+		step.portalNote = h.recordChatwootAgent(ctx, portalUser, agent.ID)
 
 		block.APIToken = agent.AccessToken
-		result.AgentEmail = req.AdminEmail
-		result.GeneratedPassword = agentPassword
-		// Stored before the account is linked: this is the only response that
-		// ever carries the token.
-		if err := h.storeChatwootBlock(ctx, pl.ID, block); err != nil {
-			result.Reason = "failed to store the chatwoot configuration"
-			return result, created
+		step.result.AgentEmail = req.AdminEmail
+		step.result.GeneratedPassword = agent.Password
+		// Stored as soon as the agent exists: this is the only response that
+		// ever carries the token, and a retry cannot mint it again.
+		if storeErr := h.storeChatwootBlock(ctx, pl.ID, block); storeErr != nil {
+			step.result.Reason = "failed to store the chatwoot configuration"
+			return step
+		}
+
+		if err != nil {
+			// The agent exists but is not a member of the account.
+			log.Printf("[tenants] chatwoot step degraded: %v", err)
+			step.result.Reason = "failed to link the chatwoot administrator: " + err.Error() +
+				"; the token is stored and a retry will not recreate the user, so the administrator link must be completed by hand in chatwoot"
+			return step
 		}
 
 		if agent.AccessToken == "" {
 			// Inbox creation is the application API and only a user token opens it.
-			result.Reason = "chatwoot inbox skipped: the platform user response carried no access token, create the API inbox in chatwoot"
-			return result, created
-		}
-
-		if err := h.chatwoot.LinkAccountUser(ctx, block.AccountID, agent.ID, "administrator"); err != nil {
-			log.Printf("[customers] chatwoot step degraded: %v", err)
-			result.Reason = "failed to link the chatwoot administrator: " + err.Error() +
-				"; the token is stored and a retry will not recreate the user, so the administrator link must be completed by hand in chatwoot"
-			return result, created
+			step.result.Reason = "chatwoot inbox skipped: the platform user response carried no access token, create the API inbox in chatwoot"
+			return step
 		}
 	}
 
@@ -496,30 +448,51 @@ func (h *CustomerHandler) completeChatwootBinding(
 		inbox, err := h.chatwoot.CreateAPIInbox(ctx, block.AccountID, block.APIToken,
 			fmt.Sprintf("UNICA - %s", pl.Name), h.chatwootWebhookURL)
 		if err != nil {
-			log.Printf("[customers] chatwoot step degraded: %v", err)
-			result.Reason = "failed to create the chatwoot inbox: " + err.Error()
-			return result, created
+			log.Printf("[tenants] chatwoot step degraded: %v", err)
+			step.result.Reason = "failed to create the chatwoot inbox: " + err.Error()
+			return step
 		}
-		created = true
+		step.created = true
 
 		block.InboxID = inbox.ID
-		result.InboxID = inbox.ID
+		step.result.InboxID = inbox.ID
 		if err := h.storeChatwootBlock(ctx, pl.ID, block); err != nil {
-			log.Printf("[customers] WARN: chatwoot inbox %d of product line %s was not recorded; remove it before retrying",
+			log.Printf("[tenants] WARN: chatwoot inbox %d of product line %s was not recorded; remove it before retrying",
 				inbox.ID, pl.ID)
-			result.Reason = "failed to store the chatwoot configuration"
-			return result, created
+			step.result.Reason = "failed to store the chatwoot configuration"
+			return step
 		}
 	}
 
-	result.Configured = true
-	return result, created
+	step.result.Configured = true
+	return step
+}
+
+// recordChatwootAgent stores the Chatwoot identity on the tenant's portal
+// account, which is what lets the workbench hand out a login link instead of a
+// second password. It returns what the portal account's report must say when
+// the link could not be made, because without it that account still needs the
+// Chatwoot password this response carries exactly once.
+func (h *TenantHandler) recordChatwootAgent(ctx context.Context, portalUser *repository.User, agentID int) string {
+	if agentID == 0 {
+		return ""
+	}
+	if portalUser == nil {
+		log.Printf("[tenants] WARN: chatwoot user %d has no portal account of this tenant to record it on", agentID)
+		return "the chatwoot agent could not be recorded on a portal account of this tenant, so signing in to the workbench still needs the chatwoot password"
+	}
+	if err := h.userRepo.SetChatwootUserID(ctx, portalUser.ID, agentID); err != nil {
+		log.Printf("[tenants] WARN: chatwoot user %d not recorded on portal account %s: %v", agentID, portalUser.ID, err)
+		return "the chatwoot agent was not recorded on the portal account, so signing in to the workbench still needs the chatwoot password"
+	}
+	portalUser.ChatwootUserID = &agentID
+	return ""
 }
 
 // storeChatwootBlock persists the binding as far as it has been provisioned.
-func (h *CustomerHandler) storeChatwootBlock(ctx context.Context, productLineID string, block chatwootConfigBlock) error {
+func (h *TenantHandler) storeChatwootBlock(ctx context.Context, productLineID string, block chatwootConfigBlock) error {
 	if err := h.plRepo.SetConfigKey(ctx, productLineID, chatwootConfigKey, block); err != nil {
-		log.Printf("[customers] chatwoot step degraded: write config_json of %s: %v", productLineID, err)
+		log.Printf("[tenants] chatwoot step degraded: write config_json of %s: %v", productLineID, err)
 		return err
 	}
 	return nil
@@ -527,8 +500,8 @@ func (h *CustomerHandler) storeChatwootBlock(ctx context.Context, productLineID 
 
 // logOrphanChatwootAccount records an account that exists in Chatwoot while
 // nothing references it, because a re-POST will provision a second one.
-func (h *CustomerHandler) logOrphanChatwootAccount(productLineID string, accountID int) {
-	log.Printf("[customers] WARN: chatwoot account %d was created for product line %s but not recorded; remove it before retrying",
+func (h *TenantHandler) logOrphanChatwootAccount(productLineID string, accountID int) {
+	log.Printf("[tenants] WARN: chatwoot account %d was created for product line %s but not recorded; remove it before retrying",
 		accountID, productLineID)
 }
 
@@ -550,6 +523,19 @@ func readChatwootBlock(raw json.RawMessage) (chatwootConfigBlock, bool) {
 		return block, false
 	}
 	return block, true
+}
+
+// joinMessages appends one report to another with the separator the step
+// messages already use, skipping the empty ones.
+func joinMessages(existing, addition string) string {
+	switch {
+	case existing == "":
+		return addition
+	case addition == "":
+		return existing
+	default:
+		return existing + "; " + addition
+	}
 }
 
 // generatedPasswordLength is the length of a password this service invents. It

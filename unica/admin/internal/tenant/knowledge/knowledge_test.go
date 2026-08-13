@@ -1,4 +1,4 @@
-package handler
+package knowledge
 
 import (
 	"context"
@@ -14,26 +14,22 @@ import (
 	"testing"
 
 	"github.com/kefu/unica/admin/internal/auth"
+	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 )
 
-// fakeAIConfigPLs is an in-memory aiConfigProductLines, so the knowledge tests
-// need no database.
-type fakeAIConfigPLs struct {
-	pl     *repository.ProductLine
-	appKey string
+// fakeProductLines is an in-memory productLines, so these tests need no
+// database.
+type fakeProductLines struct {
+	pl *repository.ProductLine
 }
 
-func (f *fakeAIConfigPLs) GetByID(ctx context.Context, id string) (*repository.ProductLine, error) {
+func (f *fakeProductLines) GetByID(ctx context.Context, id string) (*repository.ProductLine, error) {
 	if f.pl != nil && f.pl.ID == id {
 		cp := *f.pl
 		return &cp, nil
 	}
 	return nil, nil
-}
-
-func (f *fakeAIConfigPLs) GetDifyAppKey(ctx context.Context, id string) (string, error) {
-	return f.appKey, nil
 }
 
 // datasetCall is one request the fake knowledge API received.
@@ -94,41 +90,40 @@ func (f *fakeDatasetServer) last(t *testing.T) datasetCall {
 	return f.calls[len(f.calls)-1]
 }
 
-// newKnowledgeFixture builds a handler whose product line is bound to dataset
-// ds-1 and whose knowledge client points at the fake server.
-func newKnowledgeFixture(t *testing.T, respond http.HandlerFunc) (*AIConfigHandler, *fakeDatasetServer, *fakeAIConfigPLs) {
+// newFixture builds a handler whose tenant is bound to dataset ds-1 and whose
+// knowledge client points at the fake server.
+func newFixture(t *testing.T, respond http.HandlerFunc) (*Handler, *fakeDatasetServer, *fakeProductLines) {
 	t.Helper()
 	fake := newFakeDatasetServer(t, respond)
 	datasetID := "ds-1"
 	agentID := "app-1"
-	pls := &fakeAIConfigPLs{pl: &repository.ProductLine{
+	pls := &fakeProductLines{pl: &repository.ProductLine{
 		ID:            "pl-1",
 		Name:          "TestLine",
 		DisplayName:   "TestLine",
 		DifyAgentID:   &agentID,
 		DifyDatasetID: &datasetID,
 	}}
-	h := NewAIConfigHandler(nil, pls, nil, nil, fake.server.URL+"/v1", "dataset-key-123", "economy")
-	return h, fake, pls
+	return NewHandler(pls, fake.server.URL+"/v1", "dataset-key-123", "economy"), fake, pls
 }
 
-func doKnowledge(t *testing.T, h *AIConfigHandler, method, path, contentType string, body io.Reader) *httptest.ResponseRecorder {
+func do(t *testing.T, h *Handler, method, path, contentType string, body io.Reader) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, body)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 	w := httptest.NewRecorder()
-	h.HandleAIConfig(w, req)
+	h.Handle(w, req)
 	return w
 }
 
-func TestAIConfigHandler_ListKnowledge(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_List(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":[{"id":"doc-1","name":"FAQ.md","indexing_status":"completed","enabled":true,"word_count":120,"created_at":1700000000}],"has_more":false,"limit":50,"total":1,"page":2}`)
 	})
 
-	w := doKnowledge(t, h, http.MethodGet, "/api/v1/ai-config/pl-1/knowledge?page=2&limit=50&keyword=faq", "", nil)
+	w := do(t, h, http.MethodGet, "/api/v1/tenants/pl-1/knowledge?page=2&limit=50&keyword=faq", "", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -167,15 +162,15 @@ func TestAIConfigHandler_ListKnowledge(t *testing.T) {
 	}
 }
 
-// The dataset is a property of the product line, so a request naming another one
-// must not move the call.
-func TestAIConfigHandler_ListKnowledgeIgnoresRequestDataset(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+// The dataset is a property of the tenant, so a request naming another one must
+// not move the call.
+func TestHandler_ListIgnoresRequestDataset(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":[],"total":0}`)
 	})
 
-	w := doKnowledge(t, h, http.MethodGet,
-		"/api/v1/ai-config/pl-1/knowledge?dataset_id=ds-someone-else&dataset=ds-someone-else", "", nil)
+	w := do(t, h, http.MethodGet,
+		"/api/v1/tenants/pl-1/knowledge?dataset_id=ds-someone-else&dataset=ds-someone-else", "", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -184,13 +179,13 @@ func TestAIConfigHandler_ListKnowledgeIgnoresRequestDataset(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_ListKnowledgeRejectsBadPagination(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_ListRejectsBadPagination(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":[],"total":0}`)
 	})
 
 	for _, q := range []string{"page=0", "page=abc", "limit=-1", "limit=x"} {
-		w := doKnowledge(t, h, http.MethodGet, "/api/v1/ai-config/pl-1/knowledge?"+q, "", nil)
+		w := do(t, h, http.MethodGet, "/api/v1/tenants/pl-1/knowledge?"+q, "", nil)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("query %q: status = %d, want 400", q, w.Code)
 		}
@@ -200,8 +195,8 @@ func TestAIConfigHandler_ListKnowledgeRejectsBadPagination(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_UploadKnowledgeFile(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_UploadFile(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"document":{"id":"doc-9","name":"faq.md"},"batch":"batch-77"}`)
 	})
 
@@ -217,7 +212,7 @@ func TestAIConfigHandler_UploadKnowledgeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := doKnowledge(t, h, http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/documents",
+	w := do(t, h, http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents",
 		writer.FormDataContentType(), strings.NewReader(buf.String()))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
@@ -232,6 +227,11 @@ func TestAIConfigHandler_UploadKnowledgeFile(t *testing.T) {
 	// pins that the configured value is what travels.
 	if got := parts["data"]; !strings.Contains(got, "economy") {
 		t.Errorf("configured indexing technique not sent: %q", got)
+	}
+	// The process rule has to ride along: a freshly provisioned dataset has none
+	// to fall back to, so without it the very first upload fails.
+	if got := parts["data"]; !strings.Contains(got, `\n\n`) {
+		t.Errorf("process rule not sent with the upload: %q", got)
 	}
 	if got := parts["file"]; !strings.Contains(got, "return window is 7 days") {
 		t.Errorf("file content not forwarded: %q", got)
@@ -249,12 +249,12 @@ func TestAIConfigHandler_UploadKnowledgeFile(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_UploadKnowledgeText(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_UploadText(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"document":{"id":"doc-10","name":"policy"},"batch":"batch-78"}`)
 	})
 
-	w := doKnowledge(t, h, http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/documents",
+	w := do(t, h, http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents",
 		"application/json", strings.NewReader(`{"name":" policy ","text":" 7 天无理由退货 "}`))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
@@ -281,13 +281,13 @@ func TestAIConfigHandler_UploadKnowledgeText(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_UploadKnowledgeRejectsEmptyText(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_UploadRejectsEmptyText(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Dify must not be called for an incomplete request")
 	})
 
 	for _, body := range []string{`{"name":"x"}`, `{"text":"y"}`, `{"name":"  ","text":"y"}`, `not json`} {
-		w := doKnowledge(t, h, http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/documents",
+		w := do(t, h, http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents",
 			"application/json", strings.NewReader(body))
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("body %q: status = %d, want 400", body, w.Code)
@@ -309,8 +309,8 @@ func (r repeatReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func TestAIConfigHandler_UploadKnowledgeRejectsOversized(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_UploadRejectsOversized(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("an oversized upload must never reach Dify")
 	})
 
@@ -321,11 +321,11 @@ func TestAIConfigHandler_UploadKnowledgeRejectsOversized(t *testing.T) {
 	tail := "\r\n--" + boundary + "--\r\n"
 	body := io.MultiReader(
 		strings.NewReader(head),
-		io.LimitReader(repeatReader{b: 'a'}, MaxKnowledgeUploadBytes+(1<<10)),
+		io.LimitReader(repeatReader{b: 'a'}, MaxUploadBytes+(1<<10)),
 		strings.NewReader(tail),
 	)
 
-	w := doKnowledge(t, h, http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/documents",
+	w := do(t, h, http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents",
 		"multipart/form-data; boundary="+boundary, body)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413, body = %s", w.Code, w.Body.String())
@@ -335,12 +335,12 @@ func TestAIConfigHandler_UploadKnowledgeRejectsOversized(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_DeleteKnowledgeDocument(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_DeleteDocument(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	w := doKnowledge(t, h, http.MethodDelete, "/api/v1/ai-config/pl-1/knowledge/documents/doc-9", "", nil)
+	w := do(t, h, http.MethodDelete, "/api/v1/tenants/pl-1/knowledge/documents/doc-9", "", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -354,12 +354,12 @@ func TestAIConfigHandler_DeleteKnowledgeDocument(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_KnowledgeIndexingStatus(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_IndexingStatus(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":[{"id":"doc-9","indexing_status":"indexing","completed_segments":3,"total_segments":10}]}`)
 	})
 
-	w := doKnowledge(t, h, http.MethodGet, "/api/v1/ai-config/pl-1/knowledge/status/batch-77", "", nil)
+	w := do(t, h, http.MethodGet, "/api/v1/tenants/pl-1/knowledge/status/batch-77", "", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -386,26 +386,26 @@ func TestAIConfigHandler_KnowledgeIndexingStatus(t *testing.T) {
 	}
 }
 
-// A caller scoped to another product line must not reach this line's knowledge
-// base through any of the verbs.
-func TestAIConfigHandler_KnowledgeScopeForbidden(t *testing.T) {
-	h, fake, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+// A caller scoped to another tenant must not reach this tenant's knowledge base
+// through any of the verbs.
+func TestHandler_ScopeForbidden(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("an out-of-scope request must never reach Dify")
 	})
 
 	cases := []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/ai-config/pl-1/knowledge"},
-		{http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/documents"},
-		{http.MethodDelete, "/api/v1/ai-config/pl-1/knowledge/documents/doc-9"},
-		{http.MethodGet, "/api/v1/ai-config/pl-1/knowledge/status/batch-77"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge"},
+		{http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents"},
+		{http.MethodDelete, "/api/v1/tenants/pl-1/knowledge/documents/doc-9"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/status/batch-77"},
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(c.method, c.path, strings.NewReader(`{"name":"n","text":"t"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
-			&auth.Claims{Role: "knowledge_admin", ProductLineIDs: []string{"some-other-line"}}))
+			&auth.Claims{Role: rbac.RoleUser, TenantID: "some-other-line"}))
 		w := httptest.NewRecorder()
-		h.HandleAIConfig(w, req)
+		h.Handle(w, req)
 		if w.Code != http.StatusForbidden {
 			t.Errorf("%s %s: status = %d, want 403", c.method, c.path, w.Code)
 		}
@@ -415,19 +415,19 @@ func TestAIConfigHandler_KnowledgeScopeForbidden(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_KnowledgeWithoutDatasetKey(t *testing.T) {
+func TestHandler_WithoutDatasetKey(t *testing.T) {
 	datasetID := "ds-1"
-	pls := &fakeAIConfigPLs{pl: &repository.ProductLine{ID: "pl-1", Name: "TestLine", DifyDatasetID: &datasetID}}
-	h := NewAIConfigHandler(nil, pls, nil, nil, "http://dify.invalid/v1", "", "")
+	pls := &fakeProductLines{pl: &repository.ProductLine{ID: "pl-1", Name: "TestLine", DifyDatasetID: &datasetID}}
+	h := NewHandler(pls, "http://dify.invalid/v1", "", "")
 
 	cases := []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/ai-config/pl-1/knowledge"},
-		{http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/documents"},
-		{http.MethodDelete, "/api/v1/ai-config/pl-1/knowledge/documents/doc-9"},
-		{http.MethodGet, "/api/v1/ai-config/pl-1/knowledge/status/batch-77"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge"},
+		{http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents"},
+		{http.MethodDelete, "/api/v1/tenants/pl-1/knowledge/documents/doc-9"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/status/batch-77"},
 	}
 	for _, c := range cases {
-		w := doKnowledge(t, h, c.method, c.path, "application/json", strings.NewReader(`{"name":"n","text":"t"}`))
+		w := do(t, h, c.method, c.path, "application/json", strings.NewReader(`{"name":"n","text":"t"}`))
 		if w.Code != http.StatusServiceUnavailable {
 			t.Fatalf("%s %s: status = %d, want 503, body = %s", c.method, c.path, w.Code, w.Body.String())
 		}
@@ -437,14 +437,14 @@ func TestAIConfigHandler_KnowledgeWithoutDatasetKey(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_KnowledgeWithoutDataset(t *testing.T) {
-	h, fake, pls := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Error("a product line with no dataset must never reach Dify")
+func TestHandler_WithoutDataset(t *testing.T) {
+	h, fake, pls := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a tenant with no dataset must never reach Dify")
 	})
 	pls.pl.DifyDatasetID = nil
 
-	// Listing an unbound line is an empty knowledge base, not an error.
-	w := doKnowledge(t, h, http.MethodGet, "/api/v1/ai-config/pl-1/knowledge", "", nil)
+	// Listing an unbound tenant is an empty knowledge base, not an error.
+	w := do(t, h, http.MethodGet, "/api/v1/tenants/pl-1/knowledge", "", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -461,7 +461,7 @@ func TestAIConfigHandler_KnowledgeWithoutDataset(t *testing.T) {
 	}
 
 	// Writing to one has no target.
-	w = doKnowledge(t, h, http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/documents",
+	w = do(t, h, http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents",
 		"application/json", strings.NewReader(`{"name":"n","text":"t"}`))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("upload without a dataset: status = %d, want 404", w.Code)
@@ -471,8 +471,8 @@ func TestAIConfigHandler_KnowledgeWithoutDataset(t *testing.T) {
 	}
 }
 
-func TestAIConfigHandler_KnowledgeRoutingErrors(t *testing.T) {
-	h, _, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+func TestHandler_RoutingErrors(t *testing.T) {
+	h, _, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("a misrouted request must never reach Dify")
 	})
 
@@ -480,39 +480,54 @@ func TestAIConfigHandler_KnowledgeRoutingErrors(t *testing.T) {
 		method, path string
 		want         int
 	}{
-		{http.MethodPut, "/api/v1/ai-config/pl-1/knowledge", http.StatusMethodNotAllowed},
-		{http.MethodGet, "/api/v1/ai-config/pl-1/knowledge/documents", http.StatusMethodNotAllowed},
-		{http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/documents/doc-9", http.StatusMethodNotAllowed},
-		{http.MethodPost, "/api/v1/ai-config/pl-1/knowledge/status/batch-77", http.StatusMethodNotAllowed},
-		{http.MethodGet, "/api/v1/ai-config/pl-1/knowledge/nonsense", http.StatusNotFound},
-		{http.MethodGet, "/api/v1/ai-config/pl-1/knowledge/documents/doc-9/extra", http.StatusNotFound},
+		{http.MethodPut, "/api/v1/tenants/pl-1/knowledge", http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/documents", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents/doc-9", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/v1/tenants/pl-1/knowledge/status/batch-77", http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/nonsense", http.StatusNotFound},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/documents/doc-9/extra", http.StatusNotFound},
+		// This module answers for one resource only; another tenant resource on
+		// the same prefix is not its business.
+		{http.MethodGet, "/api/v1/tenants/pl-1/ai-settings", http.StatusNotFound},
+		{http.MethodGet, "/api/v1/tenants/pl-1", http.StatusNotFound},
 	}
 	for _, c := range cases {
-		w := doKnowledge(t, h, c.method, c.path, "", nil)
+		w := do(t, h, c.method, c.path, "", nil)
 		if w.Code != c.want {
 			t.Errorf("%s %s: status = %d, want %d", c.method, c.path, w.Code, c.want)
 		}
 	}
 }
 
-func TestAIConfigHandler_KnowledgeUpstreamErrors(t *testing.T) {
+func TestHandler_UnknownTenant(t *testing.T) {
+	h, _, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("an unknown tenant must never reach Dify")
+	})
+
+	w := do(t, h, http.MethodGet, "/api/v1/tenants/pl-missing/knowledge", "", nil)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestHandler_UpstreamErrors(t *testing.T) {
 	// A dataset endpoint answering 401 means the configured key is not a dataset
 	// key; the operator has to be told which setting is wrong.
-	h, _, _ := newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		io.WriteString(w, `{"code":"unauthorized","message":"Access token is invalid","status":401}`)
 	})
-	w := doKnowledge(t, h, http.MethodGet, "/api/v1/ai-config/pl-1/knowledge", "", nil)
+	w := do(t, h, http.MethodGet, "/api/v1/tenants/pl-1/knowledge", "", nil)
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "DIFY_DATASET_API_KEY") {
 		t.Errorf("rejected key: status = %d, body = %s", w.Code, w.Body.String())
 	}
 
 	// A dataset that no longer exists upstream is a 404, not a gateway fault.
-	h, _, _ = newKnowledgeFixture(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _, _ = newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		io.WriteString(w, `{"code":"not_found","message":"Dataset not found","status":404}`)
 	})
-	w = doKnowledge(t, h, http.MethodDelete, "/api/v1/ai-config/pl-1/knowledge/documents/doc-9", "", nil)
+	w = do(t, h, http.MethodDelete, "/api/v1/tenants/pl-1/knowledge/documents/doc-9", "", nil)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("missing dataset: status = %d, body = %s", w.Code, w.Body.String())
 	}

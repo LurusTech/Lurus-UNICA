@@ -22,7 +22,7 @@ func NewAuditLogHandler(repo *audit.Repository) *AuditLogHandler {
 }
 
 // HandleAuditLogs handles GET /api/v1/audit-logs with filters and pagination.
-// RBAC: SuperAdmin sees all, ProductAdmin sees own product line only.
+// An administrator sees the whole trail; a tenant's user sees only its own.
 func (h *AuditLogHandler) HandleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -76,19 +76,20 @@ func (h *AuditLogHandler) HandleAuditLogs(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// RBAC scoping
+	// Tenant scoping
 	var result *audit.QueryResult
 	var err error
 
-	if claims.Role == string(rbac.RoleSuperAdmin) {
-		// SuperAdmin: optional product_line_id filter
+	if rbac.IsAdmin(claims.Role) {
+		// An administrator sees the whole trail, optionally narrowed to one tenant.
 		if plID := q.Get("product_line_id"); plID != "" {
 			filter.ProductLineID = plID
 		}
 		result, err = h.repo.Query(r.Context(), filter)
 	} else {
-		// ProductAdmin: restrict to own product lines
-		if len(claims.ProductLineIDs) == 0 {
+		// A tenant's own people see their tenant's rows, and the filter is not
+		// theirs to widen.
+		if claims.TenantID == "" {
 			JSON(w, http.StatusOK, audit.QueryResult{
 				Entries: []audit.AuditEntry{},
 				Total:   0,
@@ -97,7 +98,7 @@ func (h *AuditLogHandler) HandleAuditLogs(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
-		result, err = h.repo.QueryByProductLines(r.Context(), filter, claims.ProductLineIDs)
+		result, err = h.repo.QueryByProductLines(r.Context(), filter, []string{claims.TenantID})
 	}
 
 	if err != nil {

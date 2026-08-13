@@ -105,6 +105,10 @@
   }
   .field { margin-bottom: 16px; }
   .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; }
+  .static-value {
+    padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text-muted); font-size: 0.9rem;
+  }
 
   /* Login screen */
   #login-view {
@@ -183,10 +187,11 @@
 
 <header>
   <div class="left">
-    <a class="back" href="./index.html">← 返回首页</a>
+    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
     <h1>渠道接入配置</h1>
   </div>
   <div id="user-info" hidden>
+    <span id="tenant-name"></span>
     <span id="user-email"></span>
     <button id="logout-btn">退出登录</button>
   </div>
@@ -214,9 +219,9 @@
   <!-- App view -->
   <section id="app-view" hidden>
     <div class="toolbar">
-      <div class="field">
-        <label for="pl-select">产品线</label>
-        <select id="pl-select"><option value="">全部产品线</option></select>
+      <div class="field" id="pl-field" hidden>
+        <label for="pl-select">租户</label>
+        <select id="pl-select"><option value="">请选择租户</option></select>
       </div>
       <div class="spacer"></div>
       <button class="primary" id="create-btn">＋ 新增渠道</button>
@@ -248,9 +253,11 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <h3 id="modal-title">新增渠道</h3>
     <form id="channel-form">
+      <!-- The tenant is the one the page is acting on; the server takes it from
+           the route, so the form states it rather than offering a choice. -->
       <div class="field">
-        <label for="f-product-line">产品线</label>
-        <select id="f-product-line" required></select>
+        <label id="f-tenant-label">租户</label>
+        <div class="static-value" id="f-tenant-name" aria-labelledby="f-tenant-label">—</div>
       </div>
       <div class="field">
         <label for="f-platform">平台</label>
@@ -303,7 +310,7 @@
     xiaohongshu: "小红书", douyin: "抖音", wechat: "微信", taobao: "淘宝", kuaishou: "快手"
   };
 
-  var state = { channels: [], productLines: [], currentPL: "", editingId: null };
+  var state = { channels: [], tenants: [], currentTenant: null, editingId: null };
 
   var els = {
     loginView: document.getElementById("login-view"),
@@ -314,6 +321,9 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
+    backLink: document.getElementById("back-link"),
+    tenantName: document.getElementById("tenant-name"),
+    plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
     createBtn: document.getElementById("create-btn"),
     refreshBtn: document.getElementById("refresh-btn"),
@@ -322,7 +332,7 @@
     modalTitle: document.getElementById("modal-title"),
     channelForm: document.getElementById("channel-form"),
     modalCancel: document.getElementById("modal-cancel"),
-    fProductLine: document.getElementById("f-product-line"),
+    fTenantName: document.getElementById("f-tenant-name"),
     fPlatform: document.getElementById("f-platform"),
     fDisplayName: document.getElementById("f-display-name"),
     fAppId: document.getElementById("f-app-id"),
@@ -370,26 +380,36 @@
     }
   }
 
-  function isSuperAdmin(claims) {
-    if (!claims) return false;
-    if (claims.role === "super_admin") return true;
-    var roles = claims.roles;
-    if (!Array.isArray(roles)) return false;
-    for (var i = 0; i < roles.length; i++) {
-      if (roles[i] === "super_admin") return true;
-    }
-    return false;
+  // ---------- Tenant scope ----------
+  // Every tenant resource hangs under /api/v1/tenants/{id}/. A user belongs to
+  // exactly one tenant and never names it: "me" is the alias the server resolves
+  // from the token. An administrator belongs to none and must name one, which it
+  // does with the selector or with ?tenant=<id> on the address.
+  var TENANT_ME = "me";
+
+  function accountRole() {
+    var claims = decodeClaims(getToken());
+    return claims && typeof claims.role === "string" ? claims.role : "";
   }
 
-  // A non-super-admin bound to exactly one product line has nothing to pick:
-  // returns that id so the selector can be locked, null in every other case.
-  function scopedProductLineId() {
-    var claims = decodeClaims(getToken());
-    if (!claims || isSuperAdmin(claims)) return null;
-    var ids = claims.product_line_ids;
-    if (!Array.isArray(ids) || ids.length !== 1) return null;
-    var id = ids[0];
-    return (id === null || id === undefined || id === "") ? null : String(id);
+  function isAdmin() { return accountRole() === "admin"; }
+
+  // The tenant named on the address. Only an administrator can act on a tenant
+  // other than its own, so for anyone else the parameter means nothing.
+  function requestedTenant() {
+    if (!isAdmin()) return "";
+    var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  // The path segment this page addresses its tenant by.
+  function tenantSegment() {
+    if (!isAdmin()) return TENANT_ME;
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function tenantPath(suffix) {
+    return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
   }
 
   function showLogin(message) {
@@ -486,52 +506,78 @@
 
   // ---------- Bootstrap after login ----------
   function bootstrap() {
-    loadProductLines().then(loadChannels);
+    loadTenants().then(loadChannels);
   }
 
-  function loadProductLines() {
-    return api("/api/v1/product-lines")
-      .then(function (data) {
-        state.productLines = Array.isArray(data) ? data : [];
-        renderProductLineOptions();
-      })
-      .catch(function (err) {
-        if (err.message !== "unauthorized") toast("加载产品线失败: " + err.message, "error");
-      });
-  }
-
-  function maybeShowNoProductLineHint() {
-    if (state.productLines.length > 0) return;
-    els.tbody.innerHTML =
-      '<tr><td colspan="6" class="empty-state">还没有产品线，先去<a href="./product-lines.html">创建 →</a></td></tr>';
-  }
-
-  function renderProductLineOptions() {
-    // Locked only when the claims name one line and the server returned that
-    // same single line; anything else keeps the normal "all lines" selector.
-    var scopedId = scopedProductLineId();
-    var locked = !!scopedId && state.productLines.length === 1 &&
-      String(state.productLines[0].id) === scopedId;
-
-    var opts = locked ? [] : ['<option value="">全部产品线</option>'];
-    state.productLines.forEach(function (pl) {
-      opts.push('<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>");
-    });
-    els.plSelect.innerHTML = opts.join("");
-    els.plSelect.disabled = locked;
-    if (locked) {
-      els.plSelect.value = scopedId;
-      state.currentPL = scopedId;
+  // The tenant roster is an administrator surface; a user reads its one tenant
+  // through the "me" alias, which is why the two roles load different addresses.
+  function loadTenants() {
+    if (!isAdmin()) {
+      return api("/api/v1/tenants/" + TENANT_ME)
+        .then(function (tenant) {
+          state.tenants = tenant ? [tenant] : [];
+          renderTenantOptions();
+        })
+        .catch(reportTenantLoadError);
     }
+    return api("/api/v1/tenants")
+      .then(function (data) {
+        state.tenants = Array.isArray(data) ? data : [];
+        renderTenantOptions();
+      })
+      .catch(reportTenantLoadError);
+  }
 
-    var formOpts = state.productLines.map(function (pl) {
+  function reportTenantLoadError(err) {
+    if (err.message !== "unauthorized") toast("加载租户失败: " + err.message, "error");
+  }
+
+  function maybeShowNoTenantHint() {
+    if (state.tenants.length > 0) return;
+    els.tbody.innerHTML =
+      '<tr><td colspan="6" class="empty-state">还没有租户，先去<a href="./admin.html">开户 →</a></td></tr>';
+  }
+
+  function renderTenantOptions() {
+    // A user has one tenant and nothing to choose between, so the selector is
+    // an administrator's control only. Channels are listed one tenant at a
+    // time because the route names one — there is no "all tenants" address.
+    els.plField.hidden = !isAdmin();
+    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
+
+    els.plSelect.innerHTML = state.tenants.map(function (pl) {
       return '<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
-    });
-    els.fProductLine.innerHTML = formOpts.join("") || '<option value="">暂无产品线</option>';
+    }).join("") || '<option value="">暂无租户</option>';
+
+    if (state.tenants.length === 0) {
+      selectTenant("");
+      return;
+    }
+    // The address may name the tenant to act on; otherwise the first one.
+    var initial = findTenant(requestedTenant()) || state.tenants[0];
+    els.plSelect.value = String(initial.id);
+    selectTenant(els.plSelect.value);
+  }
+
+  function findTenant(id) {
+    for (var i = 0; i < state.tenants.length; i++) {
+      if (String(state.tenants[i].id) === String(id)) return state.tenants[i];
+    }
+    return null;
+  }
+
+  function selectTenant(id) {
+    state.currentTenant = findTenant(id);
+    var label = state.currentTenant
+      ? (state.currentTenant.display_name || state.currentTenant.name)
+      : "";
+    els.tenantName.textContent = label;
+    els.fTenantName.textContent = label || "—";
+    els.createBtn.disabled = !state.currentTenant;
   }
 
   els.plSelect.addEventListener("change", function () {
-    state.currentPL = els.plSelect.value;
+    selectTenant(els.plSelect.value);
     loadChannels();
   });
 
@@ -539,9 +585,12 @@
 
   // ---------- Channel list ----------
   function loadChannels() {
+    if (!state.currentTenant) {
+      maybeShowNoTenantHint();
+      return Promise.resolve();
+    }
     els.tbody.innerHTML = '<tr><td colspan="6" class="loading-text">加载中…</td></tr>';
-    var qs = state.currentPL ? ("?product_line_id=" + encodeURIComponent(state.currentPL)) : "";
-    return api("/api/v1/channels" + qs)
+    return api(tenantPath("/channels"))
       .then(function (data) {
         state.channels = Array.isArray(data) ? data : [];
         renderChannels();
@@ -555,8 +604,8 @@
 
   function renderChannels() {
     if (state.channels.length === 0) {
-      if (state.productLines.length === 0) {
-        maybeShowNoProductLineHint();
+      if (state.tenants.length === 0) {
+        maybeShowNoTenantHint();
         return;
       }
       els.tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无渠道配置，点击“新增渠道”开始接入</td></tr>';
@@ -620,7 +669,7 @@
   // ---------- Delete ----------
   function deleteChannel(ch) {
     if (!confirm('确认删除渠道 "' + ch.display_name + '" 吗？此操作不可撤销。')) return;
-    api("/api/v1/channels/" + ch.id, { method: "DELETE" })
+    api(tenantPath("/channels/" + encodeURIComponent(ch.id)), { method: "DELETE" })
       .then(function () {
         toast("渠道已删除", "success");
         loadChannels();
@@ -635,7 +684,7 @@
     btn.disabled = true;
     var original = btn.textContent;
     btn.textContent = "测试中…";
-    api("/api/v1/channels/" + ch.id + "/test", { method: "POST" })
+    api(tenantPath("/channels/" + encodeURIComponent(ch.id) + "/test"), { method: "POST" })
       .then(function (result) {
         var ok = result && result.success;
         toast((result && result.message) || (ok ? "连接测试成功" : "连接测试失败"), ok ? "success" : "error");
@@ -652,7 +701,7 @@
 
   // ---------- Webhook URL copy ----------
   function copyWebhookUrl(ch) {
-    api("/api/v1/channels/" + ch.id + "/webhook-url")
+    api(tenantPath("/channels/" + encodeURIComponent(ch.id) + "/webhook-url"))
       .then(function (data) {
         var url = data && data.webhook_url;
         if (!url) throw new Error("未返回Webhook地址");
@@ -703,14 +752,12 @@
     els.fAppSecret.required = true;
     els.secretHint.hidden = true;
     els.enabledRow.hidden = true;
-    if (state.currentPL) els.fProductLine.value = state.currentPL;
     openModal();
   }
 
   function openEditModal(ch) {
     state.editingId = ch.id;
     els.modalTitle.textContent = "编辑渠道";
-    els.fProductLine.value = ch.product_line_id;
     els.fPlatform.value = ch.platform;
     els.fPlatform.disabled = true;
     els.fDisplayName.value = ch.display_name;
@@ -726,7 +773,7 @@
 
   function openModal() {
     els.modalBackdrop.classList.add("open");
-    els.fProductLine.focus();
+    els.fPlatform.focus();
   }
 
   function closeModal() {
@@ -750,14 +797,14 @@
 
     var request;
     if (state.editingId) {
-      request = api("/api/v1/channels/" + state.editingId, {
+      request = api(tenantPath("/channels/" + encodeURIComponent(state.editingId)), {
         method: "PUT",
         body: JSON.stringify(payload)
       }).then(function (updated) {
         // Toggle enabled state separately if changed, matching the dedicated toggle endpoint.
         var wantEnabled = els.fEnabled.checked;
         if (updated && updated.is_enabled !== wantEnabled) {
-          return api("/api/v1/channels/" + state.editingId + "/toggle", {
+          return api(tenantPath("/channels/" + encodeURIComponent(state.editingId) + "/toggle"), {
             method: "PUT",
             body: JSON.stringify({ enabled: wantEnabled })
           });
@@ -765,9 +812,10 @@
         return updated;
       });
     } else {
-      payload.product_line_id = els.fProductLine.value;
+      // The tenant is not sent: the server takes it from the route, and a body
+      // naming another one is refused.
       payload.platform = els.fPlatform.value;
-      request = api("/api/v1/channels", { method: "POST", body: JSON.stringify(payload) });
+      request = api(tenantPath("/channels"), { method: "POST", body: JSON.stringify(payload) });
     }
 
     request

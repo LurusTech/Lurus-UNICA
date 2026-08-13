@@ -17,7 +17,8 @@ import (
 )
 
 // invalidationChannel is the shared Redis pub/sub channel the admin service
-// publishes to whenever a config row changes (see admin ai_config.go).
+// publishes to whenever a channel config row changes (see the admin service's
+// channel handler).
 const invalidationChannel = "unica:config_invalidation"
 
 // ChannelConfig is the decrypted, in-memory representation of an enabled

@@ -272,10 +272,11 @@
 
 <header>
   <div class="left">
-    <a class="back" href="./index.html">← 返回首页</a>
-    <h1>领域本体</h1>
+    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
+    <h1>确定性事实</h1>
   </div>
   <div id="user-info" hidden>
+    <span id="tenant-name"></span>
     <span id="user-email"></span>
     <button id="logout-btn">退出登录</button>
   </div>
@@ -303,15 +304,15 @@
   <!-- App view -->
   <section id="app-view" hidden>
     <div class="toolbar">
-      <div class="field">
-        <label for="pl-select">产品线</label>
-        <select id="pl-select"><option value="">请选择产品线</option></select>
+      <div class="field" id="pl-field" hidden>
+        <label for="pl-select">租户</label>
+        <select id="pl-select"><option value="">请选择租户</option></select>
       </div>
       <div class="spacer"></div>
       <button id="refresh-btn">刷新</button>
     </div>
 
-    <div class="card empty-state" id="no-pl-hint">请先在上方选择一条产品线</div>
+    <div class="card empty-state" id="no-pl-hint">请先在上方选择一个租户</div>
 
     <div id="panels" hidden>
       <!-- Ontology editor -->
@@ -320,10 +321,10 @@
           <h2>本体编辑</h2>
           <span class="pill muted" id="active-pill">未发布</span>
         </div>
-        <p class="card-sub" id="active-meta">本体声明本产品线的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。</p>
+        <p class="card-sub" id="active-meta">本体声明本租户的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。</p>
 
         <div class="flow-hint" id="empty-hint" hidden>
-          该产品线还没有发布过本体。编写指南见仓库中的 <code>doc/ontology-schema.md</code>，
+          该租户还没有发布过本体。编写指南见仓库中的 <code>doc/ontology-schema.md</code>，
           建议先从最小可用本体开始，校验通过后再发布。
         </div>
 
@@ -469,8 +470,8 @@
   var TOKEN_KEY = "unica_access_token";
 
   var state = {
-    productLines: [],
-    currentPL: null,
+    tenants: [],
+    currentTenant: null,
     ontology: null,
     lastValidYaml: null,
     stashedValidation: null
@@ -485,7 +486,10 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
+    backLink: document.getElementById("back-link"),
+    tenantName: document.getElementById("tenant-name"),
 
+    plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
     refreshBtn: document.getElementById("refresh-btn"),
     noPlHint: document.getElementById("no-pl-hint"),
@@ -559,26 +563,36 @@
     }
   }
 
-  function isSuperAdmin(claims) {
-    if (!claims) return false;
-    if (claims.role === "super_admin") return true;
-    var roles = claims.roles;
-    if (!Array.isArray(roles)) return false;
-    for (var i = 0; i < roles.length; i++) {
-      if (roles[i] === "super_admin") return true;
-    }
-    return false;
+  // ---------- Tenant scope ----------
+  // Every tenant resource hangs under /api/v1/tenants/{id}/. A user belongs to
+  // exactly one tenant and never names it: "me" is the alias the server resolves
+  // from the token. An administrator belongs to none and must name one, which it
+  // does with the selector or with ?tenant=<id> on the address.
+  var TENANT_ME = "me";
+
+  function accountRole() {
+    var claims = decodeClaims(getToken());
+    return claims && typeof claims.role === "string" ? claims.role : "";
   }
 
-  // A non-super-admin bound to exactly one product line has nothing to pick:
-  // returns that id so the selector can be locked, null in every other case.
-  function scopedProductLineId() {
-    var claims = decodeClaims(getToken());
-    if (!claims || isSuperAdmin(claims)) return null;
-    var ids = claims.product_line_ids;
-    if (!Array.isArray(ids) || ids.length !== 1) return null;
-    var id = ids[0];
-    return (id === null || id === undefined || id === "") ? null : String(id);
+  function isAdmin() { return accountRole() === "admin"; }
+
+  // The tenant named on the address. Only an administrator can act on a tenant
+  // other than its own, so for anyone else the parameter means nothing.
+  function requestedTenant() {
+    if (!isAdmin()) return "";
+    var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  // The path segment this page addresses its tenant by.
+  function tenantSegment() {
+    if (!isAdmin()) return TENANT_ME;
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function tenantPath(suffix) {
+    return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
   }
 
   function showLogin(message) {
@@ -685,57 +699,71 @@
 
   // ---------- Bootstrap after login ----------
   function bootstrap() {
-    loadProductLines();
+    loadTenants();
   }
 
   els.refreshBtn.addEventListener("click", function () {
-    if (state.currentPL) {
+    if (state.currentTenant) {
       loadOntology();
       loadConfig();
     } else {
-      loadProductLines();
+      loadTenants();
     }
   });
 
-  function loadProductLines() {
-    return api("/api/v1/product-lines")
+  // The tenant roster is an administrator surface; a user reads its one tenant
+  // through the "me" alias, which is why the two roles load different addresses.
+  function loadTenants() {
+    if (!isAdmin()) {
+      return api("/api/v1/tenants/" + TENANT_ME)
+        .then(function (tenant) {
+          state.tenants = tenant ? [tenant] : [];
+          renderTenantOptions();
+        })
+        .catch(function (err) { reportError("加载租户失败", err); });
+    }
+    return api("/api/v1/tenants")
       .then(function (data) {
-        state.productLines = Array.isArray(data) ? data : [];
-        renderProductLineOptions();
+        state.tenants = Array.isArray(data) ? data : [];
+        renderTenantOptions();
       })
-      .catch(function (err) {
-        reportError("加载产品线失败", err);
-      });
+      .catch(function (err) { reportError("加载租户失败", err); });
   }
 
-  function renderProductLineOptions() {
-    if (state.productLines.length === 0) {
-      els.plSelect.innerHTML = '<option value="">暂无产品线</option>';
-      els.noPlHint.innerHTML = '还没有产品线，先去<a href="./product-lines.html">创建 →</a>';
+  function renderTenantOptions() {
+    // A user has one tenant and nothing to choose between, so the selector is
+    // an administrator's control only.
+    els.plField.hidden = !isAdmin();
+    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
+
+    if (state.tenants.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无租户</option>';
+      els.noPlHint.innerHTML = '还没有租户，先去<a href="./admin.html">开户 →</a>';
       els.noPlHint.hidden = false;
       els.panels.hidden = true;
       return;
     }
-    var opts = state.productLines.map(function (pl) {
+    var opts = state.tenants.map(function (pl) {
       return '<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
     });
     els.plSelect.innerHTML = opts.join("");
-    // Auto-select the first line: this page is meaningless without one.
-    // An account scoped to that same single line gets the selector locked on it.
-    var scopedId = scopedProductLineId();
-    els.plSelect.disabled = !!scopedId && state.productLines.length === 1 &&
-      String(state.productLines[0].id) === scopedId;
-    els.plSelect.value = String(state.productLines[0].id);
-    selectProductLine(els.plSelect.value);
+    // The address may name the tenant to act on; otherwise the first one, since
+    // this page is meaningless without one.
+    var initial = findTenant(requestedTenant()) || state.tenants[0];
+    els.plSelect.value = String(initial.id);
+    selectTenant(els.plSelect.value);
   }
 
   els.plSelect.addEventListener("change", function () {
-    selectProductLine(els.plSelect.value);
+    selectTenant(els.plSelect.value);
   });
 
-  function selectProductLine(id) {
-    state.currentPL = findProductLine(id);
-    if (!state.currentPL) {
+  function selectTenant(id) {
+    state.currentTenant = findTenant(id);
+    els.tenantName.textContent = state.currentTenant
+      ? (state.currentTenant.display_name || state.currentTenant.name)
+      : "";
+    if (!state.currentTenant) {
       els.panels.hidden = true;
       els.noPlHint.hidden = false;
       return;
@@ -747,15 +775,17 @@
     loadConfig();
   }
 
-  function findProductLine(id) {
-    for (var i = 0; i < state.productLines.length; i++) {
-      if (String(state.productLines[i].id) === String(id)) return state.productLines[i];
+  function findTenant(id) {
+    for (var i = 0; i < state.tenants.length; i++) {
+      if (String(state.tenants[i].id) === String(id)) return state.tenants[i];
     }
     return null;
   }
 
-  function plPath(suffix) {
-    return "/api/v1/product-lines/" + encodeURIComponent(state.currentPL.id) + suffix;
+  // The tenant-facing vocabulary for this page is "facts"; the sub-paths below
+  // are the whole of what the route family accepts under it.
+  function factsPath(suffix) {
+    return tenantPath("/facts" + suffix);
   }
 
   // ---------- Ontology load ----------
@@ -765,7 +795,7 @@
     els.editorBody.hidden = true;
     els.versionTbody.innerHTML = '<tr><td colspan="5" class="loading-text">加载中…</td></tr>';
 
-    return api(plPath("/ontology"))
+    return api(factsPath(""))
       .then(function (data) {
         state.ontology = data || {};
         state.lastValidYaml = null;
@@ -800,7 +830,7 @@
       els.activePill.className = "pill muted";
       els.activePill.textContent = "未发布";
       els.activeMeta.textContent =
-        "本体声明本产品线的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。";
+        "本体声明本租户的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。";
       els.emptyHint.hidden = false;
     }
   }
@@ -862,7 +892,7 @@
     els.validateBtn.disabled = true;
     els.validateBtn.textContent = "校验中…";
 
-    api(plPath("/ontology/validate"), { method: "POST", body: JSON.stringify({ yaml: yaml }) })
+    api(factsPath("/validate"), { method: "POST", body: JSON.stringify({ yaml: yaml }) })
       .then(function (data) {
         data = data || {};
         if (data.valid) {
@@ -914,7 +944,7 @@
     els.publishBtn.disabled = true;
     els.publishBtn.textContent = "发布中…";
 
-    api(plPath("/ontology/publish"), {
+    api(factsPath("/publish"), {
       method: "POST",
       body: JSON.stringify({ yaml: yaml, note: els.publishNote.value.trim() })
     })
@@ -944,7 +974,7 @@
       : "回滚到 v" + v.version + "？该版本将立即生效。";
     if (!confirm(message)) return;
 
-    api(plPath("/ontology/rollback"), { method: "POST", body: JSON.stringify({ version: v.version }) })
+    api(factsPath("/rollback"), { method: "POST", body: JSON.stringify({ version: v.version }) })
       .then(function (data) {
         toast("已回滚到 v" + ((data && data.version) || v.version), "success");
         loadOntology();
@@ -960,7 +990,7 @@
     els.configLoading.textContent = "加载中…";
     els.configForm.hidden = true;
 
-    return api(plPath("/ontology-config"))
+    return api(factsPath("/config"))
       .then(function (cfg) {
         cfg = cfg || {};
         var breaker = cfg.breaker || {};
@@ -1045,7 +1075,7 @@
     els.configSubmit.disabled = true;
     els.configSubmit.textContent = "保存中…";
 
-    api(plPath("/ontology-config"), { method: "PUT", body: JSON.stringify(payload) })
+    api(factsPath("/config"), { method: "PUT", body: JSON.stringify(payload) })
       .then(function () {
         toast("开关已保存", "success");
         loadConfig();

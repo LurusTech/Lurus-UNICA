@@ -3,6 +3,8 @@ package bridge
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,6 +117,18 @@ func (c *ChatwootClient) CreateAccount(ctx context.Context, name string) (*Chatw
 	return &account, nil
 }
 
+// DeleteAccount removes a Chatwoot account via the Platform API, taking its
+// inboxes and conversations with it. Deleting the product line alone leaves the
+// account running, which is how the orphans already on record were made.
+func (c *ChatwootClient) DeleteAccount(ctx context.Context, accountID int) error {
+	path := fmt.Sprintf("/platform/api/v1/accounts/%d", accountID)
+	if _, err := c.do(ctx, http.MethodDelete, path, c.config.PlatformToken, nil); err != nil {
+		return fmt.Errorf("delete chatwoot account %d: %w", accountID, err)
+	}
+	log.Printf("[chatwoot] deleted account %d", accountID)
+	return nil
+}
+
 // CreateUser creates a Chatwoot user via the Platform API. The returned
 // AccessToken may be empty: whether the creation response carries one depends on
 // the deployment's version, and the caller decides what to do without it.
@@ -152,6 +166,120 @@ func (c *ChatwootClient) LinkAccountUser(ctx context.Context, accountID, userID 
 	}
 	log.Printf("[chatwoot] linked user %d to account %d as %s", userID, accountID, role)
 	return nil
+}
+
+// Chatwoot account roles. An administrator owns the account's settings and
+// inboxes; an agent only works its conversations, which is all a colleague
+// added later needs.
+const (
+	ChatwootRoleAdministrator = "administrator"
+	ChatwootRoleAgent         = "agent"
+)
+
+// AgentSpec describes the agent an account must have. UserID is the agent this
+// platform already recorded for the person, and is what makes EnsureAgent
+// re-entrant: with it there is nothing to provision.
+type AgentSpec struct {
+	AccountID int
+	UserID    int
+	Name      string
+	Email     string
+	// Password is used only when the agent has to be created. Left empty, one
+	// is generated: an agent provisioned here signs in through a login link,
+	// so its password is a throwaway nobody has to know.
+	Password string
+	// Role defaults to agent.
+	Role string
+}
+
+// ChatwootAgent is an agent an account has. AccessToken and Password are set
+// only by the call that created it — Chatwoot returns neither again.
+type ChatwootAgent struct {
+	ID          int
+	AccessToken string
+	Password    string
+	Created     bool
+}
+
+// EnsureAgent makes sure the person described by spec exists as an agent of the
+// account, and reports the agent.
+//
+// It is re-entrant in the only way Chatwoot allows: a spec that already names a
+// user is answered from that id without calling Chatwoot at all, because
+// creating the user again fails on the taken email and its access token can
+// never be read back. Callers therefore have to persist the returned id.
+//
+// A created agent is returned even when linking it to the account failed, so
+// the caller can store the token it will not be offered a second time; the
+// error then says the link is what is missing.
+func (c *ChatwootClient) EnsureAgent(ctx context.Context, spec AgentSpec) (*ChatwootAgent, error) {
+	if spec.UserID != 0 {
+		return &ChatwootAgent{ID: spec.UserID}, nil
+	}
+
+	password := spec.Password
+	if password == "" {
+		generated, err := randomAgentPassword()
+		if err != nil {
+			return nil, err
+		}
+		password = generated
+	}
+
+	user, err := c.CreateUser(ctx, spec.Name, spec.Email, password)
+	if err != nil {
+		return nil, err
+	}
+
+	agent := &ChatwootAgent{
+		ID:          user.ID,
+		AccessToken: user.AccessToken,
+		Password:    password,
+		Created:     true,
+	}
+
+	role := spec.Role
+	if role == "" {
+		role = ChatwootRoleAgent
+	}
+	if err := c.LinkAccountUser(ctx, spec.AccountID, user.ID, role); err != nil {
+		return agent, err
+	}
+	return agent, nil
+}
+
+// LoginURL mints a password-free login link for a user the platform app
+// created. Chatwoot issues it against the platform token, so this is the whole
+// of what a tenant's people need to reach their workbench: one identity, and no
+// second password to hand out.
+func (c *ChatwootClient) LoginURL(ctx context.Context, userID int) (string, error) {
+	path := fmt.Sprintf("/platform/api/v1/users/%d/login", userID)
+	body, err := c.do(ctx, http.MethodGet, path, c.config.PlatformToken, nil)
+	if err != nil {
+		return "", fmt.Errorf("mint chatwoot login link for user %d: %w", userID, err)
+	}
+
+	var login struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(body, &login); err != nil {
+		return "", fmt.Errorf("unmarshal chatwoot login response: %w", err)
+	}
+	if login.URL == "" {
+		return "", fmt.Errorf("chatwoot login response carried no url")
+	}
+	return login.URL, nil
+}
+
+// randomAgentPassword builds a password for an agent nobody signs in with by
+// hand. The random part carries the entropy; the suffix is there because
+// Chatwoot rejects a password that does not mix character classes.
+func randomAgentPassword() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate chatwoot agent password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf) + "aA1!", nil
 }
 
 // CreateAPIInbox creates an API-channel inbox. This is the application API, not

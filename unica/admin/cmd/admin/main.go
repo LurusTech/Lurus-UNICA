@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,13 +19,36 @@ import (
 	"github.com/kefu/unica/admin/internal/audit"
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
-	_ "github.com/kefu/unica/admin/internal/metrics" // register Prometheus metrics
 	"github.com/kefu/unica/admin/internal/config"
 	"github.com/kefu/unica/admin/internal/crypto"
 	"github.com/kefu/unica/admin/internal/handler"
-	"github.com/kefu/unica/admin/internal/rbac"
+	"github.com/kefu/unica/admin/internal/identity"
+	_ "github.com/kefu/unica/admin/internal/metrics" // register Prometheus metrics
 	"github.com/kefu/unica/admin/internal/repository"
+	"github.com/kefu/unica/admin/internal/tenant/aisettings"
+	"github.com/kefu/unica/admin/internal/tenant/channels"
+	"github.com/kefu/unica/admin/internal/tenant/facts"
+	"github.com/kefu/unica/admin/internal/tenant/knowledge"
+	"github.com/kefu/unica/admin/internal/tenant/quality"
+	"github.com/kefu/unica/admin/internal/tenant/workbench"
 	"github.com/kefu/unica/pkg/domain"
+)
+
+// tenantPrefix is the root of the tenant-scoped route family. Every resource a
+// tenant owns hangs below it, which is what makes one middleware enough to
+// authorise all of them.
+const tenantPrefix = "/api/v1/tenants/"
+
+// Legacy path roots. The tenant routes are the only addresses a client may use;
+// these are the shapes the modules that predate them still parse, so the
+// dispatcher rewrites into them. A module that reads the tenant route itself —
+// knowledge, ai-settings, workbench — needs no entry here, and each one that
+// learns to takes a line out of this list.
+const (
+	legacyProductLinesPrefix = "/api/v1/product-lines/"
+	legacyChannelsPrefix     = "/api/v1/channels/"
+	legacyChannelsRoot       = "/api/v1/channels"
+	legacyViolationsPrefix   = "/api/v1/violations/"
 )
 
 func main() {
@@ -63,7 +87,6 @@ func main() {
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
-	roleRepo := repository.NewRoleRepository(db)
 	plRepo := repository.NewProductLineRepository(db)
 	channelRepo := repository.NewChannelRepository(db)
 
@@ -83,31 +106,18 @@ func main() {
 		copy(aesKey, []byte("dev-only-key-not-for-production!"))
 	}
 
-	// Initialize AI config repository and Dify bridge
-	aiConfigRepo := repository.NewAIConfigRepository(db)
+	// Initialize the Dify bridge
 	difyBridge := bridge.NewDifyBridge(bridge.DifyBridgeConfig{
 		AdminURL:      cfg.DifyAdminURL,
 		AdminToken:    cfg.DifyAdminToken,
 		AdminEmail:    cfg.DifyAdminEmail,
 		AdminPassword: cfg.DifyAdminPassword,
 		APIBaseURL:    cfg.DifyAPIBaseURL,
-		// Datasets are provisioned here but filled by the AI-config handler, so
+		// Datasets are provisioned here but filled by the knowledge module, so
 		// both have to be told the same indexing technique or the knowledge base
 		// is created to be searched one way and populated to be searched another.
 		IndexingTechnique: cfg.DifyIndexingTechnique,
 	})
-
-	// Initialize handlers
-	authHandler := handler.NewAuthHandler(userRepo, roleRepo, jwtMgr, rdb, cfg.RefreshTokenTTL)
-	userHandler := handler.NewUserHandler(userRepo, roleRepo, cfg.BcryptCost)
-	roleHandler := handler.NewRoleHandler(roleRepo, userRepo)
-	plHandler := handler.NewProductLineHandler(plRepo, difyBridge, cfg.DifyAdminEmail, cfg.DifyAdminPassword)
-	channelHandler := handler.NewChannelHandler(channelRepo, aesKey, cfg.GatewayHost, rdb)
-	aiConfigHandler := handler.NewAIConfigHandler(aiConfigRepo, plRepo, difyBridge, rdb,
-		cfg.DifyAPIBaseURL, cfg.DifyDatasetAPIKey, cfg.DifyIndexingTechnique)
-	if cfg.DifyDatasetAPIKey == "" {
-		log.Println("[admin] WARNING: DIFY_DATASET_API_KEY not set, knowledge base management disabled")
-	}
 
 	// Chatwoot tenant provisioning needs the platform token, which is issued by
 	// hand in the Super Admin console. Without it onboarding still runs and
@@ -119,37 +129,76 @@ func main() {
 			PlatformToken: cfg.ChatwootPlatformToken,
 		})
 	} else {
-		log.Println("[admin] WARNING: CHATWOOT_BASE_URL/CHATWOOT_PLATFORM_TOKEN not set, customer onboarding will skip Chatwoot provisioning")
+		log.Println("[admin] WARNING: CHATWOOT_BASE_URL/CHATWOOT_PLATFORM_TOKEN not set, tenant onboarding will skip Chatwoot provisioning")
 	}
-	customerHandler := handler.NewCustomerHandler(plRepo, userRepo, roleRepo, plHandler,
-		chatwootClient, cfg.ChatwootWebhookURL, cfg.BcryptCost)
 
-	// Initialize audit logging
+	// Audit logging comes first: the identity layer writes its removal trail
+	// through it, so the logger has to exist before the handlers do.
 	auditRepo := audit.NewRepository(db)
 	auditLogger := audit.NewLogger(auditRepo, 256)
 	defer auditLogger.Close()
-	auditLogHandler := handler.NewAuditLogHandler(auditRepo)
 	log.Println("[admin] audit logger initialized")
+
+	// Initialize handlers. The identity layer owns accounts and the tenant
+	// lifecycle; everything a tenant owns afterwards is a handler of its own.
+	authHandler := handler.NewAuthHandler(userRepo, jwtMgr, rdb, cfg.RefreshTokenTTL)
+	userHandler := identity.NewUserHandler(userRepo, cfg.BcryptCost)
+	tenantHandler := identity.NewTenantHandler(identity.TenantHandlerConfig{
+		ProductLines:       plRepo,
+		Users:              userRepo,
+		DifyBridge:         difyBridge,
+		DifyAdminEmail:     cfg.DifyAdminEmail,
+		DifyAdminPassword:  cfg.DifyAdminPassword,
+		Chatwoot:           chatwootClient,
+		ChatwootWebhookURL: cfg.ChatwootWebhookURL,
+		BcryptCost:         cfg.BcryptCost,
+		Audit:              auditLogger,
+	})
+	channelHandler := channels.NewHandler(channelRepo, aesKey, cfg.GatewayHost, rdb)
+	knowledgeHandler := knowledge.NewHandler(plRepo,
+		cfg.DifyAPIBaseURL, cfg.DifyDatasetAPIKey, cfg.DifyIndexingTechnique)
+	if cfg.DifyDatasetAPIKey == "" {
+		log.Println("[admin] WARNING: DIFY_DATASET_API_KEY not set, knowledge base management disabled")
+	}
+	// The AI settings module writes the guardrail block the runtime reads, and
+	// drops the runtime's cached routes afterwards — hence the channel roster
+	// and the Redis client.
+	aiSettingsHandler := aisettings.NewHandler(aisettings.Config{
+		ProductLines: plRepo,
+		Channels:     channelRepo,
+		Dify:         difyBridge,
+		Redis:        rdb,
+	})
+
+	auditLogHandler := handler.NewAuditLogHandler(auditRepo)
 
 	// Ontology editing and violation review surfaces. The store's cache is
 	// irrelevant here (admin reads versions and evidence, not the hot path),
 	// so a short TTL is fine.
 	domainStore := domain.NewStore(db, time.Minute)
-	ontologyHandler := handler.NewOntologyHandler(domainStore, plRepo, auditLogger)
-	violationsHandler := handler.NewViolationsHandler(domainStore, plRepo, auditLogger)
+	factsHandler := facts.NewHandler(domainStore, plRepo, auditLogger)
+	violationsHandler := quality.NewHandler(domainStore, plRepo, auditLogger)
 
-	// Build middleware chain
+	// The workbench trades the caller's own portal account for a password-free
+	// Chatwoot session, provisioning the agent it signs in as when the account
+	// carries none yet. Without a Chatwoot deployment the endpoint says so.
+	workbenchHandler := workbench.NewHandler(workbench.Config{
+		Tenants:  plRepo,
+		Accounts: userRepo,
+		Chatwoot: chatwootClient,
+	})
+
+	// Build middleware chain. Two gates carry the whole model: an administrator
+	// gate for the platform surfaces, and the tenant gate for everything a
+	// tenant owns.
 	authMW := auth.AuthMiddleware(jwtMgr)
-	requireManageUsers := auth.RequirePermission(rbac.PermManageUsers)
-	requireManagePL := auth.RequirePermission(rbac.PermManageProductLines)
-	requireManageChannels := auth.RequirePermission(rbac.PermManageChannels)
-	requireManageAIConfig := auth.RequirePermission(rbac.PermManageAIConfig)
-	requireViewAuditLogs := auth.RequirePermission(rbac.PermViewAuditLogs)
+	requireAdmin := auth.RequireAdmin()
+	tenantAuth := auth.TenantAuth(tenantPrefix)
 
 	// Build audit middleware for auditable endpoints
 	channelAuditMW := audit.Middleware(auditLogger, "channel_config",
 		func(r *http.Request) (json.RawMessage, string, string, error) {
-			segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/channels/")
+			segments := handler.ExtractPathSegments(r.URL.Path, legacyChannelsPrefix)
 			if len(segments) == 0 {
 				return nil, "", "", nil
 			}
@@ -171,47 +220,52 @@ func main() {
 		},
 	)
 
-	// Knowledge sub-paths mutate Dify documents, not the ai_agent_configs row;
-	// snapshotting that row around them would pair a before-state of one entity
-	// with an after-state of another. Their before-state instead names the
-	// document the request touches, so a delete row still says what was deleted.
-	isKnowledgePath := func(segments []string) bool {
-		return len(segments) > 1 && segments[1] == "knowledge"
+	// The tenant a request under /api/v1/tenants/{id}/... acts on. The middleware
+	// above has already resolved and authorised it, so the path segment is the
+	// tenant itself rather than whatever the caller typed.
+	auditTenantID := func(r *http.Request) string {
+		segments := handler.ExtractPathSegments(r.URL.Path, tenantPrefix)
+		if len(segments) == 0 {
+			return ""
+		}
+		return segments[0]
 	}
-	aiConfigAuditMW := audit.Middleware(auditLogger, "ai_config",
+
+	// AI settings write one block of the tenant's config, so that block is the
+	// before/after state — the rest of config_json belongs to other modules and
+	// would only add noise a reviewer has to diff through.
+	aiSettingsAuditMW := audit.Middleware(auditLogger, "ai_settings",
 		func(r *http.Request) (json.RawMessage, string, string, error) {
-			segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/ai-config/")
-			if len(segments) == 0 {
+			tenantID := auditTenantID(r)
+			if tenantID == "" {
 				return nil, "", "", nil
 			}
-			plID := segments[0]
-			if isKnowledgePath(segments) {
-				target := map[string]string{"product_line_id": plID}
-				if len(segments) > 3 && segments[2] == "documents" {
-					target["document_id"] = segments[3]
-				}
-				data, _ := json.Marshal(target)
-				return data, plID, plID, nil
-			}
-			cfg, err := aiConfigRepo.GetByProductLineID(r.Context(), plID)
-			if err != nil {
-				return nil, plID, plID, err
-			}
-			data, _ := json.Marshal(cfg)
-			return data, plID, plID, nil
+			state, err := aiSettingsHandler.AuditState(r.Context(), tenantID)
+			return state, tenantID, tenantID, err
 		},
 		func(r *http.Request, resourceID string) (json.RawMessage, error) {
-			segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/ai-config/")
-			if isKnowledgePath(segments) {
-				return nil, nil
-			}
-			cfg, err := aiConfigRepo.GetByProductLineID(r.Context(), resourceID)
-			if err != nil {
-				return nil, err
-			}
-			data, _ := json.Marshal(cfg)
-			return data, nil
+			return aiSettingsHandler.AuditState(r.Context(), resourceID)
 		},
+	)
+
+	// Knowledge requests mutate Dify documents, not a database row, so there is
+	// no state to snapshot on either side. The before-state instead names the
+	// document the request touches, so a delete row still says what was deleted.
+	knowledgeAuditMW := audit.Middleware(auditLogger, "knowledge",
+		func(r *http.Request) (json.RawMessage, string, string, error) {
+			tenantID := auditTenantID(r)
+			if tenantID == "" {
+				return nil, "", "", nil
+			}
+			target := map[string]string{"product_line_id": tenantID}
+			segments := handler.ExtractPathSegments(r.URL.Path, tenantPrefix)
+			if len(segments) > 3 && segments[2] == "documents" {
+				target["document_id"] = segments[3]
+			}
+			data, _ := json.Marshal(target)
+			return data, tenantID, tenantID, nil
+		},
+		func(r *http.Request, resourceID string) (json.RawMessage, error) { return nil, nil },
 	)
 
 	userAuditMW := audit.Middleware(auditLogger, "user",
@@ -238,20 +292,15 @@ func main() {
 		},
 	)
 
-	roleAuditMW := audit.Middleware(auditLogger, "role_assignment",
-		nil, // no before state for role assignment create
-		nil, // after state captured from response body
-	)
-
-	// Onboarding has no before state (the customer is what the call brings into
+	// Onboarding has no before state (the tenant is what the call brings into
 	// existence) and its after state is the response itself, which the create
 	// path extracts — the after function only has to be present for that path to
 	// run. The response also carries the one-time passwords, so it is redacted
 	// on the way into the trail.
-	customerAuditMW := audit.MiddlewareWithOptions(auditLogger, handler.CustomerAuditResource,
+	tenantAuditMW := audit.MiddlewareWithOptions(auditLogger, identity.CustomerAuditResource,
 		nil,
 		func(r *http.Request, resourceID string) (json.RawMessage, error) { return nil, nil },
-		audit.Options{Redact: handler.RedactCustomerSecrets},
+		audit.Options{Redact: identity.RedactCustomerSecrets},
 	)
 
 	// Build HTTP mux
@@ -270,83 +319,55 @@ func main() {
 	// Prometheus metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())
 
-	// Protected endpoints - Users (with audit middleware)
-	mux.Handle("/api/v1/users", authMW(requireManageUsers(userAuditMW(http.HandlerFunc(userHandler.HandleUsers)))))
-	mux.Handle("/api/v1/users/", authMW(requireManageUsers(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Route to role handlers for /users/:id/roles paths
-		segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/users/")
-		if len(segments) >= 2 && segments[1] == "roles" {
-			if len(segments) == 2 {
-				roleAuditMW(http.HandlerFunc(roleHandler.HandleAssignRole)).ServeHTTP(w, r)
-			} else if len(segments) == 3 {
-				roleAuditMW(http.HandlerFunc(roleHandler.HandleRemoveRole)).ServeHTTP(w, r)
-			} else {
-				handler.ErrorJSON(w, http.StatusNotFound, "not found")
-			}
-			return
-		}
-		userAuditMW(http.HandlerFunc(userHandler.HandleUser)).ServeHTTP(w, r)
-	}))))
+	// Accounts. Administrator territory throughout: an account carries the role
+	// and the tenant that decide what it may reach, so handing out accounts is
+	// handing out authority.
+	mux.Handle("/api/v1/users", authMW(requireAdmin(userAuditMW(http.HandlerFunc(userHandler.HandleUsers)))))
+	mux.Handle("/api/v1/users/", authMW(requireAdmin(userAuditMW(http.HandlerFunc(userHandler.HandleUser)))))
 
-	// Protected endpoints - Customer onboarding. The call creates a product line
-	// and a portal account in one step, so it demands both permissions; the
-	// permission matrix grants that pair to super admins only.
+	// The tenant roster: list the tenants, or bring one into existence.
 	//
 	// The onboarding body is four short fields, and the audit middleware buffers
 	// request bodies for replay, so the ceiling goes outside it: inside, a large
 	// body would already have been read whole before any limit applied.
-	customerBodyLimit := handler.LimitRequestBody(1 << 20)
-	mux.Handle("/api/v1/customers", authMW(requireManageUsers(requireManagePL(
-		customerBodyLimit(customerAuditMW(http.HandlerFunc(customerHandler.HandleCustomers)))))))
-
-	// Protected endpoints - Product Lines
-	// GET (list) is scoped by the caller's claims and open to any authenticated
-	// user; POST (create) is a mutation and must require the manage permission.
-	mux.Handle("/api/v1/product-lines", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			plHandler.HandleProductLines(w, r)
-			return
+	onboardBodyLimit := handler.LimitRequestBody(1 << 20)
+	mux.Handle("/api/v1/tenants", authMW(requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			tenantHandler.HandleTenants(w, r)
+		case http.MethodPost:
+			onboardBodyLimit(tenantAuditMW(http.HandlerFunc(tenantHandler.HandleOnboard))).ServeHTTP(w, r)
+		default:
+			handler.ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
-		requireManagePL(http.HandlerFunc(plHandler.HandleProductLines)).ServeHTTP(w, r)
-	})))
-	// The ontology sub-resources are policy editing, not product-line
-	// administration, so they are gated by the AI-config permission while the
-	// rest of the subtree keeps requiring the manage-product-lines permission.
-	// Audit for these mutations is written inside the handler: subtree-level
-	// audit middleware would start auditing every product-line request.
-	mux.Handle("/api/v1/product-lines/", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		segments := handler.ExtractPathSegments(r.URL.Path, "/api/v1/product-lines/")
-		if len(segments) >= 2 {
-			switch segments[1] {
-			case "ontology", "ontology-config":
-				requireManageAIConfig(http.HandlerFunc(ontologyHandler.Handle)).ServeHTTP(w, r)
-				return
-			case "violations":
-				requireManageAIConfig(http.HandlerFunc(violationsHandler.HandleByProductLine)).ServeHTTP(w, r)
-				return
-			}
-		}
-		requireManagePL(http.HandlerFunc(plHandler.HandleProductLine)).ServeHTTP(w, r)
-	})))
+	}))))
 
-	// Violation review is addressed by violation id, not product line; the
-	// handler resolves the line from the row and applies scoping itself.
-	mux.Handle("/api/v1/violations/", authMW(requireManageAIConfig(http.HandlerFunc(violationsHandler.HandleReview))))
-
-	// Protected endpoints - Channels (with audit middleware)
-	mux.Handle("/api/v1/channels", authMW(requireManageChannels(channelAuditMW(http.HandlerFunc(channelHandler.HandleChannels)))))
-	mux.Handle("/api/v1/channels/", authMW(requireManageChannels(channelAuditMW(http.HandlerFunc(channelHandler.HandleChannel)))))
-
-	// Protected endpoints - AI Config (with audit middleware)
-	// The knowledge upload is the only large body in this subtree, and the audit
+	// Everything one tenant owns. tenantAuth resolves {id} (including the "me"
+	// alias) and applies the single rule — an administrator reaches any tenant,
+	// a user only its own — so the dispatcher below decides only which module
+	// serves the request, never whether it may be served.
+	//
+	// The knowledge upload is the largest body in this subtree and the audit
 	// middleware buffers bodies for replay, so the ceiling goes outside it. The
 	// slack above the handler's own 15 MB limit is what lets the handler answer
 	// 413 rather than fail on a body truncated to exactly the limit.
-	aiConfigBodyLimit := handler.LimitRequestBody(handler.MaxKnowledgeUploadBytes + (1 << 20))
-	mux.Handle("/api/v1/ai-config/", authMW(requireManageAIConfig(aiConfigBodyLimit(aiConfigAuditMW(http.HandlerFunc(aiConfigHandler.HandleAIConfig))))))
+	knowledgeBodyLimit := handler.LimitRequestBody(knowledge.MaxUploadBytes + (1 << 20))
+	tenantResources := &tenantRouter{
+		tenantRecord:     http.HandlerFunc(tenantHandler.HandleTenant),
+		knowledge:        knowledgeBodyLimit(knowledgeAuditMW(http.HandlerFunc(knowledgeHandler.Handle))),
+		aiSettings:       aiSettingsAuditMW(http.HandlerFunc(aiSettingsHandler.Handle)),
+		channels:         channelAuditMW(http.HandlerFunc(channelHandler.HandleChannels)),
+		channel:          channelAuditMW(http.HandlerFunc(channelHandler.HandleChannel)),
+		ontology:         http.HandlerFunc(factsHandler.Handle),
+		violationsByLine: http.HandlerFunc(violationsHandler.HandleByProductLine),
+		violationReview:  http.HandlerFunc(violationsHandler.HandleReview),
+		workbench:        http.HandlerFunc(workbenchHandler.Handle),
+	}
+	mux.Handle(tenantPrefix, authMW(tenantAuth(tenantResources)))
 
-	// Protected endpoints - Audit Logs (SuperAdmin and ProductAdmin only)
-	mux.Handle("/api/v1/audit-logs", authMW(requireViewAuditLogs(http.HandlerFunc(auditLogHandler.HandleAuditLogs))))
+	// The audit trail. Open to any authenticated caller; the handler narrows a
+	// tenant's user to its own rows.
+	mux.Handle("/api/v1/audit-logs", authMW(http.HandlerFunc(auditLogHandler.HandleAuditLogs)))
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -382,4 +403,139 @@ func main() {
 	}
 
 	log.Println("[admin] shutdown complete")
+}
+
+// tenantRouter dispatches /api/v1/tenants/{id}/... to the module that owns the
+// resource. The tenant is already resolved and authorised by the time it runs.
+type tenantRouter struct {
+	tenantRecord     http.Handler
+	knowledge        http.Handler
+	aiSettings       http.Handler
+	channels         http.Handler
+	channel          http.Handler
+	ontology         http.Handler
+	violationsByLine http.Handler
+	violationReview  http.Handler
+	workbench        http.Handler
+}
+
+// aiSettingsPaths is the closed list of ai-settings sub-paths. Listing them here
+// closes the subtree: a name absent from it is a 404, not a request that reaches
+// the module and is refused there.
+var aiSettingsPaths = map[string]bool{
+	"":              true,
+	"prompt":        true,
+	"prompt/reset":  true,
+	"threshold":     true,
+	"handoff-rules": true,
+	"dataset/bind":  true,
+	"test":          true,
+}
+
+// factsPaths map the tenant-facing "facts" vocabulary onto the ontology
+// handler's own. "config" is the per-tenant switch block, which lives on a
+// sibling path there rather than under the resource.
+var factsPaths = map[string]string{
+	"":         "ontology",
+	"validate": "ontology/validate",
+	"publish":  "ontology/publish",
+	"rollback": "ontology/rollback",
+	"config":   "ontology-config",
+}
+
+func (t *tenantRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	segments := handler.ExtractPathSegments(r.URL.Path, tenantPrefix)
+	if len(segments) == 0 {
+		handler.ErrorJSON(w, http.StatusBadRequest, "tenant id required")
+		return
+	}
+	tenantID := segments[0]
+	rest := segments[1:]
+
+	if len(rest) == 0 {
+		t.serveTenant(w, r, tenantID)
+		return
+	}
+
+	sub := strings.Join(rest[1:], "/")
+	switch rest[0] {
+	case "knowledge":
+		// The tenant modules read the tenant route themselves, so their
+		// requests travel on untouched.
+		t.knowledge.ServeHTTP(w, r)
+	case "ai-settings":
+		if !aiSettingsPaths[sub] {
+			handler.ErrorJSON(w, http.StatusNotFound, "unknown ai-settings sub-path: "+sub)
+			return
+		}
+		t.aiSettings.ServeHTTP(w, r)
+	case "channels":
+		// The tenant is carried in the request context, which is where the
+		// channel handler reads its scope from; the legacy path only has to
+		// name the resource.
+		if sub == "" {
+			t.serve(w, r, t.channels, legacyChannelsRoot)
+			return
+		}
+		t.serve(w, r, t.channel, joinPath(legacyChannelsPrefix, sub))
+	case "facts":
+		mapped, ok := factsPaths[sub]
+		if !ok {
+			handler.ErrorJSON(w, http.StatusNotFound, "unknown facts sub-path: "+sub)
+			return
+		}
+		t.serve(w, r, t.ontology, joinPath(legacyProductLinesPrefix+tenantID, mapped))
+	case "violations":
+		if sub == "" {
+			t.serve(w, r, t.violationsByLine, joinPath(legacyProductLinesPrefix+tenantID, "violations"))
+			return
+		}
+		t.serve(w, r, t.violationReview, joinPath(legacyViolationsPrefix, sub))
+	case "workbench":
+		if sub != "sso" {
+			handler.ErrorJSON(w, http.StatusNotFound, "unknown workbench sub-path: "+sub)
+			return
+		}
+		// The workbench reads the tenant route itself, so the request travels
+		// on untouched.
+		t.workbench.ServeHTTP(w, r)
+	default:
+		handler.ErrorJSON(w, http.StatusNotFound, "unknown tenant resource: "+rest[0])
+	}
+}
+
+// serveTenant answers /api/v1/tenants/{id} itself: the tenant record, or its
+// removal. Both are the identity layer's, which is why they reach the same
+// handler; it refuses the removal to anyone but an administrator.
+func (t *tenantRouter) serveTenant(w http.ResponseWriter, r *http.Request, tenantID string) {
+	switch r.Method {
+	case http.MethodGet, http.MethodDelete:
+		t.serve(w, r, t.tenantRecord, legacyProductLinesPrefix+tenantID)
+	default:
+		handler.ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// serve rewrites the request path to the one the target handler parses and
+// hands the request over. Only the path changes: the tenant in the context and
+// the claims stay exactly as the middleware left them.
+func (t *tenantRouter) serve(w http.ResponseWriter, r *http.Request, next http.Handler, path string) {
+	u := *r.URL
+	u.Path = path
+	r2 := r.Clone(r.Context())
+	r2.URL = &u
+	next.ServeHTTP(w, r2)
+}
+
+// joinPath assembles a path from a base and the segments below it, skipping the
+// empty ones so a resource root does not end up with a trailing slash.
+func joinPath(base string, parts ...string) string {
+	out := strings.TrimSuffix(base, "/")
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		out += "/" + p
+	}
+	return out
 }

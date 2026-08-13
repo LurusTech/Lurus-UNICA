@@ -293,6 +293,33 @@ func (b *DifyBridge) SetDatasetRetrieval(ctx context.Context, datasetID, token s
 	return nil
 }
 
+// DeleteApp removes a Dify app. Used when a tenant is taken apart: the app is
+// provisioned per tenant, so nothing else refers to it once the tenant is gone.
+func (b *DifyBridge) DeleteApp(ctx context.Context, token, appID string) error {
+	if appID == "" {
+		return fmt.Errorf("app ID is empty")
+	}
+	if _, err := b.doAdminRequestWithToken(ctx, http.MethodDelete, "/apps/"+appID, nil, token); err != nil {
+		return fmt.Errorf("delete app %s: %w", appID, err)
+	}
+	log.Printf("[dify-bridge] deleted app %s", appID)
+	return nil
+}
+
+// DeleteDataset removes a Dify dataset and every document indexed in it. It is
+// a separate object from the app that consults it, so removing one leaves the
+// other standing.
+func (b *DifyBridge) DeleteDataset(ctx context.Context, token, datasetID string) error {
+	if datasetID == "" {
+		return fmt.Errorf("dataset ID is empty")
+	}
+	if _, err := b.doAdminRequestWithToken(ctx, http.MethodDelete, "/datasets/"+datasetID, nil, token); err != nil {
+		return fmt.Errorf("delete dataset %s: %w", datasetID, err)
+	}
+	log.Printf("[dify-bridge] deleted dataset %s", datasetID)
+	return nil
+}
+
 // CreateAppAPIKey generates a new API key for the specified Dify app.
 func (b *DifyBridge) CreateAppAPIKey(ctx context.Context, token, appID string) (*DifyAPIKeyCreated, error) {
 	body, err := b.doAdminRequestWithToken(ctx, http.MethodPost, "/apps/"+appID+"/api-keys", map[string]interface{}{}, token)

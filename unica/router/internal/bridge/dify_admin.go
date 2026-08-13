@@ -1,6 +1,11 @@
 // Package bridge provides external service integration clients for the router.
 // DifyAdminClient communicates with the Dify Console (Admin) API to manage
 // workspaces, applications, datasets, and API keys programmatically.
+//
+// This client backs cmd/setup_dify_workspaces only, which is a retired one-off
+// script — see that command's doc comment. The production provisioning
+// implementation is the admin service's bridge; this one is not an alternative
+// onboarding path and must not gain new callers.
 package bridge
 
 import (

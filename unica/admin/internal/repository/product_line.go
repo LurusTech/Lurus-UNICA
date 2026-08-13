@@ -344,3 +344,20 @@ func applyDifyBindingFields(pl *ProductLine, difyID sql.NullString, configJSON [
 		pl.DifyDatasetID = &v
 	}
 }
+
+// pqStringArray converts a string slice into a PostgreSQL-compatible array
+// literal, for the ANY($1) filters this package builds by hand.
+func pqStringArray(arr []string) interface{} {
+	if len(arr) == 0 {
+		return "{}"
+	}
+	result := "{"
+	for i, s := range arr {
+		if i > 0 {
+			result += ","
+		}
+		result += s
+	}
+	result += "}"
+	return result
+}
