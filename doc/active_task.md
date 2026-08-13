@@ -1,54 +1,35 @@
-# Active Task: 双层角色与租户自治架构（简化 RBAC + 消灭功能交叉调用）
+# Active Task: 产品进化第 0 轮 —— 观测层三件套
 
 ## Context
-现有 5 角色权限矩阵中 3 个从未使用，且功能间交叉调用严重（开户 handler 借调
-产品线 handler 私有方法、一个 ai_config handler 管六个领域、同一配置双存储
-即 D4、三套独立登录身份）。目标：恰好两层角色——admin（管用户与平台）与
-user（自治管理自己租户的知识库/渠道/事实/AI设置/工作台/复核），并以分层
-依赖规则从架构上禁止 L1 模块互调。详细设计见 `doc/plan-two-tier-tenancy.md`。
-
-（此前的房产知识库测试与修复记录已沉淀至 `doc/test-ajyj-kb-import.md`、
-`doc/known-defects.md`、`doc/测试信息.md`，本文件不再保留副本。）
+执行 doc/goal-evolution.md 第 0 轮：数据飞轮启动前先建观测层（金标回归集 / 约束命中分布 /
+转人工原因落库与标注）。全部只读或旁路，不改动现有路由决策链路。探查结论：金标框架
+（internal/eval + cmd/evalset）与违规复核流程已存在，缺 AJYJ 用例、聚合统计与转人工原因持久化。
 
 ## Critical Files
-- doc/plan-two-tier-tenancy.md（完整方案：角色模型/分层规则/API 重塑/迁移/风险）
-- unica/admin/internal/rbac/policy.go（矩阵收缩为 IsAdmin/OwnsTenant 两谓词）
-- unica/admin/internal/auth/jwt.go（claims 收缩为 {user_id,email,role,tenant_id}）
-- unica/admin/internal/handler/customers.go + product_lines.go（开户编排收进 L0 tenants 模块）
-- unica/admin/internal/handler/ai_config.go（拆分为 tenant/{knowledge,aisettings,...} 六模块）
-- unica/admin/cmd/admin/main.go（路由重排为 /api/v1/tenants/{id}/*，{id} 支持 "me"）
-- router/migrations/017_two_tier_tenancy.sql（users 加 role/product_line_id/chatwoot_user_id；删 ai_agent_configs/user_roles/roles；RLS 重写）
-- portal/（admin.html + home.html 按角色分流；AI 设置独立成页；工作台走 Chatwoot SSO）
+- unica/router/testdata/golden/ajyj.yaml（新增，第 4 份金标集）
+- unica/router/internal/eval/goldenset.go、unica/router/cmd/evalset/main.go（只读确认，勿改断言语义）
+- unica/router/migrations/018_handoff_events.sql（新增，旁路表）
+- unica/router/internal/routing/router.go（publishHandoffEvent 处旁路落库）/ internal/state/repository.go
+- unica/pkg/domain/store.go（violations 聚合查询）
+- unica/admin/internal/tenant/quality/（stats 端点 + handoff 事件列表/标注端点）
+- unica/admin/cmd/admin/main.go + router_test.go（路由注册与映射钉子）
+- doc/metrics-northstar.md（新增，北极星指标记录，第 0 轮记基线）
 
 ## Step-by-Step Plan
-- [x] 1. 迁移 017（含回填断言与 RLS 重写），全新库重放验证
-- [x] 2. JWT claims 收缩，jwt_test 更新
-- [x] 3. rbac 收缩为两谓词，policy_test 重写
-- [x] 4. tenantAuth 中间件（含 "me" 解析），授权矩阵测试
-- [x] 5. 路由重排 + audit 重挂（映射钉在 `cmd/admin/router_test.go`；curl 冒烟待部署后补）
-- [x] 6. 开户/销户编排收进 tenants 模块（开户全链路已就位；`DELETE /tenants/{id}` 目前是 501 占位，级联清理待实现）
-- [x] 7. ai-settings 模块：threshold/handoff 写 config_json.guardrail + 清缓存（= D4 修复代码侧完成，router 行为变化待实机复测）
-- [x] 8. workbench SSO 端点（路由与授权已就位，处理器目前是 501 占位；免密实测待部署）
-- [x] 9. 门户重构（双首页/独立 AI 设置页/SSO 跳转），已上线并页面级验证
-- [x] 10. 收尾：tmp 脚本改挂新路由；`doc/测试信息.md` 页面表/账号表/API 速查更新；
-      known-defects D4 标记为"代码侧已消除、待实测后删"、D7 定案、D8 回填端点改新路径
+- [x] 1. 读 goldenset.go / cmd/evalset/main.go：执行器无产线数量假设（凭 product_lines 表按名解析）；
+       硬约束在测试侧——corpus 白名单（已加 AJYJ）+ intent 标签必须与分类器输出一致
+- [x] 2. testdata/golden/ajyj.yaml 20 条已写：单轮事实/政策 + D10 单轮投影（轮6/7 负样本）+
+       转人工 2 条 + 佣金五档陷阱 + denies 红线；eval/intent 单测一次通过
+- [x] 3. migration 018 handoff_events 已写（含 annotated_* 三列与未标注部分索引）
+- [x] 4. router publishHandoffEvent 旁路落库（handoffRecorder 接口，SetOntology 同 store 装配，
+       nil 安全 + keyword 落 detail），wiring 单测 2 条通过；销户级联清单已补 handoff_events
+- [x] 5. admin quality 新增 SignalsHandler：violations/stats（含 ontology 左连接 coverage、
+       dead_constraints、undeclared_properties）、handoffs 列表/stats、annotate（audit action=review）；
+       租户路由映射 + 钉子测试 4 条新增；signals_test 9 条全绿
+- [ ] 6. 验证：五模块静默 build/vet/test 全绿；提交后备份业务库 → 应用 018 → 重启 router/admin →
+       evalset 跑 ajyj.yaml 全绿 → 冒烟新端点（触发一次转人工，验证 handoff_events 落行、stats 可读）
+- [ ] 7. doc/metrics-northstar.md 记第 0 轮基线（三指标当前口径与测量近似的诚实说明）；
+       测试信息.md 登记新端点；清 active_task
 
 ## Current Status
-- [ ] Blocked / In Progress / **Ready for Review（已部署并实机验收通过）**
-
-2026-08-13 部署与实机验收（全部通过）：
-- 迁移 017 已应用活库（先 pg_dump 备份至 ~/unica-run/unica-pre017.dump）：
-  rehearsal→admin，6 用户→user 各绑各租户，三表已删
-- 授权矩阵冒烟 19/19：admin×任意、user×自己、user×他人 403、匿名 401、
-  旧路由 404、user 侧 audit 自动过滤
-- **D4 实机复现通过并已按记录规则从 known-defects 删除**：租户用户自己经
-  `PUT /tenants/me/ai-settings/threshold` 改 0.95→下一条消息即转人工，
-  改回 0.70→恢复正常回答（含 config_json 与缓存失效全链路）
-- 生命周期演练通过：开临时租户（Chatwoot 自动配）→ 租户用户 SSO 免密
-  登进 Chatwoot（会话实证）→ admin 销户 → 业务库/Chatwoot/Dify 三方零残留，
-  审计行携带完整清理清单（终审【中1】已修复并有测试钉住）
-- 门户九页面在线核对：三个新页面 200，product-lines.html 404
-
-遗留（非阻断，来自终审清单）：已停用账号的 access token 在 2h TTL 内仍有效
-（中3，known-defects 未立项，测试信息.md 已记坑）；ai-settings 审计快照只含
-guardrail 块（低4）；SSO 发链无审计（低5，GET 天然跳过中间件）。
+- [x] In Progress —— 代码完成、五模块 vet/test 全绿；待提交后执行步骤 6 实机部署验证

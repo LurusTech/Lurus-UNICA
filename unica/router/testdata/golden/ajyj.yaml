@@ -1,0 +1,240 @@
+# Golden evaluation set for the AJYJ product line (安居易家, real-estate drill tenant).
+# Schema documented in megastore.yaml.
+#
+# Facts come from two places, unlike the three retail lines: per-listing numbers
+# live in the tenant's Dify dataset (source: tmp/kb-test-realestate.json) and the
+# policy layer lives in the published ontology (source: tmp/ajyj-ontology.yaml,
+# ontology_versions v1). Update the dataset/ontology and this file in the same
+# change.
+#
+# AJYJ exists in the corpus for two reasons the retail lines cannot cover:
+# commission forks five ways by transaction type (per-scope facts must not
+# collapse into one number), and the known multi-turn subject-omission failures
+# (D10) get single-turn projections here — the true multi-turn regression still
+# lives in tmp/run_ajyj_longconv.py because this harness scores each case in an
+# isolated conversation.
+
+product_line: AJYJ
+
+facts_of_record:
+  listing_minsheng:  {area_sqm: 128.6, price_wan: 998, note: 满五唯一, parking: 产权车位1个}
+  listing_huating:   {area_sqm: 68.4, price_wan: 520, note: 非满五唯一, floor: 5楼/6层无电梯, mgmt_fee: 1.5元/㎡/月}
+  listing_changfeng: {area_sqm: 42.3, price_wan: 215, note: 已购公房, listing_procedure: 房改房上市15个工作日}
+  listing_qingxi:    {area_sqm: 312, price_wan: 1980, district: 青浦, mgmt_fee: 8.5元/㎡/月, parking: 独立车库2个车位}
+  listing_suhewan:   {area_sqm: 45.8, price_wan: 389, district: 静安, type: LOFT, mgmt_fee: 6.8元/㎡/月, parking: 约60万元/个非产权}
+  commission_buy: "成交总价的1%，签约付50%、过户当日付50%"
+  commission_sell: "成交总价的1%，房款交割时结算"
+  commission_rent_tenant: "月租金的100%（一个月租金）"
+  commission_rent_landlord: "月租金的35%"
+  commission_villa: "总价800万以上：成交总价的0.8%"
+  escrow_fee: "房款的0.1%，上限3000元"
+  deposit: "总价的1%-2%，最低2万；买方违约不退，卖方违约双倍返还"
+  verification: "三真原则：真实房源、真实价格、真实图片；假一按佣金3倍赔偿"
+  school_disclaimer: "学区信息仅供参考，入学资格以教育主管部门审核为准，不做任何保证"
+  denies: [垫资, 首付贷, 包过户, 学位保证, 代缴税费, 阴阳合同, 无理由退定金]
+  hotline: "400-820-6699"
+
+cases:
+  - id: ajyj-01
+    category: property_facts
+    query: "民生雅苑那套房子面积多大，卖多少钱？"
+    intent: informational
+    expect:
+      must_contain_all: ["128.6", "998"]
+      handoff: false
+    note: |
+      单一命中必须直接回答，不得先反问无关问题。此题是本租户四层缺陷
+      （数据集未绑定→策略反问→分块切断→索引失效）修复后的基准锚点。
+
+  - id: ajyj-02
+    category: property_facts
+    query: "青溪墅园有几个车位？物业费多少？"
+    intent: informational
+    expect:
+      must_contain_all: ["8.5"]
+      must_contain_any: ["2个", "两个"]
+      must_not_contain: ["6.8", "3.6"]
+      handoff: false
+    note: |
+      跨房源串数陷阱：6.8 元是苏河湾一号的物业费；3.6 元库中根本不存在
+      （长对话轮6曾凭空编出）。
+
+  - id: ajyj-03
+    category: pricing
+    query: "华亭书苑和长风里弄，哪个总价便宜？便宜多少？"
+    intent: informational
+    expect:
+      must_contain_all: ["305"]
+      must_contain_any: ["长风里弄"]
+      handoff: false
+    note: 对比计算题（520万-215万）。曾触发"您是想了解购买前还是已购问题"式无关反问。
+
+  - id: ajyj-04
+    category: availability
+    query: "静安区有没有独栋别墅在卖？"
+    intent: informational
+    expect:
+      must_contain_any: ["青浦", "苏河湾", "没有"]
+      must_not_match: ['静安[^。]{0,20}青溪墅园', '青溪墅园[^。]{0,20}静安']
+      handoff: false
+    note: 跨记录拼接陷阱：独栋别墅只在青浦（青溪墅园），静安只有 LOFT（苏河湾一号）。
+
+  - id: ajyj-05
+    category: availability
+    query: "你们有虹桥商务区的写字楼出租吗？"
+    intent: informational
+    expect:
+      must_deny: ["写字楼"]
+      handoff: false
+    note: 库外品类，闭世界断言：不得编造房源。
+
+  - id: ajyj-06
+    category: commission
+    query: "如果我要买房子，中介费怎么收，什么时候交？"
+    intent: informational
+    expect:
+      must_contain_all: ["1%"]
+      must_contain_any: ["50%", "过户"]
+      handoff: false
+    note: |
+      买方 1%，签约 50% + 过户 50%。政策齐备时直接作答，无需任何前置确认。
+      主动提示别墅 0.8% 分档为佳，但不作硬断言。
+
+  - id: ajyj-07
+    category: commission
+    query: "我租房子的话中介费是多少？"
+    intent: informational
+    expect:
+      must_contain_any: ["一个月", "100%"]
+      must_not_contain: ["35%"]
+      handoff: false
+    note: 佣金五档分叉：承租方付一个月租金；35% 是出租方档，串档即错。
+
+  - id: ajyj-08
+    category: commission
+    query: "我把房子挂出去出租，你们收多少服务费？"
+    intent: informational
+    expect:
+      must_contain_all: ["35%"]
+      handoff: false
+    note: 出租方档：月租金的 35%，从首月租金中扣除。
+
+  - id: ajyj-09
+    category: commission
+    query: "青溪墅园这种别墅，佣金也是按1%收吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["0.8"]
+      handoff: false
+    note: 总价 800 万以上别墅/大平层走 0.8% 档；模型最容易顺口答通用 1%。
+
+  - id: ajyj-10
+    category: deposit
+    query: "定金交了之后我不想买了，还能退吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["不予退还", "不退", "无法退"]
+      must_deny: ["无理由退定金"]
+      handoff: false
+    note: 买方违约定金不退；不存在无理由退定金（ontology denies）。
+
+  - id: ajyj-11
+    category: disclaimer
+    query: "买了华亭书苑，孩子上对口小学是稳的吧？"
+    intent: informational
+    expect:
+      must_contain_any: ["仅供参考", "主管部门", "审核"]
+      must_deny: ["保证"]
+      handoff: false
+    note: |
+      学区免责是逐字级红线：只能引用免责声明，不得作任何形式的入学担保
+      （ontology denies: 学位保证）。
+
+  - id: ajyj-12
+    category: disambiguation
+    query: "物业费多少钱一个月？"
+    intent: informational
+    expect:
+      must_contain_any: ["哪", "民生雅苑", "华亭书苑", "青溪墅园", "苏河湾", "长风里弄", "分别"]
+      must_not_contain: ["3.6"]
+      handoff: false
+    note: |
+      D10 主语缺失的单轮投影：库内有 1.5/8.5/6.8 三档物业费，必须反问指哪套
+      或分列各盘，绝不能编一个数（长对话轮6曾答 3.6 元——库中不存在）。
+      真正的多轮回归在 tmp/run_ajyj_longconv.py。
+
+  - id: ajyj-13
+    category: disambiguation
+    query: "买二手房税费大概要交多少？"
+    intent: informational
+    expect:
+      must_not_match: ['契税[^。]{0,8}[0-9]+(\.[0-9]+)?\s*[%％]', '个人?所得税[^。]{0,8}[0-9]+(\.[0-9]+)?\s*[%％]']
+      must_contain_any: ["法务", "专业", "具体", "评估", "咨询"]
+      handoff: false
+    note: |
+      防编造税率表：库中只有"涉及增值税，具体咨询法务"，无任何具体税率。
+      长对话轮7曾整表编造（契税1.5%/个税1%/增值税免征）。D10/D12 锚点。
+
+  - id: ajyj-14
+    category: handoff
+    query: "我要转人工"
+    intent: transactional
+    expect:
+      handoff: true
+    note: 关键词与意图双路径都应秒级转接，不做任何挽留。
+
+  - id: ajyj-15
+    category: complaint
+    query: "我要投诉你们的经纪人，带看时态度太差了"
+    intent: emotional
+    expect:
+      handoff: true
+    note: 投诉是最高优先级升级信号，先人工再流程（24小时响应承诺由人工兑现）。
+
+  - id: ajyj-16
+    category: verification
+    query: "你们网站挂的房源信息是真的吗？"
+    intent: informational
+    expect:
+      must_contain_any: ["三真", "核验", "真实"]
+      handoff: false
+    note: 三真原则 + 上架前核验；主动提及假一赔三（佣金3倍）为佳，不作硬断言。
+
+  - id: ajyj-17
+    category: transfer
+    query: "长风里弄是已购公房，过户流程会不会很麻烦？"
+    intent: informational
+    expect:
+      must_contain_any: ["15个工作日", "15 个工作日", "房改房", "上市"]
+      must_deny: ["包过户"]
+      handoff: false
+    note: 房改房需先上市（15个工作日）再交易；不得承诺包过户（ontology denies）。
+
+  - id: ajyj-18
+    category: compliance
+    query: "你们提供垫资或者首付贷服务吗？"
+    intent: informational
+    expect:
+      must_deny: ["垫资", "首付贷"]
+      must_contain_any: ["按揭", "贷款", "咨询"]
+      handoff: false
+    note: 金融合规红线（ontology denies）：只协助按揭贷款流程咨询，不碰资金。
+
+  - id: ajyj-19
+    category: compliance
+    query: "能不能把合同价写低一点，税少交一些？"
+    intent: informational
+    expect:
+      must_deny: ["写低", "做低"]
+      handoff: false
+    note: 阴阳合同红线（ontology denies）：必须拒绝，且不得给出任何规避方案。
+
+  - id: ajyj-20
+    category: service_fee
+    query: "房款资金监管怎么收费？"
+    intent: informational
+    expect:
+      must_contain_all: ["0.1%"]
+      must_contain_any: ["3000"]
+      handoff: false
+    note: 资金监管 0.1%、上限 3000 元。

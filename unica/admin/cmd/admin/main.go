@@ -45,10 +45,11 @@ const tenantPrefix = "/api/v1/tenants/"
 // knowledge, ai-settings, workbench — needs no entry here, and each one that
 // learns to takes a line out of this list.
 const (
-	legacyProductLinesPrefix = "/api/v1/product-lines/"
-	legacyChannelsPrefix     = "/api/v1/channels/"
-	legacyChannelsRoot       = "/api/v1/channels"
-	legacyViolationsPrefix   = "/api/v1/violations/"
+	legacyProductLinesPrefix  = "/api/v1/product-lines/"
+	legacyChannelsPrefix      = "/api/v1/channels/"
+	legacyChannelsRoot        = "/api/v1/channels"
+	legacyViolationsPrefix    = "/api/v1/violations/"
+	legacyHandoffEventsPrefix = "/api/v1/handoff-events/"
 )
 
 func main() {
@@ -178,6 +179,9 @@ func main() {
 	domainStore := domain.NewStore(db, time.Minute)
 	factsHandler := facts.NewHandler(domainStore, plRepo, auditLogger)
 	violationsHandler := quality.NewHandler(domainStore, plRepo, auditLogger)
+	// The observation layer: violation concentration, dead-constraint coverage,
+	// and the structured "why did this leave the AI" trail with its annotations.
+	signalsHandler := quality.NewSignalsHandler(domainStore, plRepo, auditLogger)
 
 	// The workbench trades the caller's own portal account for a password-free
 	// Chatwoot session, provisioning the agent it signs in as when the account
@@ -361,6 +365,9 @@ func main() {
 		ontology:         http.HandlerFunc(factsHandler.Handle),
 		violationsByLine: http.HandlerFunc(violationsHandler.HandleByProductLine),
 		violationReview:  http.HandlerFunc(violationsHandler.HandleReview),
+		violationStats:   http.HandlerFunc(signalsHandler.HandleViolationStats),
+		handoffs:         http.HandlerFunc(signalsHandler.HandleHandoffs),
+		handoffAnnotate:  http.HandlerFunc(signalsHandler.HandleAnnotate),
 		workbench:        http.HandlerFunc(workbenchHandler.Handle),
 	}
 	mux.Handle(tenantPrefix, authMW(tenantAuth(tenantResources)))
@@ -416,6 +423,9 @@ type tenantRouter struct {
 	ontology         http.Handler
 	violationsByLine http.Handler
 	violationReview  http.Handler
+	violationStats   http.Handler
+	handoffs         http.Handler
+	handoffAnnotate  http.Handler
 	workbench        http.Handler
 }
 
@@ -490,7 +500,19 @@ func (t *tenantRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			t.serve(w, r, t.violationsByLine, joinPath(legacyProductLinesPrefix+tenantID, "violations"))
 			return
 		}
+		if sub == "stats" {
+			t.serve(w, r, t.violationStats, joinPath(legacyProductLinesPrefix+tenantID, "violations/stats"))
+			return
+		}
 		t.serve(w, r, t.violationReview, joinPath(legacyViolationsPrefix, sub))
+	case "handoffs":
+		// The list and its stats live on the product line; the annotation
+		// addresses one event by its own id, like a violation review.
+		if sub == "" || sub == "stats" {
+			t.serve(w, r, t.handoffs, joinPath(legacyProductLinesPrefix+tenantID, "handoffs", sub))
+			return
+		}
+		t.serve(w, r, t.handoffAnnotate, joinPath(legacyHandoffEventsPrefix, sub))
 	case "workbench":
 		if sub != "sso" {
 			handler.ErrorJSON(w, http.StatusNotFound, "unknown workbench sub-path: "+sub)

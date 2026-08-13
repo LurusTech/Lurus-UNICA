@@ -13,9 +13,9 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/kefu/unica/pkg/difyapp"
+	"github.com/kefu/unica/pkg/domain"
 	"github.com/kefu/unica/pkg/model"
 	"github.com/kefu/unica/router/internal/bridge"
-	"github.com/kefu/unica/pkg/domain"
 	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/intent"
 	"github.com/kefu/unica/router/internal/marketing"
@@ -76,6 +76,14 @@ type ontologySource interface {
 		ontologyVersion int, violations []domain.Violation, enforced bool)
 }
 
+// handoffRecorder persists the structured reason behind each handoff decision,
+// so "why do conversations leave the AI" stays queryable after the Redis event
+// expires and the Chatwoot note buries it in prose. Recording is best-effort
+// observation: a nil recorder or a failed insert never blocks the handoff.
+type handoffRecorder interface {
+	RecordHandoffEvent(ctx context.Context, ev domain.HandoffEvent)
+}
+
 // Router consumes inbound messages, resolves routes, calls AI, and publishes responses.
 type Router struct {
 	rdb               *redis.Client
@@ -89,6 +97,7 @@ type Router struct {
 	triageMode        guardrail.TriageMode
 	sceneMode         SceneMode
 	ontology          ontologySource
+	handoffLog        handoffRecorder
 	breaker           *domain.Breaker
 	marketingTracker  *marketing.Tracker
 	surveyHandler     *survey.Handler
@@ -186,6 +195,9 @@ func (r *Router) SetOntology(store *domain.Store) {
 		return
 	}
 	r.ontology = store
+	// The same store carries the handoff-event bypass, so wiring the ontology
+	// is what turns structured handoff recording on.
+	r.handoffLog = store
 }
 
 // Start begins consuming inbound messages with the configured number of workers.
@@ -1028,6 +1040,24 @@ type handoffEvent struct {
 
 // publishHandoffEvent publishes a handoff event to the unica:handoff stream.
 func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMessage, convID, productLineID string, evalResult *guardrail.EvalResult, suppressedAnswer string) {
+	// Record the decision before publishing: the stream event is consumed and
+	// gone, while this row is what later answers "why did this conversation
+	// leave the AI". Best-effort by design — the recorder logs and swallows.
+	if r.handoffLog != nil {
+		detail := evalResult.Detail
+		if detail == "" && evalResult.MatchedKeyword != "" {
+			detail = "keyword: " + evalResult.MatchedKeyword
+		}
+		r.handoffLog.RecordHandoffEvent(ctx, domain.HandoffEvent{
+			ConversationID:   convID,
+			ProductLineID:    productLineID,
+			Reason:           evalResult.Reason,
+			Detail:           detail,
+			Confidence:       evalResult.Confidence,
+			AnswerSuppressed: suppressedAnswer != "",
+		})
+	}
+
 	event := handoffEvent{
 		Type:                 model.MessageTypeHandoff,
 		ConversationID:       convID,

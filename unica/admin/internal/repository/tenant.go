@@ -18,6 +18,7 @@ type TenantDataDeletion struct {
 	KnowledgeDocs    int64 `json:"knowledge_docs"`
 	OntologyVersions int64 `json:"ontology_versions"`
 	ClaimViolations  int64 `json:"claim_violations"`
+	HandoffEvents    int64 `json:"handoff_events"`
 	Users            int64 `json:"users"`
 }
 
@@ -103,6 +104,9 @@ func (r *ProductLineRepository) DeleteTenantData(ctx context.Context, id string)
 			[]interface{}{id}},
 		{"claim_violations", &counts.ClaimViolations,
 			`DELETE FROM claim_violations WHERE product_line_id = $1`,
+			[]interface{}{id}},
+		{"handoff_events", &counts.HandoffEvents,
+			`DELETE FROM handoff_events WHERE product_line_id = $1`,
 			[]interface{}{id}},
 		{"users", &counts.Users,
 			`DELETE FROM users WHERE product_line_id = $1`,

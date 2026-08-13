@@ -32,6 +32,9 @@ func newTestTenantRouter() (*tenantRouter, *string, *string) {
 		ontology:         mk("ontology"),
 		violationsByLine: mk("violations"),
 		violationReview:  mk("violation-review"),
+		violationStats:   mk("violation-stats"),
+		handoffs:         mk("handoffs"),
+		handoffAnnotate:  mk("handoff-annotate"),
 		workbench:        mk("workbench"),
 	}, &hit, &served
 }
@@ -80,6 +83,11 @@ func TestTenantRouter_Mapping(t *testing.T) {
 
 		{http.MethodGet, "/api/v1/tenants/pl-1/violations", "violations", "/api/v1/product-lines/pl-1/violations"},
 		{http.MethodPut, "/api/v1/tenants/pl-1/violations/12/review", "violation-review", "/api/v1/violations/12/review"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/violations/stats", "violation-stats", "/api/v1/product-lines/pl-1/violations/stats"},
+
+		{http.MethodGet, "/api/v1/tenants/pl-1/handoffs", "handoffs", "/api/v1/product-lines/pl-1/handoffs"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/handoffs/stats", "handoffs", "/api/v1/product-lines/pl-1/handoffs/stats"},
+		{http.MethodPut, "/api/v1/tenants/pl-1/handoffs/12/annotate", "handoff-annotate", "/api/v1/handoff-events/12/annotate"},
 
 		// The workbench reads the tenant route itself, so its request arrives
 		// on the address the client used.

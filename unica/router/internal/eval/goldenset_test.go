@@ -18,7 +18,7 @@ func TestLoadDir_RealGoldenSets(t *testing.T) {
 		t.Fatalf("LoadDir(%s): %v", goldenDir, err)
 	}
 
-	wantLines := map[string]bool{"MegaStore": false, "FreshMart": false, "TechZone": false}
+	wantLines := map[string]bool{"MegaStore": false, "FreshMart": false, "TechZone": false, "AJYJ": false}
 	for _, s := range sets {
 		if _, known := wantLines[s.ProductLine]; !known {
 			t.Errorf("unexpected product line %q", s.ProductLine)
