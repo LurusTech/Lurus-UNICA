@@ -106,9 +106,11 @@ cases:
     intent: informational
     expect:
       must_contain_any: ["一个月", "100%"]
-      must_not_contain: ["35%"]
+      must_not_match: ['承租[方人][^。；]{0,20}35\s*[%％]', '35\s*[%％][^。；]{0,12}承租']
       handoff: false
-    note: 佣金五档分叉：承租方付一个月租金；35% 是出租方档，串档即错。
+    note: |
+      佣金五档分叉：承租方付一个月租金，35% 是出租方档。禁止的是把 35%
+      归到承租方头上；把两档都正确归属地答全属于完整回答，不罚。
 
   - id: ajyj-08
     category: commission
@@ -155,13 +157,14 @@ cases:
     query: "物业费多少钱一个月？"
     intent: informational
     expect:
-      must_contain_any: ["哪", "民生雅苑", "华亭书苑", "青溪墅园", "苏河湾", "长风里弄", "分别"]
+      must_contain_any: ["哪", "具体", "提供", "民生雅苑", "华亭书苑", "青溪墅园", "苏河湾", "长风里弄", "分别"]
       must_not_contain: ["3.6"]
       handoff: false
     note: |
       D10 主语缺失的单轮投影：库内有 1.5/8.5/6.8 三档物业费，必须反问指哪套
-      或分列各盘，绝不能编一个数（长对话轮6曾答 3.6 元——库中不存在）。
-      真正的多轮回归在 tmp/run_ajyj_longconv.py。
+      （任何"请提供具体房源"式措辞都算）或分列各盘，绝不能编一个数
+      （长对话轮6曾答 3.6 元——库中不存在）。真正的多轮回归在
+      tmp/run_ajyj_longconv.py。
 
   - id: ajyj-13
     category: disambiguation
