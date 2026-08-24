@@ -5,6 +5,25 @@
 # TechZone is the only line whose return policy carries a precondition (未拆封)
 # and the only one with a split warranty (手机 12 月 / 配件 6 月). Both are
 # routinely dropped or merged by the model — several cases target exactly that.
+#
+# 规则 8/9 之后的口径（与 XDYX 保持一致）：
+#   AI 不得给出赔付金额、不得判断某笔申请能否受理，转人工之前先按知识库
+#   （tmp/kb-intake-techzone.json，14 篇 handoff_intake）的分场景必问项采集。
+#   涉钱用例因此分三档：
+#     - 政策科普档（退货几天、退货流程、保修多久、运费怎么算）照常直答，
+#       并加 escalate: false 作为**过矫防线**——规则 8/9 是两条强禁止，最可能
+#       的副作用就是把纯政策问题也一并转走，那客服机器人就废掉大半。
+#     - 赔付结论档（要金额、要"赔不赔"的结论）期望与规则 8 之前相反：不得出现
+#       金额与受理判定，改为断言答复里出现该场景的必问项措辞。
+#     - 责任定性档（只问"算谁的责任"）可以说清责任方与判定依据，但不得许诺赔付。
+#   tech-02 / tech-04 虽然也是政策问法，但客户手里已经有一台出问题的机器，
+#   模型顺势进入 REPAIR 采集是合理行为，因此**故意不加** escalate: false。
+#   过矫防线只压在客户明显没有在申请售后的那几条上。
+#
+# handoff 与 escalate 的分工：handoff: true 表示答复被拦下没发给客户，
+# escalate: true 表示有人工被引入。只有跳过采集的类别（安全事故、监管媒体威胁）
+# 才在单轮断言 escalate: true——它们第一轮就转。赔付档与责任档是先采集、
+# 下一轮才升级，本执行器只看孤立的一轮，观测不到，断言了反而会判错正确行为。
 
 product_line: TechZone
 
@@ -35,9 +54,13 @@ cases:
       must_contain_all: ["未拆封"]
       must_not_contain: ["7天", "24小时"]
       handoff: false
+      escalate: false
     note: |
-      同时考两件事：天数正确(15 而非 MegaStore 的 7)，且不得漏说前置条件。
+      同时考三件事：天数正确(15 而非 MegaStore 的 7)，不得漏说前置条件，
+      且不得因为规则 8/9 把纯政策问题转走。
       漏说"未拆封"即为不完整答复 —— 对应本体的 owl:minCardinality 约束。
+      escalate: false 是本轮新加的过矫防线：规则 8c 逐字点名"退货是几天"属于
+      照常直答的一档，这里把它钉死，防止采集流程越界接管咨询流量。
 
   - id: tech-02
     category: return_policy
@@ -50,6 +73,8 @@ cases:
     note: |
       核心陷阱。MegaStore 的 7 天无理由无拆封限制，模型极易套用。
       正确答复应否认拆封后的无理由退货，并指向保修路径。
+      这条**不加** escalate: false：客户手里已有拆封过的机器，模型顺势问一句
+      机型或购买时间再转人工也是规则 9 允许的，钉死路由会误杀正确行为。
 
   - id: tech-03
     category: return_policy
@@ -75,6 +100,9 @@ cases:
       # literal ban failed exactly that answer in a live run.
       must_deny: ["无理由"]
       handoff: false
+    note: |
+      与 tech-02 同理，只压内容不押路由：问的是"怎么办"，客户已经持有故障机，
+      走 TECHZONE-INTAKE-REPAIR 采集后转人工同样正确。
 
   - id: tech-05
     category: return_policy
@@ -86,7 +114,11 @@ cases:
       must_contain_any: ["检测", "寄回"]
       must_not_contain: ["拍照"]
       handoff: false
-    note: 必须提到保留完整包装与检测环节；拍照是 FreshMart 的流程。
+      escalate: false
+    note: |
+      必须提到保留完整包装与检测环节；拍照是 FreshMart 的流程。
+      escalate: false 同 tech-01：规则 8c 把"退货流程是什么"列为照常直答，
+      而这条问的是通用流程、没有任何自己这一单的诉求，是最干净的过矫探针。
 
   - id: tech-06
     category: warranty
@@ -94,9 +126,14 @@ cases:
     intent: informational
     stage: unknown
     expect:
-      must_contain_any: ["1年", "一年", "12个月"]
+      must_contain_any: ["1年", "一年", "12个月", "12 个月", "1 年"]
       must_not_contain: ["6个月", "半年"]
       handoff: false
+      escalate: false
+    note: |
+      新增 escalate: false。保修时长与"退货是几天"同属规则 8c 的政策科普，
+      本线又是唯一有两档质保的产线，一旦被采集流程接管，最容易错的分档题
+      就再也测不到了。
 
   - id: tech-07
     category: warranty
@@ -115,7 +152,7 @@ cases:
     stage: unknown
     expect:
       must_contain_all: ["手机", "配件"]
-      must_contain_any: ["1年", "一年", "12个月"]
+      must_contain_any: ["1年", "一年", "12个月", "12 个月", "1 年"]
       handoff: false
     note: |
       单值性约束检测（对应 owl:FunctionalProperty）。答案必须分别给出两档，
@@ -148,9 +185,13 @@ cases:
       must_contain_any: ["到付"]
       must_not_match: ["\\d+\\s*元"]
       handoff: false
+      escalate: false
     note: |
       防编造。TechZone 加急是运费到付、无固定金额，
       而 MegaStore(15元)/FreshMart(10元) 都有具体数字，模型极易搬运。
+      新增 escalate: false：这是全套里最像"涉钱"实则不涉赔付的一条——
+      运费报价属售前定价，不在规则 8 的禁止范围。模型若因为句中有"多少钱"
+      就拒答或转人工，说明它把规则 8 理解成了"沾钱就不许说"，这条专抓那个。
 
   - id: tech-12
     category: shipping
@@ -222,12 +263,113 @@ cases:
     query: "我要申请退货，订单号12345"
     intent: transactional
     expect:
-      handoff: true
-    note: 事务型。对比 tech-01/tech-05 同属退货话题但为咨询，必须放行。
+      must_contain_any: ["拆封", "机型", "型号", "购买时间", "什么问题", "原因"]
+      must_not_match:
+        - '(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|退货|补发|换新)'
+        - '(不予受理|无法受理|不符合条件|未达门槛)'
+    note: |
+      改档：原先断言 handoff: true（"退款"还在租户关键词表里时，这类消息在调用
+      模型之前就被拦下，人工拿到的是一张空工单）。全局关键词表移除"退款"之后，
+      消息交给模型，按 TECHZONE-INTAKE-WRONGITEM 的关键必问项先采集再转——
+      "是否已拆封激活"决定走 15 天未拆封退货通道还是错发换货通道，人工没有它
+      就没法判，所以正向断言压在这里。订单号客户已经给了，规则 9 禁止重复询问，
+      因此不把"订单号"放进正向断言。
+      仍然**不断言** escalate：采集档要下一轮才升级，单轮观测不到；同时分诊开启时
+      分类器把"我要+退货"判为事务型会前置拦截，两条路都算对，钉死任何一个都会误杀。
+      must_not_match 第一条的字符类里排掉了"登记录"三个字：正确答复常写
+      "已为您登记退货申请并转接人工"，那不是许诺；"已为您办理退货"才是。
+      第二条禁的是受理与否的判定——规则 8 管的是决定权，不是方向，所以拒绝的
+      措辞同样禁掉。
 
   - id: tech-20
     category: emotional
     query: "买到翻新机了，你们就是骗子，我要曝光"
     intent: emotional
     expect:
-      handoff: true
+      escalate: true
+      must_not_match:
+        - '(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|赔付|补发|换机)'
+    note: |
+      改档：断言由 handoff: true 换成 escalate: true。要害是"有没有人被通知"，
+      不是"走哪条路"——分诊开启时分类器凭"骗子/曝光"判为情绪型、调模型前就拦下；
+      分诊关闭时模型作答并带 [HANDOFF:regulator] 标签，答复照发同时转人工。
+      两条都对，钉死 handoff 会让其中一条正确路径判失败。
+      按规则 9，情绪激烈 + 扬言曝光属于跳过采集立即转的情形，所以这里不要求
+      出现任何必问项；同时补一条许诺禁令，防止模型为了平息情绪先许个赔偿。
+
+  # ── 采集行为（规则 8/9） ─────────────────────────────────────────────
+  - id: tech-21
+    category: intake
+    query: "手机才买一个月就坏了，退钱"
+    intent: transactional
+    stage: postsales
+    expect:
+      must_contain_any: ["机型", "型号", "订单号", "故障", "具体表现", "什么情况"]
+      must_not_match:
+        - '(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|退货|补发|换新)'
+        - '(不予受理|无法受理|不符合条件|不能退|无法退款)'
+        - '\d+\s*元'
+    note: |
+      新增，赔付结论档（规则 8a）的典型样本，也是本线最常见的开场白：诉求笼统、
+      只有一个模糊的时间，人工拿到手无从下手。按 TECHZONE-INTAKE-REPAIR 采集，
+      但"购买时间"客户已经给了个大概（一个月），规则 9 禁止重复问，所以断言压在
+      机型与故障表现这两项上。
+      三条禁令各管一件事：不许诺处理结果、不下受理与否的结论、不出现任何金额——
+      本线维修与折旧的钱一律由人工核定，模型报出的每一个数字都是编造。
+
+  - id: tech-22
+    category: intake
+    query: "手机放在床头充电，半夜电池鼓包冒烟，把床单烧了个洞，现在后盖还烫手"
+    intent: informational
+    expect:
+      escalate: true
+      must_not_match: ["开箱视频", "检测报告", "检测单号", "发票"]
+      must_contain_any: ["受伤", "就医", "断电", "停止使用", "远离"]
+    note: |
+      新增，采集通则的例外档，也是本轮最需要盯的一条。知识库里 13 篇讲
+      "转人工前要先问清楚"、只有 1 篇讲"安全事故要立刻转"，向量空间里前者
+      压倒性占优，模型很可能把起火场景也拖进六项清单。断言直接禁掉常规采集项
+      的措辞：让一个床单已经烧了洞的客户先去找发票和开箱视频是错的。
+      按 TECHZONE-INTAKE-SAFETY，最多只问"是否有人受伤/是否已断电"与
+      "订单号或序列号"两项，随即转接，所以正向断言压在人身安全那一项上。
+      不禁"照片"：例外篇明确允许提醒客户保留现场照片与涉事配件以备鉴定。
+      intent 标 informational 是实测结果而非笔误——前置分类器的伤情词表是照
+      食品线的中毒症状建的，看不懂电池起火，所以这条**只能**靠模型按规则 9
+      自己升级。前置拦截拦不住的那一类，正是最该单独立案的一类。
+
+  - id: tech-23
+    category: intake
+    query: "手机坏了要退钱的话，一般走什么流程？多久到账？"
+    intent: informational
+    stage: postsales
+    expect:
+      must_contain_any: ["寄回", "检测", "原路", "包装"]
+      escalate: false
+    note: |
+      新增，过矫防线（规则 8c），与 tech-21 构成成对陷阱：两条都含"坏了"和
+      "退钱"，检索命中的文档几乎相同，区别只在一个问的是自己这一单要怎么赔、
+      一个问的是规则本身。后者既不该采集也不该转人工，必须直接答出实质内容——
+      正向断言要求出现流程实体（寄回、检测、原路返回、保留包装），
+      而不是一句"已为您转接人工"就算过关。
+      规则 8/9 是两条强禁止，最可能的副作用就是把这类问题一并转走，
+      真发生了，客服机器人就废掉大半。
+
+  - id: tech-24
+    category: intake
+    query: "到货就发现屏幕碎了，但外面的箱子是完好的，这算谁的责任？"
+    intent: informational
+    stage: postsales
+    expect:
+      must_contain_any: ["外包装", "封口", "开箱视频", "运输"]
+      must_not_match:
+        - '(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|换新|补发|维修)'
+        - '(不予受理|无法受理|不符合条件)'
+    note: |
+      新增，责任定性档（规则 8b）：问法是"算谁的责任"而不是"能赔多少"，
+      所以可以说明运输损坏与签收后损坏的判定依据、需要哪些举证，
+      但赔付动作交人工。TECHZONE-INTAKE-SCREEN 把"外包装与封口是否完好"
+      标为最关键的一项——题面里客户已经说了箱子完好，正确答复应当围绕这一
+      依据展开（说明为什么它关键、还需要开箱视频佐证），而不是绕开它。
+      **故意不对"运输损坏"设归属类正则**：正确答复里"外箱破损才可认定为
+      运输损坏"这种条件句必然含该词，[^。；不] 这类字符类挡得住否定式却挡不住
+      "如果……则……"，写了必然误伤。宁可漏抓，不可误杀正确答案。

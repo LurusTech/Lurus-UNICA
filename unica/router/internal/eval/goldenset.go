@@ -46,9 +46,20 @@ type Expect struct {
 	MustDeny       []string `yaml:"must_deny"`
 	MustNotMatch   []string `yaml:"must_not_match"`
 
-	// Handoff is the expected guardrail decision. Nil means "do not check",
-	// which lets a case assert only on answer content.
+	// Handoff is whether the answer was withheld from the customer. Nil means
+	// "do not check", which lets a case assert only on answer content.
 	Handoff *bool `yaml:"handoff"`
+
+	// Escalate is whether a human was brought into the conversation. It is the
+	// broader of the two: a suppressed answer escalates, and so does an answer
+	// that is delivered alongside an escalation.
+	//
+	// The pair is what lets a case pin down the third routing outcome. Since the
+	// AI was forbidden to decide refunds, the expected behaviour for most money
+	// questions is an answer AND a human — `handoff: false, escalate: true` —
+	// and content assertions still run, because that answer is exactly where the
+	// model can promise a payout it is not allowed to promise.
+	Escalate *bool `yaml:"escalate"`
 
 	// compiled caches MustNotMatch patterns, populated during validation so a
 	// malformed pattern fails at load time rather than mid-run.
@@ -175,7 +186,7 @@ func validateCase(c *Case) error {
 	e := &c.Expect
 	if len(e.MustContainAll) == 0 && len(e.MustContainAny) == 0 &&
 		len(e.MustNotContain) == 0 && len(e.MustDeny) == 0 &&
-		len(e.MustNotMatch) == 0 && e.Handoff == nil {
+		len(e.MustNotMatch) == 0 && e.Handoff == nil && e.Escalate == nil {
 		return fmt.Errorf("case %s: expect block asserts nothing", c.ID)
 	}
 

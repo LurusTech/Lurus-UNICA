@@ -49,6 +49,18 @@ var faultMarkers = []string{
 	"坏了", "碎了", "裂了", "漏了", "发霉了", "变质了", "过期了",
 	"不亮", "开不了机", "连不上", "少发", "错发", "漏发",
 	"没收到", "迟迟未到", "还没到货", "一直没到",
+
+	// Perishables fail in ways durable goods do not, and a fresh-produce line
+	// whose every message classified as unknown got no stage strategy at all.
+	// The same perfective guard applies: "烂了" is a report, while a bare "腐烂"
+	// fires on "夏天水果容易腐烂吗", which is the pre-sales consultation the
+	// selling register should keep.
+	"烂了", "是烂的", "是坏的", "馊了", "蔫了", "化冻", "化完了",
+	"不见了", "少了", "送晚了", "冻坏了", "压坏了",
+
+	// Harm to a person can only follow consumption, so these need no pairing.
+	// They are also the signal the food-safety escalation depends on.
+	"上吐下泻", "吃坏了", "过敏了", "食物中毒", "拉肚子", "腹泻", "呕吐",
 }
 
 // ownershipMarkers indicate the goods are already in the customer's hands or
@@ -57,6 +69,11 @@ var faultMarkers = []string{
 var ownershipMarkers = []string{
 	"我买的", "我收到", "收到的", "收到货", "已下单", "已付款",
 	"买回来", "之前买", "上次买",
+
+	// Wholesale customers never say "我买的" — they say 配货 and 批货, and the
+	// goods arrive by delivery wave. These still fire only when paired with an
+	// after-sales action, so "配货起送多少钱" stays a pre-sales price question.
+	"订单", "配货", "批货",
 }
 
 // aftersalesActions are service operations that, combined with an ownership
@@ -67,6 +84,11 @@ var ownershipMarkers = []string{
 var aftersalesActions = []string{
 	"退货", "退款", "换货", "维修", "返修", "寄回", "售后",
 	"三包", "理赔", "保修",
+
+	// The claims vocabulary a perishables or wholesale customer uses. Same
+	// guard as the rest of this table: none fires alone, so "报损标准是什么"
+	// remains a pre-sales policy question.
+	"报损", "赔付", "索赔", "赔偿", "补偿", "补发", "退钱",
 }
 
 // Pre-sales marker groups, each with its own reason label so the metric shows
@@ -81,10 +103,15 @@ var comparisonMarkers = []string{
 
 var fitMarkers = []string{
 	"适合", "能不能用", "支持吗", "尺码", "尺寸", "多大", "几寸", "容量", "参数",
+	// Produce is specified by weight rather than by size or model.
+	"多少斤", "几斤", "多重",
 }
 
 var availabilityMarkers = []string{
 	"有货吗", "有现货", "现货吗", "什么时候上新",
+	// Asking whether an order can be placed is a buying signal, and for a
+	// line with per-city coverage gaps it is the most common one.
+	"能下单", "能不能下单", "能买到",
 }
 
 // ClassifyStage assigns a commercial phase to a single message. Post-sales

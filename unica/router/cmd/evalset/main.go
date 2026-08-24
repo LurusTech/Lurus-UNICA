@@ -309,7 +309,7 @@ func scoreCase(client *bridge.DifyClient, cfg lineConfig, c eval.Case, timeout t
 	// intercepted message never reaches the model, so no Dify call is made here
 	// either. Scoring a real call would misrepresent both latency and cost.
 	if triageMode.DecidesRouting() && intent.Classify(c.Query).NeedsHuman() {
-		return eval.Evaluate(c, "", true)
+		return eval.Evaluate(c, "", true, true)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -351,7 +351,8 @@ func scoreCase(client *bridge.DifyClient, cfg lineConfig, c eval.Case, timeout t
 	}, guardrail.NewEvaluator(), nil)
 
 	outcome := eval.Evaluate(c, judgement.Answer,
-		judgement.Result.Decision == guardrail.DecisionHandoff)
+		judgement.Result.Decision == guardrail.DecisionHandoff,
+		judgement.Result.Decision.Escalates())
 
 	// Validation ran for diagnostics only and never changes pass or fail. The
 	// golden set judges answer content; this is a second, independent opinion,

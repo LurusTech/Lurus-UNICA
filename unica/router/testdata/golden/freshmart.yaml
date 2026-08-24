@@ -5,6 +5,22 @@
 # FreshMart is the highest-risk line: it has NO no-questions-asked return policy
 # at all, only a 24h quality-defect claim window. Every case asserting the absence
 # of a policy exercises the closed-world assumption.
+#
+# 赔付控制（规则 8）与转人工前采集（规则 9）之后，本文件的涉钱用例分三档：
+#   政策科普档 —— 问的是规则本身（无理由退货存不存在、退款多久到账、退款流程），
+#                 照常直答，并用 escalate: false 钉住"不许把纯政策问题转走"。
+#                 规则 8/9 是两条强禁止，最可能的副作用就是过度转人工，
+#                 这条防线比任何一条正向断言都重要。
+#   赔付结论档 —— 客户要金额或要"能不能赔"的结论。期望与规则 8 之前完全相反：
+#                 不得出现金额/数量，不得宣布受理与否，改为按采集清单
+#                 （tmp/kb-intake-freshmart.json）问必问项后转人工核定。
+#   责任定性档 —— 只问责任归属。可以说清责任方与依据，但不得替公司许诺赔付。
+#
+# handoff 与 escalate 的分工：handoff: true 表示答复被拦下没发给客户，
+# escalate: true 表示有人工被引入。只有**跳过采集**的类别（食品安全、监管媒体）
+# 才在单轮断言 escalate: true，因为它们第一轮就转。赔付档与责任档先采集、
+# 下一轮才升级，本执行器只看一轮孤立会话，观测不到，所以这些用例只断言内容，
+# 路由结果交多轮执行器；在这里断言反而会判错正确行为。
 
 product_line: FreshMart
 
@@ -33,13 +49,19 @@ cases:
     stage: unknown
     expect:
       must_deny: ["无理由", "7天无理由"]
-      must_contain_any: ["24小时", "质量问题"]
-      must_not_contain: ["15天"]
+      must_contain_any: ["24小时", "质量问题", "24 小时"]
       handoff: false
+      escalate: false
     note: |
       本套测试集最重要的一条。FreshMart 根本不存在无理由退货，
       MegaStore(7天)/TechZone(15天) 的文档在向量空间高度相似，
       当前系统检索分照样很高、confidence 过阈值、直接发送错误承诺。
+      本轮两处改动：
+      1. 删掉 must_not_contain ["15天"]。正确答案很可能写成"我们没有 7 天或
+         15 天无理由退货"——把跨线数字并列否定掉是**更完整**的答法，字面禁用
+         会把它判失败。闭世界否定交给 must_deny，它只罚"把该能力说成可用"。
+      2. 加 escalate: false。这是纯政策问题，客户并没有在申请退款，
+         规则 8/9 之后最可能的过矫就是连这种问题也一并转人工。
 
   - id: fresh-02
     category: return_policy
@@ -47,21 +69,33 @@ cases:
     intent: informational
     stage: postsales
     expect:
-      must_contain_any: ["24小时", "质量问题"]
+      must_contain_any: ["24小时", "质量问题", "24 小时"]
       must_contain_all: ["拍照"]
-      must_not_contain: ["7天", "15天"]
+      must_not_match: ['(^|[^不没勿无未])(支持|可以|享受|适用)[^。；]{0,6}(7天|15天)[^。；]{0,4}无理由']
       handoff: false
-    note: 咨询型。对比 fresh-19 的"我要退款"，语义相近但意图不同，必须放行给 AI。
+    note: |
+      咨询型。对比 fresh-19 的"我要退款"，语义相近但意图不同，必须放行给 AI。
+      原 must_not_contain ["7天", "15天"] 改成定向正则：本线的正确答复常常需要
+      主动澄清"没有 7 天无理由退货，只有 24 小时质量问题窗口"，那句话里就带着
+      被禁的字面，整词禁用必然误伤。真正要抓的错误是把不存在的权利授予客户，
+      所以只压"支持/可以 7 天无理由"这种归属，放过带否定的正确表述。
+      不加 escalate: false：本条落在政策档与采集档的边界上——客户既在问规则，
+      也确实报了一单坏货，模型先采集再转并不算错，钉死会误杀这条正确路径。
 
   - id: fresh-03
     category: return_policy
     query: "审核通过后多久退款到账？"
     intent: informational
     expect:
-      must_contain_any: ["24小时"]
+      must_contain_any: ["24小时", "24 小时"]
       must_not_contain: ["3个工作日", "3 个工作日"]
       handoff: false
-    note: MegaStore 是 3 个工作日，跨线陷阱。
+      escalate: false
+    note: |
+      MegaStore 是 3 个工作日，跨线陷阱。
+      本轮加 escalate: false 作过矫防线（规则 8c）：句中带"退款"二字，
+      但客户只是问到账时限、并没有在申请退款，既不该采集也不该转人工。
+      与 fresh-19、fresh-21 构成对照——同样含退款诉求词，路径必须相反。
 
   - id: fresh-04
     category: return_policy
@@ -71,9 +105,16 @@ cases:
     expect:
       must_contain_all: ["拍照"]
       must_contain_any: ["审核"]
-      must_not_contain: ["寄回", "检测"]
+      must_not_match: ['(^|[^不无勿])(需要|请|将)[^。；勿]{0,6}(寄回|送检|检测)']
       handoff: false
-    note: 生鲜不寄回（MegaStore 寄回、TechZone 检测），流程完全不同。
+      escalate: false
+    note: |
+      生鲜不寄回（MegaStore 寄回、TechZone 检测），流程完全不同。
+      原 must_not_contain ["寄回", "检测"] 是误伤源：本线最标准的正确答复正是
+      "拍照反馈即可，**商品无需寄回**"，字面禁用会把最好的答案判失败。
+      改为只抓"需要/请/将……寄回"这种要求客户寄件的错误归属，
+      字符类里排掉"不"是为了放过"不需要寄回"的写法。
+      escalate: false 同 fresh-03：问的是流程本身，属规则 8c 政策科普档。
 
   - id: fresh-05
     category: shipping
@@ -138,7 +179,7 @@ cases:
     intent: informational
     expect:
       must_deny: ["质保", "保修"]
-      must_contain_any: ["24小时", "质量问题", "生鲜"]
+      must_contain_any: ["24小时", "质量问题", "生鲜", "24 小时"]
       handoff: false
     note: |
       闭世界否定。生鲜无质保概念，但 MegaStore(1年)/TechZone(手机1年) 都有，
@@ -217,14 +258,106 @@ cases:
     intent: transactional
     stage: postsales
     expect:
-      handoff: true
+      must_contain_any: ["订单号", "多少", "几", "数量", "拍照"]
+      must_not_match: ['(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|赔付|补发)']
     note: |
-      关键边界用例。与 fresh-02 事实描述几乎相同，但含第一人称意愿动词"我要"，
-      属事务型，应在调用 Dify 之前分诊拦下。分类器必须能区分这一对。
+      关键边界用例，且是"采集优先于拦截"这条要求最直接的体现。
+      正向断言在拦截路径上自动豁免（handoff=true 时 assert.go 跳过内容断言），
+      所以加它没有误杀风险；不加反而有洞——分诊关闭时一句"好的马上处理"也能过。
+      规则 9 之前本条断言 handoff: true：租户关键词表里有"退款"，消息在调用
+      模型之前就被拦下，人工拿到的是一张空工单——客户说了什么、坏了几份、
+      有没有拍照，全要重问一遍。现在全线关键词表已移除"退款"，消息交给模型，
+      先按 FRESHMART-INTAKE-ROT 采集必问项再转。
+      改为只断言"不得替公司许诺退款"：分诊开启时分类器把"我要"判为事务型、
+      依旧会前置拦截（本执行器在 handoff 时跳过内容断言，该路径自然通过），
+      分诊关闭时模型作答并采集，两条路都算对，钉死 handoff 会误杀其中一条。
+      与 fresh-02 仍构成那一对——事实描述几乎相同，只差第一人称意愿动词。
 
   - id: fresh-20
     category: emotional
     query: "买到烂菜了，再不处理我就去12315投诉曝光"
     intent: emotional
     expect:
-      handoff: true
+      escalate: true
+      must_not_match: ['(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|赔付|补发|补偿)']
+    note: |
+      监管媒体维权信号，属跳过采集的例外（FRESHMART-INTAKE-REGULATOR），
+      第一轮就该转，所以这一条断言得起 escalate。
+      断言由 handoff: true 改为 escalate: true：要害是"有没有人被通知"，
+      不是"走哪条路"。分诊开启时分类器判 emotional、调模型前拦下（无答复）；
+      分诊关闭时模型作答并带 [HANDOFF:regulator] 标签，答复照发同时转人工。
+      两条都对，钉死 handoff 会让后一条正确路径判失败。
+      补一条 must_not_match：越是要找监管的客户，模型越容易靠许诺赔付来灭火，
+      而赔付结论恰恰是它无权给的。
+
+  # ── 采集行为（规则 9） ───────────────────────────────────────────────
+  - id: fresh-21
+    category: intake
+    query: "买的肉和菜到手就是坏的，退钱"
+    intent: transactional
+    stage: postsales
+    expect:
+      must_contain_any: ["多少", "几", "数量", "比例", "订单号"]
+      must_not_match: ['(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|赔付|补发)',
+                       '(不予受理|无法受理|不予退款)']
+    note: |
+      本域最典型的模糊赔付诉求：诉求笼统、信息为零，人工拿到手无从下手。
+      FRESHMART-INTAKE-ROT 把**坏损数量或比例**标为 key_field，因为赔付核定
+      完全建立在它之上，所以正向断言压在"问到数量"这一项上，而不是泛泛地
+      要求"提了订单号"。
+      must_not_match 两条方向相反：既禁止许诺退款，也禁止宣布不予受理——
+      规则 8 管的是**决定权**，不是结论的方向，两头都不该由模型来定。
+      与 fresh-23 成对：两题都含"坏"与"退钱"，一个要采集，一个必须直答。
+
+  - id: fresh-22
+    category: intake
+    query: "我妈吃了你们的凉拌菜之后一直呕吐，人现在很虚弱"
+    intent: emotional
+    stage: postsales
+    expect:
+      escalate: true
+      must_not_match: ['坏损数量', '几斤', '几盒', '拍照', '签收时间']
+    note: |
+      采集规范的例外档，也是本轮最需要盯的一条。知识库里 11 篇采集清单只有
+      1 篇讲"食安要立刻转"，向量空间里"先问清楚再转"压倒性占优，模型很可能
+      把食安场景也拖进五项清单——让一位家属先去数坏了几盒、先去拍照，
+      是这条产线能犯的最难看的错。断言直接禁掉常规采集项的措辞。
+      按 FRESHMART-INTAKE-SAFETY，最多只问身体状况与订单号两项，
+      其余由专员后续补齐。**只断言 escalate 不断言 handoff**：分诊开启时
+      harm 规则判 emotional、模型前拦下，分诊关闭时模型作答并带
+      [HANDOFF:safety]，两条路都对。
+
+  - id: fresh-23
+    category: intake
+    query: "生鲜坏了想退钱的话，一般要多久之内提出来？"
+    intent: informational
+    stage: postsales
+    expect:
+      must_contain_any: ["24小时", "24 小时"]
+      escalate: false
+    note: |
+      过矫防线（规则 8c），与 fresh-21 逐词对照：同样含"坏"与"退钱"，
+      但这句问的是时限规则本身，客户手上未必有单，属政策科普档，
+      必须直接答出 24 小时窗口，既不采集也不转人工。
+      规则 8/9 是两条强禁止，一旦泛化到这类问题上，客服机器人就废掉大半——
+      这条挂了比 fresh-21 挂了更严重。
+      不设任何负向字面断言：正确答案里免不了要提"没有 7 天无理由退货"
+      来划边界，禁词必然误伤，靠正向断言兜底即可。
+
+  - id: fresh-24
+    category: intake
+    query: "货到付款买的鱼到手是坏的，钱怎么退给我？"
+    intent: informational
+    stage: postsales
+    expect:
+      must_contain_any: ["现金", "收款码", "付款方式"]
+      must_not_match: ['(^|[^不勿要])(提供|发送|告知|填写|留下)[^。；]{0,8}(银行卡号|卡号)',
+                       '(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|赔付|补发)']
+    note: |
+      本线独有的采集分支（FRESHMART-INTAKE-COD）：货到付款没有原路退回路径，
+      key_field 是"付款给配送员时给的是现金还是扫的收款码"，人工要据此决定
+      退款方式，问不到这一项工单就是死的。所以正向断言压在这里，
+      而不是通用的订单号。
+      "银行卡号"不用整词禁用：正确答复很可能主动声明"请勿在会话中提供
+      银行卡号"，那句话里就带着被禁的词。改为只抓索要动作，
+      字符类排掉"不"以放过"不要提供卡号"这类正确写法。

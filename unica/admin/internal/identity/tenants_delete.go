@@ -126,20 +126,25 @@ func (h *TenantHandler) deleteTenant(w http.ResponseWriter, r *http.Request, id 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// chatwootAccountOf reports the Chatwoot account bound to a tenant. The column
-// is a denormalisation of the config block, so a row where only one of the two
-// was written still yields the account that has to be removed.
+// chatwootAccountOf reports the Chatwoot account bound to a tenant.
+//
+// The config block is the authority and is consulted first; the column is a
+// denormalisation of it, kept because a row where only one of the two was
+// written still has to yield the account that must be removed. The order
+// matters: provisioning writes the block before the column, so the column is
+// the one that can lag, and deleting the account a stale column names would
+// destroy a live tenant's workbench while leaving the intended one orphaned.
+// Reading the block first makes the authority the code follows the same one the
+// design declares.
 func (h *TenantHandler) chatwootAccountOf(ctx context.Context, pl *repository.ProductLine) int {
-	if pl.ChatwootAccountID != nil && *pl.ChatwootAccountID != 0 {
-		return *pl.ChatwootAccountID
-	}
 	raw, err := h.plRepo.GetConfigJSON(ctx, pl.ID)
 	if err != nil {
 		log.Printf("[tenants] delete: read config_json of %s: %v", pl.ID, err)
-		return 0
-	}
-	if block, ok := readChatwootBlock(raw); ok {
+	} else if block, ok := readChatwootBlock(raw); ok && block.AccountID != 0 {
 		return block.AccountID
+	}
+	if pl.ChatwootAccountID != nil && *pl.ChatwootAccountID != 0 {
+		return *pl.ChatwootAccountID
 	}
 	return 0
 }

@@ -57,6 +57,13 @@ type Judgement struct {
 	Result *guardrail.EvalResult
 	// Enforced reports that violations suppressed the answer.
 	Enforced bool
+	// Escalated reports that the model asked for a human, either through a
+	// [HANDOFF:] tag or by announcing the transfer in prose.
+	Escalated bool
+	// EscalationTagged distinguishes the two: false means the prose backstop
+	// fired, which is worth watching because it means the model is promising
+	// transfers it does not tag, and the tag is the contract.
+	EscalationTagged bool
 	// BreakerTripped reports that this judgement is the one that opened the
 	// breaker.
 	BreakerTripped bool
@@ -92,7 +99,8 @@ func JudgeAnswer(in JudgeInput, evaluator *guardrail.Evaluator, breaker *domain.
 	// for the [INTENT:...] marketing tags.
 	claimResult := domain.ParseClaims(in.Resp.Answer)
 	detectResult := marketing.DetectIntents(claimResult.CleanedAnswer)
-	j.Answer = detectResult.CleanedAnswer
+	escalation := domain.ParseEscalation(detectResult.CleanedAnswer)
+	j.Answer = escalation.CleanedAnswer
 	j.Claims = claimResult.Claims
 	j.Intents = detectResult.Intents
 
@@ -110,6 +118,36 @@ func JudgeAnswer(in JudgeInput, evaluator *guardrail.Evaluator, breaker *domain.
 	})
 
 	j.Result = evaluator.EvaluateWithMode(in.Query, j.Confidence, in.GuardrailCfg, in.TriageMode)
+
+	// A model-raised escalation upgrades a send into send_and_handoff. It runs
+	// before enforcement so that enforcement can still take the answer away: an
+	// answer that contradicts the ontology must not reach the customer no
+	// matter who asked for a human.
+	//
+	// The prose backstop is deliberately one-way. It can add an escalation the
+	// model forgot to tag, never remove one, because the failure it guards
+	// against — the answer promises a transfer that never happens — is only
+	// harmful in that direction.
+	if escalation.Requested || domain.AnnouncesTransfer(j.Answer) {
+		j.Escalated = true
+		j.EscalationTagged = escalation.Requested
+		if j.Result.Decision == guardrail.DecisionSend {
+			reason := guardrail.ReasonModelRequested
+			if escalation.Requested {
+				reason = guardrail.EscalationReason(escalation.Reason)
+			}
+			detail := "模型在答复中请求转接人工"
+			if !escalation.Requested {
+				detail = "答复向客户承诺了转接，但未带 [HANDOFF:] 标签，按承诺升级"
+			}
+			j.Result = &guardrail.EvalResult{
+				Decision:   guardrail.DecisionSendAndHandoff,
+				Reason:     reason,
+				Confidence: j.Confidence,
+				Detail:     detail,
+			}
+		}
+	}
 
 	// Enforcement is bounded by the breaker: one wrong assertion in an
 	// ontology suppresses every correct answer that touches it, so unbounded

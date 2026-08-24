@@ -777,6 +777,38 @@ func (r *Router) deliverJudgement(ctx context.Context, config *RouteConfig, msg 
 			SessionID:         convID,
 		})
 
+	case guardrail.DecisionSendAndHandoff:
+		// The answer is worth sending and the conversation still needs a person:
+		// the model has answered what it is allowed to answer (policy, liability,
+		// what evidence is needed) and collected the intake details, and a human
+		// now owns whatever costs money.
+		//
+		// Order matters. The answer publishes first so the customer sees the
+		// reply before the holding message; a handoff event that lands first
+		// would have an agent open a conversation whose last turn has not
+		// arrived yet.
+		log.Printf("[router] worker %d: model-raised escalation for conversation %s (reason=%s, tagged=%t, confidence=%.3f)",
+			workerID, convID, j.Result.Reason, j.EscalationTagged, j.Result.Confidence)
+
+		r.publishAIResponse(ctx, config, msg, convID, workerID, j.Answer, float32(j.Confidence),
+			difyResp.Metadata.Usage.TotalTokens, len(difyResp.RetrieverResources), difyDuration)
+		r.publishHandoffEvent(ctx, msg, convID, config.ProductLineID, j.Result, j.Answer)
+
+		if err := r.stateManager.TransitionState(ctx, convID, state.StateHumanProcessing, "guardrail"); err != nil {
+			log.Printf("[router] worker %d: failed to transition conversation %s to human_processing: %v", workerID, convID, err)
+		}
+
+		// The answer was delivered and was not judged wrong, so it is a success
+		// sample like any other send. Escalating alongside it says the decision
+		// belongs to a person, not that the answer was poor.
+		r.submitExperience(bridge.Experience{
+			UserQuery:         query,
+			AssistantResponse: j.Answer,
+			Success:           true,
+			ToolsUsed:         retrievalDatasets(difyResp),
+			SessionID:         convID,
+		})
+
 	case guardrail.DecisionHandoff:
 		// Handoff flow: send holding message, publish handoff event, transition state
 		log.Printf("[router] worker %d: guardrail triggered handoff for conversation %s (reason=%s, confidence=%.3f, keyword=%s)",
@@ -1039,7 +1071,15 @@ type handoffEvent struct {
 }
 
 // publishHandoffEvent publishes a handoff event to the unica:handoff stream.
-func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMessage, convID, productLineID string, evalResult *guardrail.EvalResult, suppressedAnswer string) {
+//
+// answer is the AI text this handoff is about. Whether the customer saw it is
+// not something the text can say — under send_and_handoff it was published
+// moments ago, under every other handoff it never left the building — so
+// suppression is read from the decision rather than inferred from emptiness.
+// Getting this backwards would tell the agent the customer is waiting on a
+// first reply when they have already had one, and they would answer it twice.
+func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMessage, convID, productLineID string, evalResult *guardrail.EvalResult, answer string) {
+	suppressed := answer != "" && !evalResult.Decision.Delivers()
 	// Record the decision before publishing: the stream event is consumed and
 	// gone, while this row is what later answers "why did this conversation
 	// leave the AI". Best-effort by design — the recorder logs and swallows.
@@ -1054,7 +1094,7 @@ func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMes
 			Reason:           evalResult.Reason,
 			Detail:           detail,
 			Confidence:       evalResult.Confidence,
-			AnswerSuppressed: suppressedAnswer != "",
+			AnswerSuppressed: suppressed,
 		})
 	}
 
@@ -1064,7 +1104,7 @@ func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMes
 		ProductLineID:        productLineID,
 		Reason:               evalResult.Reason,
 		ConfidenceScore:      evalResult.Confidence,
-		AIResponseSuppressed: suppressedAnswer,
+		AIResponseSuppressed: answer,
 		CustomerMessage:      msg.Data.Content.Text,
 		Detail:               evalResult.Detail,
 		Timestamp:            time.Now().UTC().Format(time.RFC3339),

@@ -39,11 +39,11 @@ func hasKind(o Outcome, k FailureKind) bool {
 func TestEvaluate_MustContainAll(t *testing.T) {
 	c := newCase(t, Expect{MustContainAll: []string{"15天", "未拆封"}})
 
-	if o := Evaluate(c, "支持15天无理由退换货，限未拆封商品。", false); !o.Passed() {
+	if o := Evaluate(c, "支持15天无理由退换货，限未拆封商品。", false, false); !o.Passed() {
 		t.Errorf("expected pass, got failures %v", kinds(o))
 	}
 
-	o := Evaluate(c, "支持15天无理由退换货。", false)
+	o := Evaluate(c, "支持15天无理由退换货。", false, false)
 	if o.Passed() {
 		t.Fatal("expected failure when a required term is missing")
 	}
@@ -55,10 +55,10 @@ func TestEvaluate_MustContainAll(t *testing.T) {
 func TestEvaluate_MustContainAny(t *testing.T) {
 	c := newCase(t, Expect{MustContainAny: []string{"3个工作日", "3 个工作日"}})
 
-	if o := Evaluate(c, "退款将在3个工作日内到账。", false); !o.Passed() {
+	if o := Evaluate(c, "退款将在3个工作日内到账。", false, false); !o.Passed() {
 		t.Errorf("expected pass, got %v", kinds(o))
 	}
-	if o := Evaluate(c, "退款将在24小时内到账。", false); !hasKind(o, FailMissingAny) {
+	if o := Evaluate(c, "退款将在24小时内到账。", false, false); !hasKind(o, FailMissingAny) {
 		t.Errorf("expected missing_any, got %v", kinds(o))
 	}
 }
@@ -66,10 +66,10 @@ func TestEvaluate_MustContainAny(t *testing.T) {
 func TestEvaluate_MustNotContain(t *testing.T) {
 	c := newCase(t, Expect{MustNotContain: []string{"7天", "30天"}})
 
-	if o := Evaluate(c, "我们支持15天无理由退货。", false); !o.Passed() {
+	if o := Evaluate(c, "我们支持15天无理由退货。", false, false); !o.Passed() {
 		t.Errorf("expected pass, got %v", kinds(o))
 	}
-	if o := Evaluate(c, "我们支持7天无理由退货。", false); !hasKind(o, FailForbidden) {
+	if o := Evaluate(c, "我们支持7天无理由退货。", false, false); !hasKind(o, FailForbidden) {
 		t.Errorf("expected forbidden, got %v", kinds(o))
 	}
 }
@@ -88,7 +88,7 @@ func TestEvaluate_MustDeny(t *testing.T) {
 		"货到付款是我们的常用方式之一。",
 	}
 	for _, answer := range affirmed {
-		if o := Evaluate(c, answer, false); !hasKind(o, FailAffirmedDenied) {
+		if o := Evaluate(c, answer, false, false); !hasKind(o, FailAffirmedDenied) {
 			t.Errorf("expected affirmed_denied for %q, got %v", answer, kinds(o))
 		}
 	}
@@ -101,7 +101,7 @@ func TestEvaluate_MustDeny(t *testing.T) {
 		"支持微信支付和支付宝。", // term absent entirely
 	}
 	for _, answer := range denied {
-		if o := Evaluate(c, answer, false); hasKind(o, FailAffirmedDenied) {
+		if o := Evaluate(c, answer, false, false); hasKind(o, FailAffirmedDenied) {
 			t.Errorf("expected no affirmed_denied for %q", answer)
 		}
 	}
@@ -113,10 +113,10 @@ func TestEvaluate_MustDeny(t *testing.T) {
 func TestEvaluate_MustDeny_NegationInsideTerm(t *testing.T) {
 	c := newCase(t, Expect{MustDeny: []string{"无理由"}})
 
-	if o := Evaluate(c, "我们提供7天无理由退换货。", false); !hasKind(o, FailAffirmedDenied) {
+	if o := Evaluate(c, "我们提供7天无理由退换货。", false, false); !hasKind(o, FailAffirmedDenied) {
 		t.Error("an affirmed 无理由 policy must be flagged, not self-negated by its own 无")
 	}
-	if o := Evaluate(c, "生鲜商品不提供无理由退货，但质量问题24小时内可全额退款。", false); hasKind(o, FailAffirmedDenied) {
+	if o := Evaluate(c, "生鲜商品不提供无理由退货，但质量问题24小时内可全额退款。", false, false); hasKind(o, FailAffirmedDenied) {
 		t.Error("a properly negated 无理由 mention must pass")
 	}
 }
@@ -124,11 +124,11 @@ func TestEvaluate_MustDeny_NegationInsideTerm(t *testing.T) {
 func TestEvaluate_MustNotMatch(t *testing.T) {
 	c := newCase(t, Expect{MustNotMatch: []string{`\d+\s*(?:mAh|毫安)`}})
 
-	if o := Evaluate(c, "请提供具体型号，我帮您查询电池参数。", false); !o.Passed() {
+	if o := Evaluate(c, "请提供具体型号，我帮您查询电池参数。", false, false); !o.Passed() {
 		t.Errorf("expected pass, got %v", kinds(o))
 	}
 
-	o := Evaluate(c, "这款手机电池容量为5000mAh。", false)
+	o := Evaluate(c, "这款手机电池容量为5000mAh。", false, false)
 	if !hasKind(o, FailMatchedPattern) {
 		t.Fatalf("expected matched_forbidden_pattern, got %v", kinds(o))
 	}
@@ -140,10 +140,10 @@ func TestEvaluate_MustNotMatch(t *testing.T) {
 func TestEvaluate_HandoffMismatch(t *testing.T) {
 	c := newCase(t, Expect{Handoff: boolPtr(true)})
 
-	if o := Evaluate(c, "", true); !o.Passed() {
+	if o := Evaluate(c, "", true, true); !o.Passed() {
 		t.Errorf("expected pass when handoff matches, got %v", kinds(o))
 	}
-	if o := Evaluate(c, "好的，我帮您办理。", false); !hasKind(o, FailHandoffMismatch) {
+	if o := Evaluate(c, "好的，我帮您办理。", false, false); !hasKind(o, FailHandoffMismatch) {
 		t.Errorf("expected handoff_mismatch, got %v", kinds(o))
 	}
 }
@@ -156,7 +156,7 @@ func TestEvaluate_HandoffSkipsContentAssertions(t *testing.T) {
 		Handoff:        boolPtr(true),
 	})
 
-	o := Evaluate(c, "正在为您转接人工客服，请稍候...", true)
+	o := Evaluate(c, "正在为您转接人工客服，请稍候...", true, true)
 	if !o.Passed() {
 		t.Errorf("content assertions must be skipped on handoff, got %v", kinds(o))
 	}
@@ -171,7 +171,7 @@ func TestEvaluate_UnexpectedHandoffReportsOnlyMismatch(t *testing.T) {
 		Handoff:        boolPtr(false),
 	})
 
-	o := Evaluate(c, "正在为您转接人工客服，请稍候...", true)
+	o := Evaluate(c, "正在为您转接人工客服，请稍候...", true, true)
 	if len(o.Failures) != 1 || o.Failures[0].Kind != FailHandoffMismatch {
 		t.Errorf("expected exactly one handoff_mismatch, got %v", kinds(o))
 	}

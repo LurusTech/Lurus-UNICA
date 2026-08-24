@@ -99,31 +99,36 @@ func (h *HandoffHandler) loadDifyConfig(ctx context.Context, productLineID strin
 		}
 	}
 
-	// Query DB for product_lines.config_json
-	var configJSON sql.NullString
+	// Credentials live in the dify_base_url / dify_api_key columns, which is
+	// where provisioning writes them and where every other reader looks. This
+	// used to read a nested config_json."dify" object that nothing has ever
+	// written, so summary generation failed for every product line and silently
+	// fell back — the agent got a template instead of the summary, which since
+	// intake is exactly the information the customer was asked to supply.
+	//
+	// That nested object is no longer consulted even as an override. Nothing
+	// writes it, so its only reachable effect was to let a hand-edited database
+	// row silently displace the provisioned credentials for this one reader
+	// while every other reader kept using the columns — a divergence no console
+	// or provisioning run would show. A line that genuinely needs different
+	// credentials changes the columns.
+	var baseURL, apiKey sql.NullString
 	err = h.db.QueryRowContext(ctx,
-		`SELECT config_json FROM product_lines WHERE id = $1`, productLineID,
-	).Scan(&configJSON)
+		`SELECT dify_base_url, dify_api_key FROM product_lines WHERE id = $1`,
+		productLineID,
+	).Scan(&baseURL, &apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("query product line config: %w", err)
 	}
-	if !configJSON.Valid || configJSON.String == "" {
-		return nil, fmt.Errorf("product line %s has no config_json", productLineID)
-	}
 
-	var fullConfig struct {
-		Dify struct {
-			BaseURL string `json:"base_url"`
-			APIKey  string `json:"api_key"`
-		} `json:"dify"`
-	}
-	if err := json.Unmarshal([]byte(configJSON.String), &fullConfig); err != nil {
-		return nil, fmt.Errorf("unmarshal config_json: %w", err)
-	}
+	resolved := struct{ BaseURL, APIKey string }{baseURL.String, apiKey.String}
 
-	if fullConfig.Dify.BaseURL == "" || fullConfig.Dify.APIKey == "" {
+	if resolved.BaseURL == "" || resolved.APIKey == "" {
 		return nil, fmt.Errorf("product line %s has incomplete dify config", productLineID)
 	}
+	fullConfig := struct {
+		Dify struct{ BaseURL, APIKey string }
+	}{Dify: resolved}
 
 	cfg := &bridge.DifyConfig{
 		BaseURL: fullConfig.Dify.BaseURL,

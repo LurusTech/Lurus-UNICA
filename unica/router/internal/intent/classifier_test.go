@@ -138,24 +138,31 @@ func TestResult_NeedsHuman(t *testing.T) {
 	}
 }
 
-// TestClassify_ImprovesOnKeywordMatching quantifies the regression the old rule
-// caused: consultative questions that the default HandoffKeywords list would
-// have intercepted, and which the classifier now lets through to the AI.
-func TestClassify_ImprovesOnKeywordMatching(t *testing.T) {
+// TestClassify_PayoutQuestionsReachTheAI guards the two paths that used to send
+// a payout question straight to a person.
+//
+// It began as TestClassify_ImprovesOnKeywordMatching, which asserted that the
+// classifier rescued questions the default keyword list wrongly intercepted —
+// all of its examples were 退款 phrasings. 退款 has since left that list
+// entirely, because intake made answering payout questions the assistant's job:
+// it has to collect the order number, what spoiled and how much before a human
+// can do anything useful. So the assertion is now the stronger one. Neither
+// path may intercept these: not the keyword list, and not the classifier.
+func TestClassify_PayoutQuestionsReachTheAI(t *testing.T) {
 	cfg := guardrail.DefaultGuardrailConfig()
 
-	rescued := []string{
+	consultative := []string{
 		"退款政策是什么",
 		"什么情况下可以退款",
 		"退款一般几天到账",
 		"申请退款的流程是什么？",
 	}
-	for _, msg := range rescued {
-		if !matchesAnyKeyword(msg, cfg.HandoffKeywords) {
-			t.Fatalf("test premise broken: %q no longer matches the legacy keyword list", msg)
+	for _, msg := range consultative {
+		if matchesAnyKeyword(msg, cfg.HandoffKeywords) {
+			t.Errorf("%q: intercepted by the keyword list before the AI sees it", msg)
 		}
 		if Classify(msg).NeedsHuman() {
-			t.Errorf("%q: still routed to a human", msg)
+			t.Errorf("%q: classified as needing a human", msg)
 		}
 	}
 }

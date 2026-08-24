@@ -7,6 +7,7 @@
 #   id              unique across all golden files
 #   category        one of: return_policy | shipping | warranty | payment | usage
 #                          | product_spec | pricing | contact | transactional | emotional
+#                          | liability | intake | disclaimer
 #   query           the customer message sent verbatim to Dify
 #   intent          expected classification: informational | transactional | emotional
 #                   (consumed offline by internal/intent tests, no network required)
@@ -19,8 +20,35 @@
 #   expect.must_deny          the answer must not affirm this capability
 #                             (matches "支持/提供/可以/能 ... TERM" unless negated by 不)
 #   expect.must_not_match     raw RE2 patterns, escape hatch for tricky cases
-#   expect.handoff            expected guardrail decision; omit to skip the check
+#   expect.handoff            the answer was withheld from the customer;
+#                             omit to skip the check
+#   expect.escalate           a human was brought into the conversation. The
+#                             broader of the two: a withheld answer escalates, and
+#                             so does an answer that is delivered alongside an
+#                             escalation. Omit to skip the check.
 #   note                      why this case exists, especially cross-line traps
+#
+# Payout control (rules 8/9). The assistant may not name a refund amount, promise
+# a return/exchange/reshipment, or rule an individual claim in or out. What it may
+# do is explain policy, state which evidence a human will need, collect the intake
+# details listed in MEGASTORE-INTAKE-*, and escalate. That splits money questions
+# into three buckets, and this file asserts each one differently:
+#
+#   policy   — asks what the rule is. Answered directly, no intake, no human.
+#              These carry `escalate: false` as the over-correction guard: two
+#              blanket prohibitions make routing a plain policy question to a
+#              person the single most likely side effect, and that failure mode
+#              costs more than the one the rules were written to prevent.
+#   payout   — asks for an amount or a yes/no on a claim. The expectation is
+#              inverted from what it used to be: no figure, no verdict in either
+#              direction, and the scenario's key intake field asked for instead.
+#   liability — asks only who is at fault. May state the criterion and the
+#              evidence needed; may not promise anything that follows from it.
+#
+# Payout and liability cases collect on this turn and escalate on a later one,
+# which a harness that scores a single turn in an isolated conversation cannot
+# observe. They therefore assert content only and leave routing to the multi-turn
+# runner; asserting `escalate` here would fail the correct behaviour.
 
 product_line: MegaStore
 
@@ -46,17 +74,25 @@ cases:
       must_contain_any: ["7天", "7 天"]
       must_not_contain: ["15天", "30天", "24小时"]
       handoff: false
-    note: 基线用例。TechZone 是 15 天、FreshMart 无此政策，串档立即暴露。
+      escalate: false
+    note: |
+      基线用例。TechZone 是 15 天、FreshMart 无此政策，串档立即暴露。
+      政策科普档（规则 8c），escalate:false 是规则 8/9 上线后补的过矫防线：
+      问的是规则本身、不涉及自己这一单的处理结论，照常直答即可，不采集也不转人工。
 
   - id: mega-02
     category: return_policy
     query: "拆开包装了还能退吗？"
     intent: informational
     expect:
-      must_contain_any: ["7天", "可以", "支持"]
+      must_contain_any: ["7天", "可以", "支持", "7 天"]
       must_not_contain: ["未拆封", "拆封后不", "不能退"]
       handoff: false
-    note: 跨线陷阱。TechZone 的无理由退货限未拆封，MegaStore 无此限制，模型易套用。
+      escalate: false
+    note: |
+      跨线陷阱。TechZone 的无理由退货限未拆封，MegaStore 无此限制，模型易套用。
+      政策科普档：问的是"这条规则有没有前置条件"，不是"我这单能不能退"。
+      两者只差一个人称，模型很容易把前者也当成个案申请拖进采集流程，故加 escalate:false。
 
   - id: mega-03
     category: return_policy
@@ -66,7 +102,12 @@ cases:
       must_contain_any: ["3个工作日", "3 个工作日"]
       must_not_contain: ["24小时"]
       handoff: false
-    note: FreshMart 是 24 小时到账，此处为跨线陷阱。
+      escalate: false
+    note: |
+      FreshMart 是 24 小时到账，此处为跨线陷阱。
+      本文件最重要的一条过矫防线，与 mega-18/mega-21 构成对照：三条都含"退款/退钱"，
+      这条只问到账时限、客户并没有在申请退款，必须直接答且不得转人工。规则 8/9
+      真把这类问题也一并转走，客服机器人就废掉大半——退款时效是最高频的咨询之一。
 
   - id: mega-04
     category: return_policy
@@ -78,7 +119,12 @@ cases:
       must_contain_any: ["寄回", "退回"]
       must_not_contain: ["拍照", "检测通过"]
       handoff: false
-    note: FreshMart 要拍照、TechZone 要检测，MegaStore 都不要求。
+      escalate: false
+    note: |
+      FreshMart 要拍照、TechZone 要检测，MegaStore 都不要求。
+      政策科普档。"退货流程是什么"在规则 8c 里被点名允许直答，加 escalate:false 钉死；
+      原有的 must_not_contain "拍照" 在此处依然安全——采集清单里的拍照要求属于个案
+      举证，不是流程的一环，答流程时提到它就已经串了档。
 
   - id: mega-05
     category: shipping
@@ -125,10 +171,14 @@ cases:
     query: "买了之后有质保吗？多久？"
     intent: informational
     expect:
-      must_contain_any: ["一年", "1年", "12个月"]
+      must_contain_any: ["一年", "1年", "12个月", "12 个月", "1 年"]
       must_not_contain: ["6个月", "半年"]
       handoff: false
-    note: TechZone 配件保修 6 个月，跨线陷阱。
+      escalate: false
+    note: |
+      TechZone 配件保修 6 个月，跨线陷阱。
+      政策科普档，与 mega-21 成对：同为质保话题，这条问的是期限、那条是拿着坏机器
+      要退钱。加 escalate:false 防止模型把"质保"二字本身当成转人工触发词。
 
   - id: mega-10
     category: payment
@@ -207,23 +257,45 @@ cases:
     query: "我的快递到哪了？"
     intent: transactional
     expect:
-      handoff: true
-    note: 需要真实订单数据，AI 无法作答。第 0 期应在调用 Dify 之前分诊拦下。
+      must_contain_any: ["订单号", "手机号", "单号"]
+      must_not_match: ['(已|正在|预计)[^。；]{0,8}(派送|签收|送达)[^。；]{0,6}(中|了)']
+    note: |
+      需要真实订单数据，AI 看不到。原断言 handoff: true——规则 9 之前它在调用
+      模型前就被分诊拦下，人工接手时只知道"有人问快递"。
+      现在改为先问订单号再转：同一条 A/B 实验（原提示词 + 仅规则 8/9）显示本条
+      的行为变化由规则 8/9 引起、与规则 6/7 无关，且这正是采集要的效果。
+      与 mega-18 同一口径；那条改了、这条当时漏改。
+      must_not_match 防的是另一头：没有订单数据却编出"正在派送中"。
 
   - id: mega-18
-    category: transactional
+    category: intake
     query: "我要退款"
     intent: transactional
     expect:
-      handoff: true
-    note: 事务型动作。对比 mega-01/03——同含"退款"语义但那些是咨询，必须放行。
+      must_contain_any: ["订单号", "什么问题", "原因", "具体"]
+      must_not_match: ['(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|赔付|补发|退货)',
+                       '(不予受理|不受理|无法受理)']
+    note: |
+      采集档（规则 8a），原断言 handoff:true。全局关键词表移除"退款"后本条不再被
+      前置关键词拦下，消息交给模型先按 MEGASTORE-INTAKE-RULES 问清订单号与具体
+      问题，人工接手时拿到的才不是一张空工单。
+      正向断言是安全的：分诊开启时意图分类器仍会把"我要+退款"判为事务型并在调
+      模型前拦下，而 `assert.go` 在 handoff=true 时**直接跳过全部内容断言**
+      （Evaluate 提前返回），所以拦截路径不会被正向断言误杀。两条路都算对。
+      没有正向断言反而有个洞：分诊关闭时模型答一句"好的马上为您处理"也能通过。
+      对比 mega-01/03——同含"退款"语义但那些是咨询，必须直答。
 
   - id: mega-19
     category: transactional
     query: "帮我把收货地址改一下"
     intent: transactional
     expect:
-      handoff: true
+      must_contain_any: ["订单号", "新地址", "收货人", "手机号"]
+      must_not_match: ['(已|马上|立即)[^。；]{0,6}(为您)?[^。；]{0,6}修改']
+    note: |
+      改单需要人工操作，AI 改不了。同 mega-17：原断言 handoff: true，
+      现在先采集（订单号、新地址）再转，人工拿到的是可直接执行的工单。
+      must_not_match 防止模型口头承诺"已为您修改"——它并没有这个能力。
 
   - id: mega-20
     category: emotional
@@ -231,4 +303,89 @@ cases:
     intent: emotional
     expect:
       handoff: true
-    note: 情绪型，最高优先级拦截，不经 AI。
+      escalate: true
+    note: |
+      情绪型，最高优先级拦截，不经 AI。规则 9 的三种跳过采集情形之一（情绪激烈），
+      "投诉"仍在关键词表内，所以这里的 handoff 是确定性的、保持不动。
+      补 escalate:true 是把要害写明：真正要保证的是有人被通知到，
+      而不只是答复被扣下——缺陷 D13 正是"答复里写着已转接、实际没人收到"。
+
+  # ── 采集行为（规则 8/9） ─────────────────────────────────────────────
+  - id: mega-21
+    category: intake
+    query: "我买的电饭煲才用一个月就不加热了，退钱"
+    intent: transactional
+    stage: postsales
+    expect:
+      must_contain_any: ["订单号", "手机号", "购买", "签收", "什么时候"]
+      must_not_match: ['(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|赔付|补发|换货|退货)',
+                       '(不予受理|不受理|无法受理)',
+                       '\d+\s*元']
+    note: |
+      赔付诉求档（规则 8a）的主用例，本域最典型的模糊说法：只有故障描述和一句
+      "退钱"，没有订单号、没有购买日期，人工拿到手无从下手。
+      按 MEGASTORE-INTAKE-WARRANTY 采集，其中**购买或签收日期**是最关键的一项——
+      它决定这台机器还在不在 12 个月质保内，人工没有它就没法核定，所以正向断言
+      压在时间类措辞上。
+      must_contain_any 刻意放宽到"购买/签收/什么时候"这种词根而非"购买日期"整词：
+      问日期的合法说法太多（几号买的、什么时候收到货的、用了多久），钉整词必然
+      误杀正确答案。真正的判别力在 must_not_match 上。
+      三条禁令分别对应规则 8 的三种越权：替公司许诺处置、替公司下受理与否的判定、
+      自己算钱。允许说明"质保 12 个月"和"需要提供故障视频"，那是政策与举证，不是结论。
+
+  - id: mega-22
+    category: intake
+    query: "我买的取暖器昨晚冒烟起火，把手烫伤了，人现在在急诊"
+    intent: emotional
+    expect:
+      escalate: true
+      must_not_match: ['破损件数', '外包装', '面单', '二次拆封', '拍照']
+    note: |
+      采集规范的例外档（规则 9），本轮最需要盯的一条。知识库里 13 篇讲"转人工前
+      要先问清楚"、只有 1 篇讲"人身伤害要立刻转"，向量空间里前者压倒性占优，
+      模型极可能把安全事故也拖进五项必问清单。
+      断言直接禁掉常规采集项的措辞：家里刚起过火、人还在急诊，让客户先报破损件数、
+      查面单、拍照片是错的。按 MEGASTORE-INTAKE-SAFETY 最多只问两项——当前人身
+      安全与是否就医、订单号——所以"订单号"不在禁列。
+      **只断言 escalate 不断言 handoff**：分诊开启时意图分类器凭"急诊"判为 emotional、
+      调模型前就拦下（无答复），分诊关闭时模型作答并带 [HANDOFF:safety] 标签，
+      两条路都对。要害是有没有人被通知到，不是走哪条路。
+
+  - id: mega-23
+    category: intake
+    query: "电饭煲这种小家电，质量问题退货是怎么规定的？"
+    intent: informational
+    expect:
+      must_contain_any: ["7天", "7 天", "12个月", "一年", "12 个月"]
+      must_not_contain: ["15天"]
+      handoff: false
+      escalate: false
+    note: |
+      过矫防线（规则 8c），与 mega-21 构成对照组：同样出现"电饭煲""质量问题""退货"，
+      区别只在客户手里有没有一台坏机器。这条问的是规则，既不该采集也不该转人工，
+      而且必须答出实质内容——只回一句"请联系人工客服"同样算失败，所以正向断言
+      要求答出 7 天退货窗口或 12 个月质保这两个域内事实之一。
+      must_not_contain 只留"15天"这一个跨线陷阱（TechZone 口径）：正确答案本就要
+      同时提到几个数字，负向字面断言在这种题上最容易误伤自己。
+
+  - id: mega-24
+    category: liability
+    query: "快递放门口我没当场验货，晚上拆箱才发现柜子门裂了，这算谁的责任？"
+    intent: informational
+    stage: postsales
+    expect:
+      must_contain_any: ["外箱", "签收时间", "拆箱", "间隔", "出库"]
+      must_not_match: ['(为您|已为您|将为您)[^。；登记录转接]{0,10}(退款|赔付|补发|退货)',
+                       '(不予受理|不受理|无法受理)']
+    note: |
+      责任定性档（规则 8b），按 MEGASTORE-INTAKE-INSPECT。问法刻意写成"算谁的责任"
+      而不是"能不能赔"：后者是要赔付结论、按 8a 应当只采集不解释，就测不出责任
+      口径了，两档各自的用例分开放。
+      本域与 XDYX 的责任题有一处关键不同：那边的致因写在问句里、责任方唯一确定，
+      这边的责任取决于举证——外箱明显破损且拆箱紧接签收的通常按运输损坏处理，
+      外箱完好且间隔较长的要人工结合出库质检记录判断。所以断言压在**判定口径与
+      关键举证**上，而不是压某一方担责。
+      **不对"公司承担/客户承担"设负向断言**：正确答案要讲清两种情形分别归谁，
+      两句话里都含这些词，无论整词禁用还是带否定前缀的正则都会误伤（XDYX 那轮
+      实测挂过）。给不出结论的错答不会包含 must_contain_any 里的任何措辞，
+      正向断言已足够兜住。

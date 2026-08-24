@@ -40,3 +40,6 @@ tmp/
 # committed — it is the reference every later run is compared against; only the
 # verbose per-run report, which embeds full answer text, is transient.
 doc/eval-report-*.json
+
+# Ad-hoc screenshots dropped at the repo root
+ScreenShot_*.png

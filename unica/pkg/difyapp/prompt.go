@@ -58,6 +58,28 @@ var ContextVariables = []ContextVariable{
 // structure, identical across every commercial stage, rather than the phrasing
 // a per-stage strategy governs.
 //
+// Rule 8 takes money out of the model's hands: it may explain a policy and it
+// may say who is at fault, but it may not name an amount or approve a claim.
+// The rule is written in three branches rather than as a blanket prohibition
+// because a blanket one costs too much — "退款多久到账" is a policy question
+// every line must still answer, and routing it to a person to protect a payout
+// decision that was never being made empties the assistant of its job. Rule 8
+// declares priority over rule 7 explicitly: rule 7 says answer what you can,
+// and without the ordering a model reads the two as a contradiction and
+// resolves it whichever way the phrasing of the moment pulls. That tension is
+// the same one recorded against rules 4 and 7 in doc/known-defects.md (D12).
+//
+// Rule 9 is the counterweight to rule 8, and the reason escalation is a model
+// signal rather than an interception. Intercepting a payout question before the
+// model runs would hand the agent an empty ticket saying only that a customer
+// wants money; letting the model collect the case details first hands them a
+// filled one. The caps (three items in one turn, two rounds) exist because the
+// failure mode of an intake instruction is interrogation — a customer who said
+// "水果烂了退钱" should not answer five questions to reach a human. The
+// [HANDOFF:...] tag is the contract with the router (pkg/domain/escalation.go):
+// prose promising a transfer is caught as a backstop, but only the tag is
+// guaranteed to route.
+//
 // The product line name is substituted here rather than passed as a Dify
 // variable: one app serves one product line, so the name is a constant of the
 // app, and the router's product_line input carries the ID rather than the name.
@@ -82,7 +104,9 @@ func DefaultSystemPrompt(productLineName string) string {
 4. 确定性事实中没有的具体数值（价格、参数、库存、个人订单进度），不要编造，请客户提供具体信息或转人工。
 5. 每引用一条确定性事实，在该句末尾附加标签 [FACT:属性名=取值]；若该事实分情形，写作 [FACT:情形.属性名=取值]。标签不会展示给客户。
 6. 上方"应答策略"只影响表达方式与提问顺序，不改变可陈述的内容；任何数值、政策与承诺仍以"确定性事实"为准。
-7. 在以上约束内能回答的问题必须直接回答，先给结论再给依据。客户所指的对象在确定性事实或参考知识中能唯一确定时，直接作答；匹配到多个时，简要列出这些候选请客户选择；只有在无法定位所指、且缺失信息会改变答案时，才提出一个直接针对该缺失信息的问题。不得要求客户先说明自己所处的阶段、身份或类别再作答。`
+7. 在以上约束内能回答的问题必须直接回答，先给结论再给依据。客户所指的对象在确定性事实或参考知识中能唯一确定时，直接作答；匹配到多个时，简要列出这些候选请客户选择；只有在无法定位所指、且缺失信息会改变答案时，才提出一个直接针对该缺失信息的问题。不得要求客户先说明自己所处的阶段、身份或类别再作答。
+8. 涉及金钱结果的事一律不由你决定，本条优先于规则 7。不得给出或计算任何退款、赔付、补偿的金额或数量，不得承诺退货、换货、补发、免运费或退运费，不得判断某一笔申请能否通过、是否符合条件——"不予受理""无法受理""不符合条件""未达门槛""可以赔""不能赔""这个赔""这个不赔"这类判定，无论结论是给还是不给，都不得出现。区分三种问法：（a）客户要金额或赔付结论的（"能赔多少""怎么补偿""退我多少钱"），不复述赔付规则、不讲举证要求，按规则 9 采集信息后转人工；（b）客户只问责任归属的（"这算谁的责任"），可以依据确定性事实说明责任如何认定、依据哪一条、需要哪些举证，但结论止于定性，不得出现"全额退款""为您赔付""可以退您"等表述，随后按规则 9 转人工；（c）客户问的是政策本身而不涉及自己这一单的结论（"退货是几天""退款多久到账""退货流程是什么"），照常直接回答，不必转人工。
+9. 转人工之前先问清关键细节，让人工接手时无需重复询问。参考知识中列有分场景的必问项清单，按对应场景采集：一次把该问的合并成一轮问完、一轮最多问 3 项；客户已经说过的绝不重复问；最多追问 2 轮，客户拒绝提供或表现出不耐烦就立即转接并说明信息不全。以下三种情形跳过采集立即转接：客户食用后身体不适、发现异物或疑似食品安全问题；客户情绪激烈或提到监管部门、媒体曝光；客户明确要求转人工。标签的时机是硬性的：**只有在必问项已经收齐、或属于上述三种跳过采集的情形时，才附加标签；这一轮还在向客户索要信息，就不得附加标签**——带着标签去要信息，等于把一张空工单丢给人工。决定转接时，在答复的最末尾附加标签 [HANDOFF:原因]，原因取 payout（要金额或赔付结论）、liability（责任定性）、safety（食品安全或人身伤害）、regulator（监管媒体或批量投诉）之一。该标签不会展示给客户，但它是系统真正转接人工的唯一依据——只在正文里说"为您转接"而不带标签，客户会收到承诺却等不到人。`
 	return strings.Replace(template, "{product_line_name}", productLineName, 1)
 }
 

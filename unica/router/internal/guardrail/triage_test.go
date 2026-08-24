@@ -83,7 +83,10 @@ func TestDefaultTriageModeChangesNothing(t *testing.T) {
 func TestEvaluateWithMode_OnRetiresKeywords(t *testing.T) {
 	e := NewEvaluator()
 	cfg := DefaultGuardrailConfig()
-	const consultative = "退款政策是什么"
+	// 投诉 rather than 退款: 退款 left the default list when intake made it the
+	// assistant's job to answer payout questions, so it no longer demonstrates
+	// the legacy list over-reaching.
+	const consultative = "投诉流程是什么"
 
 	if got := e.EvaluateWithMode(consultative, 0.9, cfg, TriageOff); got.Reason != ReasonKeywordMatch {
 		t.Fatalf("test premise broken: legacy mode no longer intercepts %q (reason %s)", consultative, got.Reason)

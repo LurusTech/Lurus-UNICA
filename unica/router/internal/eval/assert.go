@@ -16,7 +16,8 @@ const (
 	FailForbidden       FailureKind = "forbidden"
 	FailAffirmedDenied  FailureKind = "affirmed_denied"
 	FailMatchedPattern  FailureKind = "matched_forbidden_pattern"
-	FailHandoffMismatch FailureKind = "handoff_mismatch"
+	FailHandoffMismatch  FailureKind = "handoff_mismatch"
+	FailEscalateMismatch FailureKind = "escalate_mismatch"
 )
 
 // Failure is a single unmet assertion.
@@ -46,10 +47,11 @@ func (g *Grounding) Flagged() bool { return g != nil && len(g.Violations) > 0 }
 
 // Outcome is the scored result of one case.
 type Outcome struct {
-	Case     Case      `json:"case"`
-	Answer   string    `json:"answer"`
-	Handoff  bool      `json:"handoff"`
-	Failures []Failure `json:"failures,omitempty"`
+	Case      Case      `json:"case"`
+	Answer    string    `json:"answer"`
+	Handoff   bool      `json:"handoff"`
+	Escalated bool      `json:"escalated"`
+	Failures  []Failure `json:"failures,omitempty"`
 
 	// Grounding is populated only when facts were injected and an ontology was
 	// available to check against.
@@ -69,15 +71,27 @@ func (o Outcome) Errored() bool { return o.Err != "" }
 
 // Evaluate scores one answer against a case's expectations.
 //
-// When the pipeline handed off, there is no customer-facing AI answer, so only
-// the handoff expectation is checked and content assertions are skipped.
-func Evaluate(c Case, answer string, handoff bool) Outcome {
-	out := Outcome{Case: c, Answer: answer, Handoff: handoff}
+// handoff means the answer was withheld; escalated means a human was brought in.
+// Both are true for a suppressing handoff, and only escalated is true when the
+// answer is delivered alongside an escalation.
+//
+// Content assertions are skipped only when the answer was withheld — there is
+// nothing to assert against. They deliberately still run when an answer was
+// delivered and escalated, because that answer is where a forbidden promise
+// ("为您全额退款") would appear, and escalating afterwards does not unsay it.
+func Evaluate(c Case, answer string, handoff, escalated bool) Outcome {
+	out := Outcome{Case: c, Answer: answer, Handoff: handoff, Escalated: escalated}
 
 	if c.Expect.Handoff != nil && *c.Expect.Handoff != handoff {
 		out.Failures = append(out.Failures, Failure{
 			Kind:   FailHandoffMismatch,
 			Detail: fmt.Sprintf("expected handoff=%v, got %v", *c.Expect.Handoff, handoff),
+		})
+	}
+	if c.Expect.Escalate != nil && *c.Expect.Escalate != escalated {
+		out.Failures = append(out.Failures, Failure{
+			Kind:   FailEscalateMismatch,
+			Detail: fmt.Sprintf("expected escalate=%v, got %v", *c.Expect.Escalate, escalated),
 		})
 	}
 	if handoff {
