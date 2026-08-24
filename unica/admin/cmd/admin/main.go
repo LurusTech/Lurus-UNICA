@@ -467,14 +467,15 @@ type tenantRouter struct {
 // closes the subtree: a name absent from it is a 404, not a request that reaches
 // the module and is refused there.
 var aiSettingsPaths = map[string]bool{
-	"":              true,
-	"prompt":        true,
-	"prompt/reset":  true,
-	"threshold":     true,
-	"handoff-rules": true,
-	"dataset/bind":  true,
-	"survey":        true,
-	"test":          true,
+	"":                 true,
+	"prompt":           true,
+	"prompt/reset":     true,
+	"threshold":        true,
+	"handoff-rules":    true,
+	"dataset/bind":     true,
+	"survey":           true,
+	"variables/repair": true,
+	"test":             true,
 }
 
 // factsPaths map the tenant-facing "facts" vocabulary onto the ontology

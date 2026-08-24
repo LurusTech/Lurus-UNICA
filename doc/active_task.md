@@ -1,4 +1,4 @@
-# Active Task: AI 设置页收拢 S1–S3（纯接线，不动界面）
+# Active Task: AI 设置页收拢 S1–S4（纯接线，不动界面）
 
 ## Context
 `doc/plan-ai-settings-consolidation.md` 的前三步。三步全是**接线**：让配置真的可读、真的能校验、
@@ -45,7 +45,45 @@
       改 ontology 配置后秒级观测到 router 行为变化。
 
 ## Current Status
-- [x] S1–S3 完成（2026-08-24）
+- [x] S1–S4 完成（2026-08-24）
+
+### S4 —— 应用变量声明对拍与补齐
+
+`pkg/difyapp` 新增 `DeclaredVariables` / `MissingContextVariables`；
+bridge 的 `GetAppConfig` 把对拍结果一并带出（`AppInfo.Variables`），
+并新增幂等的 `EnsureContextVariables`；
+新接口 `POST /ai-settings/variables/repair`（仅 admin，与 `dataset/bind` 同类：
+修的是被开出来的应用，不是租户的偏好）。
+
+**为什么这个检查有价值**：Dify 会把应用未声明的输入**静默丢弃**——不报错、
+答复里也看不出来。于是"本体没话说"和"本体压根没送到"这两件事，从答复上完全无法区分。
+对拍是唯一能把它们分开的地方。
+
+**构造性验收**（`tmp/verify_s4.py`）：五条线目前全是齐的，被动检查证明不了任何事，
+所以人为造了一个缺失：
+
+```
+1. 开一次性租户 VARTEST
+2. 开户后 complete=True                     ← 开户流程本身没问题
+3. 从 Dify 里删掉 scene_context             ← 模拟手工改过/早期开户的应用
+4. 门户报 complete=False missing=[scene_context]
+5. 修复 added=[scene_context]
+6. 复检 complete=True，declared=7 项
+7. 再修一次 already_complete=True, added=None   ← 幂等
+8. 销户，Dify 应用与 Chatwoot 账户随之清理
+```
+
+另有单测四条（`pkg/difyapp/prompt_variables_test.go`）覆盖：漏报、全齐、
+空表单（全缺）、以及**修复必须是增量的**——运维自己加的变量不能被冲掉、重复执行不产生改动。
+
+五条产线经新接口复查：全部 `complete=True`。
+
+### S4 的定位（与调研报告的判断不同）
+
+调研称这是"本次最大漏项"。**核减**：五条线的七个变量一直是齐的，
+它是**预防性**体检，不是在修一个正在发生的故障。
+相应地，报告称 S4 会让"一批租户第一次真的收到 facts_context"从而金标必然漂移——
+对这五条线不成立，本次金标零影响。
 
 ### 实机验收
 

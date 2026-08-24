@@ -88,6 +88,11 @@ type settingsResponse struct {
 	// a tenant who cannot see which model serves them also cannot notice when
 	// it is not the one everyone else is on.
 	Model *bridge.AppModelInfo `json:"model,omitempty"`
+	// Variables reconciles the inputs the router sends with the ones the app
+	// declares. An undeclared input never reaches the model, so a tenant whose
+	// facts or scene strategy appear to do nothing may simply not be receiving
+	// them — this is the only place that distinction is visible.
+	Variables *bridge.AppVariablesInfo `json:"variables,omitempty"`
 }
 
 // guardrailResponse is what a guardrail write answers with: the block as it now
@@ -164,6 +169,7 @@ const thresholdRangeMessage = "threshold must be greater than 0 and at most 1 (t
 //	PUT    ai-settings/threshold      confidence threshold
 //	PUT    ai-settings/handoff-rules  handoff keywords and blocked topics
 //	PUT    ai-settings/survey         satisfaction survey switch and thresholds
+//	POST   ai-settings/variables/repair  declare the router inputs the app is missing
 //	POST   ai-settings/dataset/bind   re-bind the knowledge dataset
 //	POST   ai-settings/test           send a test message to the app
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
@@ -243,6 +249,17 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		errorJSON(w, http.StatusNotFound, "unknown dataset action")
+	case "variables":
+		// POST .../variables/repair declares the router inputs an app is missing.
+		if len(rest) > 1 && rest[1] == "repair" {
+			if r.Method != http.MethodPost {
+				errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			h.repairVariables(w, r, pl)
+			return
+		}
+		errorJSON(w, http.StatusNotFound, "unknown variables action")
 	case "survey":
 		if r.Method != http.MethodPut {
 			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -272,6 +289,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 
 	var systemPrompt string
 	var model *bridge.AppModelInfo
+	var variables *bridge.AppVariablesInfo
 	switch {
 	case pl.DifyAgentID == nil || *pl.DifyAgentID == "":
 		systemPrompt = "(no Dify app configured for this product line)"
@@ -284,6 +302,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		} else {
 			systemPrompt = appInfo.SystemPrompt
 			model = appInfo.Model
+			variables = appInfo.Variables
 		}
 	}
 
@@ -294,6 +313,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		guardrailConfig: loadGuardrail(raw),
 		Survey:          survey.Load(raw),
 		Model:           model,
+		Variables:       variables,
 	})
 }
 
@@ -449,6 +469,39 @@ func (h *Handler) updateHandoffRules(w http.ResponseWriter, r *http.Request, pl 
 		if req.HoldingMessage != nil {
 			cfg.HoldingMessage = *req.HoldingMessage
 		}
+	})
+}
+
+// repairVariables declares the router's inputs on an app that is missing them.
+//
+// Administrator only, like the dataset repair beside it: this fixes a
+// provisioned app rather than expressing a tenant's preference, and a tenant
+// has no way to tell whether the fix is warranted.
+//
+// It is safe to run on an app that needs nothing — the response then says
+// nothing was added, which is also how an operator confirms the app is sound.
+func (h *Handler) repairVariables(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	claims := auth.GetClaims(r.Context())
+	if claims != nil && !rbac.IsAdmin(claims.Role) {
+		errorJSON(w, http.StatusForbidden, "variable repair requires the administrator role")
+		return
+	}
+	if pl.DifyAgentID == nil || *pl.DifyAgentID == "" {
+		errorJSON(w, http.StatusBadRequest, "no Dify app configured for this product line")
+		return
+	}
+
+	added, err := h.dify.EnsureContextVariables(r.Context(), *pl.DifyAgentID, "")
+	if err != nil {
+		log.Printf("[ai-settings] declare variables error: %v", err)
+		errorJSON(w, http.StatusBadGateway, "failed to declare the missing variables in Dify: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"product_line_id":  pl.ID,
+		"added":            added,
+		"already_complete": len(added) == 0,
 	})
 }
 

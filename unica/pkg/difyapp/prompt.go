@@ -150,3 +150,48 @@ func WithContextVariables(existing interface{}) []interface{} {
 	}
 	return form
 }
+
+// DeclaredVariables returns the variable names an app's input form declares.
+//
+// Reading the form is the only way to know whether the router's inputs reach
+// the model at all: Dify drops an input the app has not declared, without an
+// error and without a trace in the answer, so a prompt that reads
+// {{facts_context}} on an app missing that declaration renders it empty
+// forever. Nothing else in the pipeline can tell that apart from an ontology
+// that simply had nothing to say.
+func DeclaredVariables(existing interface{}) []string {
+	form, _ := existing.([]interface{})
+	var names []string
+	for _, item := range form {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, spec := range entry {
+			field, ok := spec.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if name, ok := field["variable"].(string); ok {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+// MissingContextVariables returns the context variables an app's input form
+// does not declare, in the order the platform declares them.
+func MissingContextVariables(existing interface{}) []string {
+	declared := make(map[string]bool)
+	for _, name := range DeclaredVariables(existing) {
+		declared[name] = true
+	}
+	var missing []string
+	for _, v := range ContextVariables {
+		if !declared[v.Name] {
+			missing = append(missing, v.Name)
+		}
+	}
+	return missing
+}

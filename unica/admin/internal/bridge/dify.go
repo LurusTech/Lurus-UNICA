@@ -81,6 +81,21 @@ type AppInfo struct {
 	// which is why five product lines could sit on two different models with
 	// nothing in any interface saying so.
 	Model *AppModelInfo `json:"model,omitempty"`
+	// Variables reports whether the app declares the inputs the router sends.
+	// An undeclared input is dropped by Dify without an error, so this is the
+	// difference between "the ontology had nothing to say" and "the ontology was
+	// never delivered" — indistinguishable from the answer alone.
+	Variables *AppVariablesInfo `json:"variables,omitempty"`
+}
+
+// AppVariablesInfo is the reconciliation between the inputs the router sends
+// and the ones the app has declared.
+type AppVariablesInfo struct {
+	Declared []string `json:"declared"`
+	Missing  []string `json:"missing"`
+	// Complete is false when any context variable the router sends is not
+	// declared. Those inputs are being discarded before the model sees them.
+	Complete bool `json:"complete"`
 }
 
 // AppModelInfo is the model an app is configured with, flattened for display.
@@ -475,9 +490,74 @@ func (b *DifyBridge) GetAppConfig(ctx context.Context, appID string) (*AppInfo, 
 		if model, ok := mc["model"].(map[string]interface{}); ok {
 			info.Model = flattenModel(model)
 		}
+		missing := difyapp.MissingContextVariables(mc["user_input_form"])
+		info.Variables = &AppVariablesInfo{
+			Declared: difyapp.DeclaredVariables(mc["user_input_form"]),
+			Missing:  missing,
+			Complete: len(missing) == 0,
+		}
 	}
 
 	return info, nil
+}
+
+// EnsureContextVariables declares any router input the app is missing, and
+// reports which ones it had to add.
+//
+// Additive and idempotent: an operator's own variables are preserved, and an
+// app that already declares everything is left untouched rather than rewritten
+// — a wholesale rewrite of the form is how such additions get lost.
+//
+// Like every other write to this endpoint it reads the whole model_config and
+// writes it back, because Dify has no partial update for it.
+func (b *DifyBridge) EnsureContextVariables(ctx context.Context, appID, token string) ([]string, error) {
+	if appID == "" {
+		return nil, fmt.Errorf("app id is empty")
+	}
+	if token == "" {
+		var err error
+		if token, err = b.consoleToken(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	body, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/apps/"+appID, nil, token)
+	if err != nil {
+		return nil, fmt.Errorf("read app config: %w", err)
+	}
+	var envelope struct {
+		ModelConfig map[string]interface{} `json:"model_config"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("unmarshal app config: %w", err)
+	}
+	cfg := envelope.ModelConfig
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
+
+	missing := difyapp.MissingContextVariables(cfg["user_input_form"])
+	if len(missing) == 0 {
+		return nil, nil
+	}
+	cfg["user_input_form"] = difyapp.WithContextVariables(cfg["user_input_form"])
+
+	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPost, "/apps/"+appID+"/model-config", cfg, token); err != nil {
+		return nil, fmt.Errorf("write model config: %w", err)
+	}
+
+	// Read back rather than trust the status code, for the reason the retrieval
+	// write does: this endpoint answers an ignored write with the same 200.
+	verify, err := b.GetAppConfig(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("verify declared variables: %w", err)
+	}
+	if verify.Variables == nil || !verify.Variables.Complete {
+		return nil, fmt.Errorf("app %s still does not declare %v after the write",
+			appID, verify.Variables.Missing)
+	}
+	log.Printf("[dify-bridge] app %s now declares %v", appID, missing)
+	return missing, nil
 }
 
 // flattenModel renders Dify's nested model object for display, and records
