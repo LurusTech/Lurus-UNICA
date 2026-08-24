@@ -158,6 +158,50 @@
   .pager .spacer { flex: 1; }
 
   /* Platform operations cards */
+
+  /* ---- Platform settings (read-only) --------------------------------------
+     Grouped by where a value comes from, because that decides how it changes
+     and who can change it. A flat list would read as a settings form whose
+     save button someone forgot. */
+  .pf-group { margin-bottom: 22px; }
+  .pf-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .pf-head h4 { margin: 0; font-size: 0.95rem; }
+  .pf-src {
+    font-size: 0.72rem; padding: 2px 8px; border-radius: 999px;
+    color: var(--text-muted); border: 1px solid var(--border); white-space: nowrap;
+  }
+  .pf-note { margin: 6px 0 0; font-size: 0.8rem; color: var(--text-muted); line-height: 1.6; }
+  .pf-rows { margin: 10px 0 0; }
+  .pf-row {
+    display: grid; grid-template-columns: 220px 1fr; gap: 14px;
+    padding: 6px 0; font-size: 0.85rem; align-items: baseline;
+  }
+  .pf-row + .pf-row { border-top: 1px dashed color-mix(in srgb, var(--border) 60%, transparent); }
+  .pf-key { color: var(--text-muted); }
+  .pf-val { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); word-break: break-word; }
+  .pf-val .muted { font-family: inherit; color: var(--text-muted); }
+  .pf-text {
+    margin: 10px 0 0; padding: 12px 14px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--surface-2, rgba(0,0,0,0.02));
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.78rem; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
+    max-height: 420px; overflow: auto;
+  }
+  .pf-details { margin-top: 10px; }
+  .pf-details > summary {
+    cursor: pointer; font-size: 0.85rem; color: var(--text-muted);
+    padding: 4px 0; user-select: none;
+  }
+  .pf-details > summary:hover { color: var(--text); }
+  .pf-warn {
+    margin: 10px 0 0; padding: 10px 14px; border-left: 3px solid var(--warn, #d08700);
+    background: color-mix(in srgb, var(--warn, #d08700) 8%, transparent);
+    font-size: 0.82rem; line-height: 1.6; border-radius: 0 8px 8px 0;
+  }
+
   .ops-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 28px; }
   .ops-card {
     background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
@@ -369,6 +413,19 @@
       </div>
     </div>
 
+    <div class="panel-head" style="margin-top:32px">
+      <h2>平台设定（只读）</h2>
+      <p>
+        下面每一项都决定全平台每一条回答，而且都<b>不是本页能改的</b>：
+        一半是 router 的环境变量（改完要重启 router），一半是编译进程序的常量（改完要发版）。
+        列在这里，是为了不必登服务器、也不必翻代码，就能回答"现在到底是什么设定"。
+        凭据一律不显示——不显示值，也不显示掩码。
+      </p>
+    </div>
+    <div id="platform-settings">
+      <p class="pf-note">加载中…</p>
+    </div>
+
     <div class="toolbar">
       <div class="filter">
         <label for="audit-tenant">租户</label>
@@ -545,7 +602,8 @@
     onboardSummary: "",
     auditOffset: 0,
     auditTotal: 0,
-    auditLoaded: false
+    auditLoaded: false,
+    platformLoaded: false
   };
 
   var els = {
@@ -710,8 +768,192 @@
       // The trail is a query, not a subscription: it loads when first opened
       // and then only on demand.
       if (btn.dataset.panel === "panel-ops" && !state.auditLoaded) loadAuditLogs(0);
+      if (btn.dataset.panel === "panel-ops" && !state.platformLoaded) {
+        state.platformLoaded = true;
+        loadPlatformSettings();
+      }
     });
   });
+
+
+  // ---------- Platform settings (read-only) ----------
+  //
+  // Grouped by source rather than by topic. A value's source is what decides
+  // how it changes — restart the router, or ship a release — and an operator
+  // reading a flat list would reasonably assume there is a form behind it.
+  var SWITCH_LABELS = [
+    ["intent_triage", "意图分诊", "on 时整份转人工关键词表停用，改由分诊模型判定"],
+    ["scene_mode", "商业阶段策略", "off 时提示词里的应答策略恒为空"],
+    ["ontology_enabled", "本体总闸", "关闭时所有租户的确定性事实注入都不生效"],
+    ["idle_timeout", "会话静默超时", "到时自动关闭会话，满意度调研就在那一刻发出"],
+    ["dify_conv_ttl", "多轮上下文保留", "超过这个时长，客户再来时 AI 不记得之前说过什么"],
+    ["route_cache_ttl", "路由缓存", "租户改了设置后，最坏要等这么久才生效（控制台会主动失效）"],
+    ["ontology_cache_ttl", "本体缓存", "本体发布后最坏要等这么久才生效"],
+    ["acest_enabled", "ACEST 集成", ""],
+    ["workers", "并发消费者", ""]
+  ];
+
+  function loadPlatformSettings() {
+    var host = document.getElementById("platform-settings");
+    return api("/api/v1/platform/settings")
+      .then(function (data) { renderPlatformSettings(host, data); })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        host.textContent = "";
+        var p = document.createElement("p");
+        p.className = "pf-warn";
+        p.textContent = "读取平台设定失败：" + err.message;
+        host.appendChild(p);
+      });
+  }
+
+  function pfGroup(host, title, source, note) {
+    var group = document.createElement("div");
+    group.className = "pf-group";
+    var head = document.createElement("div");
+    head.className = "pf-head";
+    var h = document.createElement("h4");
+    h.textContent = title;
+    var src = document.createElement("span");
+    src.className = "pf-src";
+    src.textContent = source;
+    head.appendChild(h);
+    head.appendChild(src);
+    group.appendChild(head);
+    if (note) {
+      var n = document.createElement("p");
+      n.className = "pf-note";
+      n.textContent = note;
+      group.appendChild(n);
+    }
+    host.appendChild(group);
+    return group;
+  }
+
+  function pfRow(group, key, value, hint) {
+    var row = document.createElement("div");
+    row.className = "pf-row";
+    var k = document.createElement("span");
+    k.className = "pf-key";
+    k.textContent = key;
+    var v = document.createElement("span");
+    v.className = "pf-val";
+    v.textContent = value;
+    if (hint) {
+      var m = document.createElement("span");
+      m.className = "muted";
+      m.textContent = "　" + hint;
+      v.appendChild(m);
+    }
+    row.appendChild(k);
+    row.appendChild(v);
+    group.appendChild(row);
+  }
+
+  function pfText(group, summary, text) {
+    var d = document.createElement("details");
+    d.className = "pf-details";
+    var sm = document.createElement("summary");
+    sm.textContent = summary;
+    var pre = document.createElement("div");
+    pre.className = "pf-text";
+    pre.textContent = text;
+    d.appendChild(sm);
+    d.appendChild(pre);
+    group.appendChild(d);
+  }
+
+  function renderPlatformSettings(host, data) {
+    host.textContent = "";
+    data = data || {};
+    var runtime = data.runtime || {};
+    var compiled = data.compiled || {};
+
+    // 1. What the router is running with.
+    var g = pfGroup(host, "运行开关", "router 环境变量 · 改完需重启 router",
+      "这些值只有 router 自己知道。控制台是向它问来的，不是读自己的环境变量——" +
+      "那样会理直气壮地显示相反的值。");
+    if (!runtime.available) {
+      var warn = document.createElement("p");
+      warn.className = "pf-warn";
+      warn.textContent = "读不到 router 的运行开关（" + (runtime.reason || "原因未知") +
+        "）。这里不会用默认值顶替：一个看起来合理的错值，会被当成消息真正在按的设定。";
+      g.appendChild(warn);
+    } else {
+      var sw = runtime.switches || {};
+      SWITCH_LABELS.forEach(function (item) {
+        if (!(item[0] in sw)) return;
+        pfRow(g, item[1] + "（" + item[0] + "）", String(sw[item[0]]), item[2]);
+      });
+    }
+
+    // 2. Values a tenant inherits when it has configured nothing.
+    var d = pfGroup(host, "默认取值", "编译期常量 · 改完需发版",
+      "租户没配过的时候用的就是这些。租户改了自己的，不影响这里。");
+    var gr = compiled.guardrail_defaults || {};
+    pfRow(d, "置信度阈值", String(gr.confidence_threshold));
+    pfRow(d, "转人工关键词", (gr.handoff_keywords || []).join("、"));
+    pfRow(d, "屏蔽话题", (gr.blocked_topics || []).length ? gr.blocked_topics.join("、") : "（空）");
+    pfRow(d, "等待人工时的话术", gr.holding_message || "");
+    var sv = compiled.survey_defaults || {};
+    pfRow(d, "满意度调研", sv.enabled ? "默认开启" : "默认关闭",
+      "最少 " + sv.min_customer_messages + " 条客户消息，等待 " + sv.timeout_hours + " 小时");
+
+    // 3. The model. One for the whole platform, on purpose.
+    var m = compiled.model || {};
+    var mg = pfGroup(host, "生效模型", "编译期常量 · 改完需发版",
+      "全平台统一一个模型，租户不可选。统一是为了让各产线的表现可比——" +
+      "换个模型，所有金标与阈值都要重跑。");
+    pfRow(mg, "模型", m.name || "");
+    pfRow(mg, "供应商", m.provider || "");
+    pfRow(mg, "temperature / max_tokens", String(m.temperature) + " / " + String(m.max_tokens));
+
+    // 4. What bounds retrieval before any tenant setting applies.
+    var k = compiled.knowledge || {};
+    var kg = pfGroup(host, "知识库检索", "编译期常量 · 改完需发版",
+      "文档怎么切、怎么搜，决定了检索最多能返回什么。切分规则只对此后上传的文档生效——" +
+      "存量文档不会重切。");
+    pfRow(kg, "索引方式", k.indexing_technique || "");
+    pfRow(kg, "检索方式", k.search_method || "", "与索引方式必须匹配，否则检索恒空且不报错");
+    pfRow(kg, "召回条数 top_k", String(k.top_k));
+    var seg = ((k.process_rule || {}).rules || {}).segmentation || {};
+    pfRow(kg, "切分规则", "按 " + JSON.stringify(seg.separator || "") + " 分段，每段上限 " +
+      (seg.max_tokens || "-") + " tokens");
+
+    // 5. The prompt every line starts from.
+    var pg = pfGroup(host, "平台提示词模板", "编译期常量 · 改完需发版",
+      "每条产线开户时拿到的就是这份，之后可以自己改。改了模板不会自动流向存量租户——" +
+      "他们的 AI 设置页会显示「平台模板已更新」，由他们自己点更新。");
+    pfText(pg, "展开模板全文（" + (compiled.prompt_template || "").length + " 字）",
+      compiled.prompt_template || "");
+    var reqs = compiled.prompt_requirements || [];
+    if (reqs.length) {
+      var rd = document.createElement("details");
+      rd.className = "pf-details";
+      var rs = document.createElement("summary");
+      rs.textContent = "提示词契约（" + reqs.length + " 项，保存时硬校验）";
+      rd.appendChild(rs);
+      var box = document.createElement("div");
+      box.className = "pf-rows";
+      reqs.forEach(function (req) { pfRow(box, req.label + "　" + req.token, req.breaks); });
+      rd.appendChild(box);
+      pg.appendChild(rd);
+    }
+
+    // 6. The strategy texts, which are what SCENE_MODE actually injects.
+    var sg = pfGroup(host, "应答策略正文", "编译期常量 · 改完需发版",
+      "商业阶段判定出来之后，注入提示词的就是下面这几段。它们只改表达方式，不改可陈述的内容。" +
+      "词表是按零售调的，非零售租户开启后效果有限。");
+    (compiled.scene_strategies || []).forEach(function (item) {
+      pfText(sg, "展开「" + item.stage + "」策略", item.text);
+    });
+
+    // 7. Credentials: named, never shown.
+    var cg = pfGroup(host, "凭据", "在 Dify 控制台管理 · 本页不显示",
+      "模型供应商 API Key、Dify 控制台账号、各租户的 Dify API Key 与 Chatwoot Token " +
+      "都不在本页显示，也不显示掩码——掩码同样会出现在每一张截图里。" +
+      "需要改动请到上面的 Dify 控制台。");
+  }
 
   // ---------- Tenants ----------
   function loadTenants() {

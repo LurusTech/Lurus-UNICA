@@ -1,4 +1,4 @@
-# Active Task: AI 设置页收拢 S1–S9
+# Active Task: AI 设置页收拢 S1–S10
 
 ## Context
 `doc/plan-ai-settings-consolidation.md` 的前三步。三步全是**接线**：让配置真的可读、真的能校验、
@@ -27,7 +27,7 @@
       （triage / scene / ontology 开关与缓存 TTL / route cache TTL / idle timeout / ACEST 是否启用）。
       **只出开关，不出任何凭据与连接串**——这个端点和 /healthz、/metrics 一样无鉴权。
 - [x] 2. admin 侧新增 router 内网地址配置与取数客户端（短缓存），
-      并暴露 `GET /api/v1/platform/runtime`（仅 admin）。
+      并暴露 `GET /api/v1/platform/runtime`（仅 admin；S10 起同一处理器也挂在 `/platform/settings`）。
       完成标志：admin 读到的值与 router 容器里的 env 一致；改 env 重启 router 后 admin 读到新值。
 - [x] 3. bridge 抽出"读数据集当前 retrieval_model + indexing_technique"的方法。
 - [x] 4. `SetDatasetRetrieval` 写入前比对索引技术：不匹配则**拒写**并报"请先重建索引"，
@@ -45,7 +45,52 @@
       改 ontology 配置后秒级观测到 router 行为变化。
 
 ## Current Status
-- [x] S1–S9 完成（2026-08-24）
+- [x] S1–S10 完成（2026-08-24）
+
+### S10 —— 平台设定只读卡（admin.html · 平台运维）
+
+**按来源分组，不按主题分组。** 一个值的来源决定了它怎么改、谁能改：
+router 的环境变量要重启 router，编译期常量要发版，凭据压根不该出现在网页上。
+把它们混成一张平铺的表，读起来就像一个"忘了放保存按钮"的设置页。所以每组都带着来源标签：
+
+| 组 | 来源标签 | 内容 |
+|---|---|---|
+| 运行开关 | router 环境变量 · 改完需重启 router | triage / scene / 本体总闸 / 静默超时 / 多轮上下文 / 两个缓存 TTL / ACEST / worker 数 |
+| 默认取值 | 编译期常量 · 改完需发版 | 阈值、关键词、屏蔽话题、等待话术、调研三项 |
+| 生效模型 | 编译期常量 · 改完需发版 | 全平台一个模型，含 temperature 与 max_tokens |
+| 知识库检索 | 编译期常量 · 改完需发版 | 索引方式、检索方式、top_k、切分规则 |
+| 平台提示词模板 | 编译期常量 · 改完需发版 | 模板全文（带 `{product_line_name}` 占位符）+ 六项契约及其失效后果 |
+| 应答策略正文 | 编译期常量 · 改完需发版 | presales / postsales / generic 三段全文 |
+| 凭据 | 在 Dify 控制台管理 · 本页不显示 | 只说在哪管，**不显示值也不显示掩码**——掩码同样会进每一张截图 |
+
+每一行还带一句"它一旦不对会怎样"，而不只是一个数字：
+`route_cache_ttl` 写的是"租户改了设置后最坏要等这么久才生效"，
+`dify_conv_ttl` 写的是"超过这个时长，客户再来时 AI 不记得之前说过什么"。
+
+**顺带补了 router 的 `/configz`**：`dify_conv_ttl`（多轮上下文 24h）此前只存在于
+`router.go` 的一行常量里，"AI 还记得多久"这个问题只能靠读代码回答。
+
+**模板用占位符展示，不代入任何租户名**——这一份是所有产线共用的文本，
+填上某一家的名字就成了"某条产线的提示词"。
+
+**验收**（`/api/v1/platform/settings`）：
+
+```
+运行开关     九项与 router /configz 逐项一致
+模板         1513 字，含 {product_line_name}
+契约         6 项；策略 3 段；模型 deepseek-v4-flash / 4096
+知识库       high_quality · semantic_search · top_k 6 · 按 "\n\n" 分段上限 1000
+凭据检查     响应里不含 api_key / _token" / password / secret / postgres:// / redis://（单测同款断言）
+租户 user    403
+router 不可达时  运行开关一组显示"读不到"并给出原因，其余六组照常——单测覆盖
+```
+
+**有一项按计划外的判断没做：intent 的六张词表没有放。**
+它们在 `router/internal/intent` 里，admin 进程 import 不到。要放进来只有两条路：
+塞进无鉴权的 `/configz`（与我两步前给那个端点定的"只出开关、不出别的"直接冲突），
+或者把词表搬到 `pkg`（那会把词表和用它的判定逻辑拆开，内聚更差）。
+当前 `INTENT_TRIAGE=shadow`，这几张表并不决定任何事，所以登记为待办，不硬凑。
+
 
 ### S9 —— 平台模板漂移：先验证前提，再决定判据
 
@@ -267,7 +312,7 @@ model-config 写入里声明了这些变量**。整个改动是多余的，而�
 - `runtime`：**收窄后的**平台开关，只出 `ontology_enabled`/`intent_triage`/`scene_mode`
   三个行为开关。判据是"租户能用这条信息解释自己看到的行为"；
   TTL、worker 数、ACEST 端点解释不了租户能操作的任何事，不在此列。
-  完整的一套仍只在 admin 专属的 `/api/v1/platform/runtime`。
+  完整的一套仍只在 admin 专属的 `/api/v1/platform/settings`。
 
 ### 过程中修掉的一个"假按钮"
 

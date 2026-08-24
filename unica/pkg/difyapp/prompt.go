@@ -166,6 +166,8 @@ func MissingPromptRequirements(prompt string) []PromptRequirement {
 // The product line name is substituted here rather than passed as a Dify
 // variable: one app serves one product line, so the name is a constant of the
 // app, and the router's product_line input carries the ID rather than the name.
+const productLineNamePlaceholder = "{product_line_name}"
+
 func DefaultSystemPrompt(productLineName string) string {
 	const template = `你是{product_line_name}的在线客服。用简体中文、简洁专业地回答客户问题。
 
@@ -190,7 +192,18 @@ func DefaultSystemPrompt(productLineName string) string {
 7. 在以上约束内能回答的问题必须直接回答，先给结论再给依据。客户所指的对象在确定性事实或参考知识中能唯一确定时，直接作答；匹配到多个时，简要列出这些候选请客户选择；只有在无法定位所指、且缺失信息会改变答案时，才提出一个直接针对该缺失信息的问题。不得要求客户先说明自己所处的阶段、身份或类别再作答。
 8. 涉及金钱结果的事一律不由你决定，本条优先于规则 7。不得给出或计算任何退款、赔付、补偿的金额或数量，不得承诺退货、换货、补发、免运费或退运费，不得判断某一笔申请能否通过、是否符合条件——"不予受理""无法受理""不符合条件""未达门槛""可以赔""不能赔""这个赔""这个不赔"这类判定，无论结论是给还是不给，都不得出现。区分三种问法：（a）客户要金额或赔付结论的（"能赔多少""怎么补偿""退我多少钱"），不复述赔付规则、不讲举证要求，按规则 9 采集信息后转人工；（b）客户只问责任归属的（"这算谁的责任"），可以依据确定性事实说明责任如何认定、依据哪一条、需要哪些举证，但结论止于定性，不得出现"全额退款""为您赔付""可以退您"等表述，随后按规则 9 转人工；（c）客户问的是政策本身而不涉及自己这一单的结论（"退货是几天""退款多久到账""退货流程是什么"），照常直接回答，不必转人工。
 9. 转人工之前先问清关键细节，让人工接手时无需重复询问。参考知识中列有分场景的必问项清单，按对应场景采集：一次把该问的合并成一轮问完、一轮最多问 3 项；客户已经说过的绝不重复问；最多追问 2 轮，客户拒绝提供或表现出不耐烦就立即转接并说明信息不全。以下三种情形跳过采集立即转接：客户食用后身体不适、发现异物或疑似食品安全问题；客户情绪激烈或提到监管部门、媒体曝光；客户明确要求转人工。标签的时机是硬性的：**只有在必问项已经收齐、或属于上述三种跳过采集的情形时，才附加标签；这一轮还在向客户索要信息，就不得附加标签**——带着标签去要信息，等于把一张空工单丢给人工。决定转接时，在答复的最末尾附加标签 [HANDOFF:原因]，原因取 payout（要金额或赔付结论）、liability（责任定性）、safety（食品安全或人身伤害）、regulator（监管媒体或批量投诉）之一。该标签不会展示给客户，但它是系统真正转接人工的唯一依据——只在正文里说"为您转接"而不带标签，客户会收到承诺却等不到人。`
-	return strings.Replace(template, "{product_line_name}", productLineName, 1)
+	return strings.Replace(template, productLineNamePlaceholder, productLineName, 1)
+}
+
+// PromptTemplate returns the platform template with its product-line
+// placeholder still in place.
+//
+// For display rather than for writing: a console showing "the platform's
+// prompt" should show the text that is the same for every line, with the one
+// varying part visible as a placeholder rather than filled in with an arbitrary
+// tenant's name.
+func PromptTemplate() string {
+	return DefaultSystemPrompt(productLineNamePlaceholder)
 }
 
 // WithContextVariables returns the app's input form with any missing context

@@ -179,6 +179,11 @@ func main() {
 			"idle_timeout":       cfg.idleTimeout.String(),
 			"acest_enabled":      cfg.acestURL != "",
 			"workers":            cfg.workers,
+			// How long a conversation's Dify thread is remembered, i.e. how far
+			// back the assistant can still see. A compile-time constant rather
+			// than an env var, but it is behaviour an operator asks about in
+			// the same breath as the rest, and this is where they look.
+			"dify_conv_ttl": routing.DifyConvTTL.String(),
 		}); err != nil {
 			log.Printf("[router] configz encode error: %v", err)
 		}

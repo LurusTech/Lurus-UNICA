@@ -473,8 +473,11 @@ func (r *Router) processMessage(ctx context.Context, entry redis.XMessage, worke
 // difyConvKeyPrefix is the Redis key prefix for tracking Dify conversation IDs.
 const difyConvKeyPrefix = "dify_conv:"
 
-// difyConvTTL is the TTL for Dify conversation tracking keys in Redis.
-const difyConvTTL = 24 * time.Hour
+// DifyConvTTL is the TTL for Dify conversation tracking keys in Redis, and so
+// how far back a returning customer's assistant can still see. Exported because
+// the console reports it: it is the answer to "AI 还记得多久以前的话", which is
+// otherwise only discoverable by reading this line.
+const DifyConvTTL = 24 * time.Hour
 
 // difyConvSession holds the Dify conversation tracking data stored in Redis.
 // Stage rides along so the conversation's commercial phase expires together
@@ -517,7 +520,7 @@ func (r *Router) setDifyConvID(ctx context.Context, convID string, difyConvID st
 		log.Printf("[router] failed to marshal dify conv session: %v", err)
 		return
 	}
-	if err := r.rdb.Set(ctx, key, string(data), difyConvTTL).Err(); err != nil {
+	if err := r.rdb.Set(ctx, key, string(data), DifyConvTTL).Err(); err != nil {
 		log.Printf("[router] failed to store dify conv ID for %s: %v", convID, err)
 	}
 }

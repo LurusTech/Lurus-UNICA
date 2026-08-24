@@ -24,7 +24,7 @@ import (
 	"github.com/kefu/unica/admin/internal/handler"
 	"github.com/kefu/unica/admin/internal/identity"
 	_ "github.com/kefu/unica/admin/internal/metrics" // register Prometheus metrics
-	"github.com/kefu/unica/admin/internal/rbac"
+	"github.com/kefu/unica/admin/internal/platform"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/admin/internal/routecache"
 	"github.com/kefu/unica/admin/internal/tenant/aisettings"
@@ -383,36 +383,15 @@ func main() {
 	// tenant's user to its own rows.
 	mux.Handle("/api/v1/audit-logs", authMW(http.HandlerFunc(auditLogHandler.HandleAuditLogs)))
 
-	// The router's behaviour switches, read from the router itself. Administrator
-	// only: they are platform state, and a tenant that could see them would be
-	// shown values it has no way to act on.
-	mux.Handle("/api/v1/platform/runtime", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			handler.ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		claims := auth.GetClaims(r.Context())
-		if claims == nil || !rbac.IsAdmin(claims.Role) {
-			handler.ErrorJSON(w, http.StatusForbidden, "administrator role required")
-			return
-		}
-		switches, err := routerBridge.Switches(r.Context())
-		if err != nil {
-			// Reported as unavailable rather than substituted with defaults: a
-			// plausible wrong value would be read as the switch messages are
-			// actually routed by.
-			log.Printf("[platform] runtime switches unavailable: %v", err)
-			handler.JSON(w, http.StatusOK, map[string]interface{}{
-				"available": false,
-				"reason":    err.Error(),
-			})
-			return
-		}
-		handler.JSON(w, http.StatusOK, map[string]interface{}{
-			"available": true,
-			"switches":  switches,
-		})
-	})))
+	// What this deployment is set to, for an operator who would otherwise need a
+	// shell on the router host. Read-only by nature: half of it is the router's
+	// environment and the other half is compiled in, so neither can be written
+	// through an API at all.
+	platformHandler := platform.NewHandler(routerBridge)
+	mux.Handle("/api/v1/platform/settings", authMW(http.HandlerFunc(platformHandler.Handle)))
+
+	// The previous path kept, since it is what the runbook names.
+	mux.Handle("/api/v1/platform/runtime", authMW(http.HandlerFunc(platformHandler.Handle)))
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

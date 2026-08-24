@@ -270,6 +270,11 @@ type uploadDocumentResponse struct {
 // still divides, and segments after the first still carry no title. Retrieval
 // that can match on meaning rather than extracted keywords is what actually
 // fixes this — see the embedding-model note on NewHandler.
+// DefaultProcessRule exposes the rule for display. How documents are split
+// decides what retrieval can ever return, and nothing else in the console says
+// what the split is.
+func DefaultProcessRule() map[string]interface{} { return defaultProcessRule }
+
 var defaultProcessRule = map[string]interface{}{
 	"mode": "custom",
 	"rules": map[string]interface{}{

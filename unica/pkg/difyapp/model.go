@@ -21,12 +21,14 @@ package difyapp
 // an empty reply was forwarded to customers as a normal answer. Liability
 // questions needed up to 2021 completion tokens, so 2048 would still clip the
 // longest of them.
+// The json tags are for the console, which reports the model in force: it is
+// the one thing on that page nobody can change and everybody needs to know.
 type ModelSpec struct {
-	Provider    string
-	Name        string
-	Mode        string
-	Temperature float64
-	MaxTokens   int
+	Provider    string  `json:"provider"`
+	Name        string  `json:"name"`
+	Mode        string  `json:"mode"`
+	Temperature float64 `json:"temperature"`
+	MaxTokens   int     `json:"max_tokens"`
 }
 
 // PlatformModel returns the model every provisioned app is pinned to.

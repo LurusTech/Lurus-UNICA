@@ -24,6 +24,11 @@ type RuntimeSwitches struct {
 	IdleTimeout      string `json:"idle_timeout"`
 	ACESTEnabled     bool   `json:"acest_enabled"`
 	Workers          int    `json:"workers"`
+	// DifyConvTTL is how far back a returning customer's assistant can still
+	// see. A compile-time constant on the router's side, but it reaches here
+	// the same way the rest do, and an operator asks about it in the same
+	// breath.
+	DifyConvTTL string `json:"dify_conv_ttl"`
 }
 
 // RouterBridge reads the router's runtime switches.

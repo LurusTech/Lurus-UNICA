@@ -53,6 +53,11 @@ const genericStrategy = `【应答策略·通用】
 - 客户处于哪个阶段是内部判断，不是客户的义务：不要让客户先说明自己处于购买前还是购买后、属于哪类身份，再回答他的问题。
 ` + strategyBoundary
 
+// Stages are the commercial stages StrategyFor distinguishes. Exported so a
+// console can enumerate the strategies rather than hardcode the three names it
+// happens to know about today.
+func Stages() []string { return []string{"presales", "postsales", "generic"} }
+
 // StrategyFor returns the response-strategy block for a commercial stage.
 // Unrecognised or empty stages get the generic strategy, so the router can
 // pass its stage value straight through without mapping.
