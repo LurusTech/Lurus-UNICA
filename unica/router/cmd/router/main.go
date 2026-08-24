@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -16,8 +17,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/experience"
 	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/handoff"
@@ -157,6 +158,31 @@ func main() {
 		w.Write([]byte(`{"status":"healthy"}`))
 	})
 	mux.Handle("/metrics", promhttp.Handler())
+
+	// /configz reports the behaviour switches this process is actually running
+	// with. It exists because they are decided by this process's environment and
+	// nothing else can see them: the admin service has none of these variables,
+	// so a console that tried to display them by reading its own environment
+	// would confidently show the opposite of what is in force.
+	//
+	// Switches only. This endpoint is unauthenticated like /healthz and
+	// /metrics, so no connection string, token or key belongs in it — the ACEST
+	// integration is reported as on or off, never by its URL or credential.
+	mux.HandleFunc("/configz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
+			"intent_triage":      string(cfg.triageMode),
+			"scene_mode":         string(cfg.sceneMode),
+			"ontology_enabled":   cfg.ontologyEnabled,
+			"ontology_cache_ttl": cfg.ontologyCacheTTL.String(),
+			"route_cache_ttl":    cfg.routeCacheTTL.String(),
+			"idle_timeout":       cfg.idleTimeout.String(),
+			"acest_enabled":      cfg.acestURL != "",
+			"workers":            cfg.workers,
+		}); err != nil {
+			log.Printf("[router] configz encode error: %v", err)
+		}
+	})
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.port,

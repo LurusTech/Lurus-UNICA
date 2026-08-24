@@ -24,7 +24,9 @@ import (
 	"github.com/kefu/unica/admin/internal/handler"
 	"github.com/kefu/unica/admin/internal/identity"
 	_ "github.com/kefu/unica/admin/internal/metrics" // register Prometheus metrics
+	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
+	"github.com/kefu/unica/admin/internal/routecache"
 	"github.com/kefu/unica/admin/internal/tenant/aisettings"
 	"github.com/kefu/unica/admin/internal/tenant/channels"
 	"github.com/kefu/unica/admin/internal/tenant/facts"
@@ -177,7 +179,7 @@ func main() {
 	// irrelevant here (admin reads versions and evidence, not the hot path),
 	// so a short TTL is fine.
 	domainStore := domain.NewStore(db, time.Minute)
-	factsHandler := facts.NewHandler(domainStore, plRepo, auditLogger)
+	factsHandler := facts.NewHandler(domainStore, plRepo, auditLogger, routecache.New(rdb, channelRepo))
 	violationsHandler := quality.NewHandler(domainStore, plRepo, auditLogger)
 	// The observation layer: violation concentration, dead-constraint coverage,
 	// and the structured "why did this leave the AI" trail with its annotations.
@@ -375,6 +377,38 @@ func main() {
 	// The audit trail. Open to any authenticated caller; the handler narrows a
 	// tenant's user to its own rows.
 	mux.Handle("/api/v1/audit-logs", authMW(http.HandlerFunc(auditLogHandler.HandleAuditLogs)))
+
+	// The router's behaviour switches, read from the router itself. Administrator
+	// only: they are platform state, and a tenant that could see them would be
+	// shown values it has no way to act on.
+	routerBridge := bridge.NewRouterBridge(cfg.RouterInternalURL)
+	mux.Handle("/api/v1/platform/runtime", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			handler.ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		claims := auth.GetClaims(r.Context())
+		if claims == nil || !rbac.IsAdmin(claims.Role) {
+			handler.ErrorJSON(w, http.StatusForbidden, "administrator role required")
+			return
+		}
+		switches, err := routerBridge.Switches(r.Context())
+		if err != nil {
+			// Reported as unavailable rather than substituted with defaults: a
+			// plausible wrong value would be read as the switch messages are
+			// actually routed by.
+			log.Printf("[platform] runtime switches unavailable: %v", err)
+			handler.JSON(w, http.StatusOK, map[string]interface{}{
+				"available": false,
+				"reason":    err.Error(),
+			})
+			return
+		}
+		handler.JSON(w, http.StatusOK, map[string]interface{}{
+			"available": true,
+			"switches":  switches,
+		})
+	})))
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

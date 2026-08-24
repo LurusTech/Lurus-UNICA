@@ -275,7 +275,39 @@ func (b *DifyBridge) SetDatasetRetrieval(ctx context.Context, datasetID, token s
 	if datasetID == "" {
 		return fmt.Errorf("dataset ID is empty")
 	}
+
+	// Read the dataset before writing to it. A retrieval method has to match the
+	// index the documents were actually built with: pointing a keyword-indexed
+	// (economy) dataset at semantic search leaves it answering every query with
+	// nothing, and the write itself succeeds — so the failure would surface only
+	// as a knowledge base that has silently stopped being consulted.
+	//
+	// The deployment-wide indexing technique is not evidence of what this
+	// dataset holds: it is what *new* uploads use, and a dataset built before it
+	// was changed keeps its old index.
+	current, err := b.GetDatasetConfig(ctx, datasetID, token)
+	if err != nil {
+		return fmt.Errorf("set dataset retrieval: %w", err)
+	}
+	if current.IndexingTechnique != "" && current.IndexingTechnique != b.config.IndexingTechnique {
+		return fmt.Errorf(
+			"set dataset retrieval: dataset %s was indexed as %q but this deployment is configured for %q; "+
+				"applying %q retrieval to a %q index makes every query return nothing. "+
+				"Re-index the dataset (delete and re-upload its documents) before repairing retrieval",
+			datasetID, current.IndexingTechnique, b.config.IndexingTechnique,
+			b.config.IndexingTechnique, current.IndexingTechnique)
+	}
+
+	// Built as platform defaults merged with this dataset's overrides, even
+	// though there are no overrides yet. The PATCH replaces the whole
+	// retrieval_model object, so once a second writer exists — a per-tenant
+	// top_k, say — a "repair" that rebuilt the object from defaults alone would
+	// silently roll that writer back. Constructing it this way from the start
+	// means the two cannot fight.
 	want := difyapp.RetrievalModel(b.config.IndexingTechnique)
+	for k, v := range current.Overrides {
+		want[k] = v
+	}
 
 	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPatch, "/datasets/"+datasetID,
 		map[string]interface{}{"retrieval_model": want}, token); err != nil {
@@ -285,27 +317,82 @@ func (b *DifyBridge) SetDatasetRetrieval(ctx context.Context, datasetID, token s
 	// Read back rather than trust the status code: this endpoint answers a
 	// write it ignored with the same 200 as one it applied, which is how the
 	// settings came to be sent on create and silently dropped.
-	body, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/datasets/"+datasetID, nil, token)
+	verified, err := b.GetDatasetConfig(ctx, datasetID, token)
 	if err != nil {
 		return fmt.Errorf("set dataset retrieval: verify: %w", err)
 	}
-	var got struct {
-		RetrievalModel struct {
-			SearchMethod string `json:"search_method"`
-			TopK         int    `json:"top_k"`
+	// Every field that was written is checked, not just the method. Checking one
+	// field is what let a partially ignored write read as a successful one.
+	wantMethod, _ := want["search_method"].(string)
+	if verified.SearchMethod != wantMethod {
+		return fmt.Errorf("set dataset retrieval: dataset %s still reports search_method=%q, want %q",
+			datasetID, verified.SearchMethod, wantMethod)
+	}
+	if wantTopK, ok := asInt(want["top_k"]); ok && verified.TopK != wantTopK {
+		return fmt.Errorf("set dataset retrieval: dataset %s still reports top_k=%d, want %d",
+			datasetID, verified.TopK, wantTopK)
+	}
+	if wantRerank, ok := want["reranking_enable"].(bool); ok && verified.RerankingEnable != wantRerank {
+		return fmt.Errorf("set dataset retrieval: dataset %s still reports reranking_enable=%v, want %v",
+			datasetID, verified.RerankingEnable, wantRerank)
+	}
+	log.Printf("[dify-bridge] dataset %s retrieval set to %s (top_k=%d, indexing=%s)",
+		datasetID, verified.SearchMethod, verified.TopK, verified.IndexingTechnique)
+	return nil
+}
+
+// DatasetConfig is what a dataset reports about how it is indexed and searched.
+type DatasetConfig struct {
+	IndexingTechnique string
+	SearchMethod      string
+	TopK              int
+	RerankingEnable   bool
+	// Overrides are the retrieval fields this dataset carries that the platform
+	// defaults do not decide. Empty today; the field exists so the merge in
+	// SetDatasetRetrieval is already in place when the first per-tenant
+	// retrieval setting arrives.
+	Overrides map[string]interface{}
+}
+
+// GetDatasetConfig reads a dataset's indexing technique and retrieval settings.
+func (b *DifyBridge) GetDatasetConfig(ctx context.Context, datasetID, token string) (*DatasetConfig, error) {
+	if datasetID == "" {
+		return nil, fmt.Errorf("dataset ID is empty")
+	}
+	body, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/datasets/"+datasetID, nil, token)
+	if err != nil {
+		return nil, fmt.Errorf("read dataset %s: %w", datasetID, err)
+	}
+	var raw struct {
+		IndexingTechnique string `json:"indexing_technique"`
+		RetrievalModel    struct {
+			SearchMethod    string `json:"search_method"`
+			TopK            int    `json:"top_k"`
+			RerankingEnable bool   `json:"reranking_enable"`
 		} `json:"retrieval_model_dict"`
 	}
-	if err := json.Unmarshal(body, &got); err != nil {
-		return fmt.Errorf("set dataset retrieval: unmarshal verified config: %w", err)
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("unmarshal dataset %s: %w", datasetID, err)
 	}
-	wantMethod, _ := want["search_method"].(string)
-	if got.RetrievalModel.SearchMethod != wantMethod {
-		return fmt.Errorf("set dataset retrieval: dataset %s still reports search_method=%q, want %q",
-			datasetID, got.RetrievalModel.SearchMethod, wantMethod)
+	return &DatasetConfig{
+		IndexingTechnique: raw.IndexingTechnique,
+		SearchMethod:      raw.RetrievalModel.SearchMethod,
+		TopK:              raw.RetrievalModel.TopK,
+		RerankingEnable:   raw.RetrievalModel.RerankingEnable,
+		Overrides:         map[string]interface{}{},
+	}, nil
+}
+
+// asInt accepts the numeric shapes a JSON round trip can produce.
+func asInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
 	}
-	log.Printf("[dify-bridge] dataset %s retrieval set to %s (top_k=%d)",
-		datasetID, got.RetrievalModel.SearchMethod, got.RetrievalModel.TopK)
-	return nil
 }
 
 // DeleteApp removes a Dify app. Used when a tenant is taken apart: the app is

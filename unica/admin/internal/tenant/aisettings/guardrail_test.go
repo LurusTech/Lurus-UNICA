@@ -13,6 +13,12 @@ import (
 
 // routeCacheKeys are the cache entries a tenant's two channels hold. Seeding
 // them is how the test can tell an invalidation that ran from one that did not.
+// The prefix is restated here rather than imported: this test exists to prove
+// the router's cache entries are gone, and reusing the constant the code under
+// test uses would let a renamed key pass while the router kept reading a key
+// this test no longer looks at.
+const routeCacheKeyPrefix = "channel_route:"
+
 var routeCacheKeys = []string{routeCacheKeyPrefix + "ch-1", routeCacheKeyPrefix + "ch-2"}
 
 // newGuardrailFixture wires a handler over an in-memory Redis whose cached

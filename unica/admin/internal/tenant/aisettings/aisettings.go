@@ -19,6 +19,7 @@ import (
 	"github.com/kefu/unica/admin/internal/bridge"
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
+	"github.com/kefu/unica/admin/internal/routecache"
 	"github.com/kefu/unica/pkg/difyapp"
 	"github.com/kefu/unica/pkg/domain"
 	"github.com/kefu/unica/pkg/survey"
@@ -33,11 +34,6 @@ const tenantRoutePrefix = "/api/v1/tenants/"
 // resourceName is this module's segment inside the tenant subtree.
 const resourceName = "ai-settings"
 
-// routeCacheKeyPrefix is the Redis key the runtime caches a channel's route
-// under. The cached entry carries a copy of config_json, so a guardrail write
-// that leaves it in place would take effect only when the entry expires.
-const routeCacheKeyPrefix = "channel_route:"
-
 // productLines is the tenant record access this module needs: the record for
 // its Dify bindings, the config blob the guardrail block lives in, and the app
 // API key, which the record deliberately does not carry.
@@ -49,8 +45,8 @@ type productLines interface {
 }
 
 // channelIDs names the channels whose cached route holds a stale copy of this
-// tenant's config. Only the identifiers are needed: the channels themselves are
-// another module's business.
+// tenant's config. It is declared here because Config accepts it; the dropping
+// itself belongs to internal/routecache, which every writer of this row shares.
 type channelIDs interface {
 	ListIDs(ctx context.Context, productLineID string) ([]string, error)
 }
@@ -65,19 +61,17 @@ type Config struct {
 
 // Handler serves the ai-settings sub-resource of a tenant.
 type Handler struct {
-	pls      productLines
-	channels channelIDs
-	dify     *bridge.DifyBridge
-	rdb      *redis.Client
+	pls        productLines
+	dify       *bridge.DifyBridge
+	routeCache *routecache.Invalidator
 }
 
 // NewHandler creates an AI settings handler.
 func NewHandler(cfg Config) *Handler {
 	return &Handler{
-		pls:      cfg.ProductLines,
-		channels: cfg.Channels,
-		dify:     cfg.Dify,
-		rdb:      cfg.Redis,
+		pls:        cfg.ProductLines,
+		dify:       cfg.Dify,
+		routeCache: routecache.New(cfg.Redis, cfg.Channels),
 	}
 }
 
@@ -101,6 +95,11 @@ type settingsResponse struct {
 type guardrailResponse struct {
 	ProductLineID string `json:"product_line_id"`
 	guardrailConfig
+	// CacheInvalidated reports whether the router's cached copy was actually
+	// dropped. The console promises the change takes effect immediately; when
+	// this is false that promise does not hold, and saying so beats letting an
+	// operator watch for a change that is up to a cache lifetime away.
+	CacheInvalidated bool `json:"cache_invalidated"`
 }
 
 type updatePromptRequest struct {
@@ -528,34 +527,13 @@ func (h *Handler) writeGuardrail(w http.ResponseWriter, r *http.Request, tenantI
 		return
 	}
 
-	h.invalidateRouteCache(r.Context(), tenantID)
+	invalidated := h.routeCache.Invalidate(r.Context(), tenantID)
 
-	writeJSON(w, http.StatusOK, guardrailResponse{ProductLineID: tenantID, guardrailConfig: cfg})
-}
-
-// invalidateRouteCache drops every cached route of this tenant's channels.
-//
-// The runtime resolves a channel to its product line once and caches the row —
-// config_json included — so until those entries are gone the settings just
-// written are not the settings in force. Failure is logged rather than returned:
-// the write itself succeeded, and the entries expire on their own.
-func (h *Handler) invalidateRouteCache(ctx context.Context, tenantID string) {
-	if h.rdb == nil || h.channels == nil {
-		return
-	}
-
-	ids, err := h.channels.ListIDs(ctx, tenantID)
-	if err != nil {
-		log.Printf("[ai-settings] WARN: failed to list channels of %s, cached routes keep the old settings until they expire: %v",
-			tenantID, err)
-		return
-	}
-	for _, id := range ids {
-		if err := h.rdb.Del(ctx, routeCacheKeyPrefix+id).Err(); err != nil {
-			log.Printf("[ai-settings] WARN: failed to drop cached route for channel %s: %v", id, err)
-		}
-	}
-	log.Printf("[ai-settings] guardrail updated for %s, dropped %d cached channel routes", tenantID, len(ids))
+	writeJSON(w, http.StatusOK, guardrailResponse{
+		ProductLineID:    tenantID,
+		guardrailConfig:  cfg,
+		CacheInvalidated: invalidated,
+	})
 }
 
 // sendTestMessage asks the tenant's Dify app a question and reports what it

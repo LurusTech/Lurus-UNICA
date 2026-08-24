@@ -100,7 +100,9 @@ func (f *fakePLStore) SetConfigKey(ctx context.Context, id, key string, value in
 func newOntologyFixture() (*Handler, *fakeOntologyStore, *fakePLStore) {
 	fs := &fakeOntologyStore{sources: map[int]string{}}
 	fp := &fakePLStore{pl: &repository.ProductLine{ID: "pl-1", Name: "TestLine"}}
-	return NewHandler(fs, fp, nil), fs, fp
+	// A nil invalidator is the "no cache client" case: writes still succeed and
+	// report cache_invalidated=false rather than claiming an effect they had not.
+	return NewHandler(fs, fp, nil, nil), fs, fp
 }
 
 func doJSON(t *testing.T, h *Handler, method, path string, body string) *httptest.ResponseRecorder {

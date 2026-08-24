@@ -434,3 +434,111 @@ func TestDifyBridge_APIBaseURL(t *testing.T) {
 		t.Errorf("expected 'http://dify:5001/v1', got %q", got)
 	}
 }
+
+// datasetServerWithIndex answers GET /datasets/{id} with a fixed indexing
+// technique and whatever retrieval settings a PATCH last stored.
+func datasetServerWithIndex(t *testing.T, indexing string, applyPatch bool) (*httptest.Server, *map[string]interface{}) {
+	t.Helper()
+	stored := map[string]interface{}{
+		"search_method":    "semantic_search",
+		"top_k":            3,
+		"reranking_enable": false,
+	}
+	var patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch:
+			patched = true
+			if applyPatch {
+				var body struct {
+					RetrievalModel map[string]interface{} `json:"retrieval_model"`
+				}
+				json.NewDecoder(r.Body).Decode(&body)
+				for k, v := range body.RetrievalModel {
+					stored[k] = v
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":                   "ds-001",
+				"indexing_technique":   indexing,
+				"retrieval_model_dict": stored,
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	_ = patched
+	return srv, &stored
+}
+
+// A dataset built with one index and searched with the method that suits
+// another answers every query with nothing, and the write that causes it
+// succeeds. Refusing is the only outcome that surfaces the problem.
+func TestDifyBridge_SetDatasetRetrieval_RefusesIndexMismatch(t *testing.T) {
+	server, stored := datasetServerWithIndex(t, "economy", true)
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
+
+	err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token")
+	if err == nil {
+		t.Fatal("writing semantic retrieval onto an economy index must be refused")
+	}
+	if !strings.Contains(err.Error(), "economy") || !strings.Contains(err.Error(), "high_quality") {
+		t.Errorf("the error must name both techniques so the operator knows what to re-index: %v", err)
+	}
+	if (*stored)["search_method"] != "semantic_search" {
+		t.Errorf("a refused write must not have been sent; stored = %v", (*stored)["search_method"])
+	}
+}
+
+func TestDifyBridge_SetDatasetRetrieval_AppliesWhenIndexMatches(t *testing.T) {
+	server, stored := datasetServerWithIndex(t, "economy", true)
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err != nil {
+		t.Fatalf("a matching index must be accepted: %v", err)
+	}
+	if got := (*stored)["search_method"]; got != "keyword_search" {
+		t.Errorf("search_method = %v, want keyword_search", got)
+	}
+}
+
+// The read-back used to check the method alone, so a Dify that applied the
+// method and ignored the rest reported success.
+func TestDifyBridge_SetDatasetRetrieval_CatchesPartiallyIgnoredWrite(t *testing.T) {
+	stored := map[string]interface{}{"search_method": "keyword_search", "top_k": 99, "reranking_enable": false}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			// Applies the method, drops everything else — exactly the shape the
+			// single-field check could not see.
+			var body struct {
+				RetrievalModel map[string]interface{} `json:"retrieval_model"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			stored["search_method"] = body.RetrievalModel["search_method"]
+			w.Write([]byte(`{}`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                   "ds-001",
+			"indexing_technique":   "economy",
+			"retrieval_model_dict": stored,
+		})
+	}))
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+	err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token")
+	if err == nil {
+		t.Fatal("a write that applied only the search method must be reported, not accepted")
+	}
+	if !strings.Contains(err.Error(), "top_k") {
+		t.Errorf("the error must name the field that did not take: %v", err)
+	}
+}

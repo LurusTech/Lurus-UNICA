@@ -17,6 +17,7 @@ import (
 	"github.com/kefu/unica/admin/internal/audit"
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/repository"
+	"github.com/kefu/unica/admin/internal/routecache"
 	"github.com/kefu/unica/pkg/domain"
 )
 
@@ -45,10 +46,16 @@ type Handler struct {
 	store  ontologyStore
 	pls    ontologyProductLines
 	logger *audit.Logger
+	// routeCache drops the router's cached copy of this tenant's config_json.
+	// These switches live in the same row the router caches with the channel
+	// route, so a write that left the cache alone took up to a full cache
+	// lifetime to reach a conversation — and turning enforcement off is exactly
+	// the change nobody can afford to wait on.
+	routeCache *routecache.Invalidator
 }
 
-func NewHandler(store ontologyStore, pls ontologyProductLines, logger *audit.Logger) *Handler {
-	return &Handler{store: store, pls: pls, logger: logger}
+func NewHandler(store ontologyStore, pls ontologyProductLines, logger *audit.Logger, routeCache *routecache.Invalidator) *Handler {
+	return &Handler{store: store, pls: pls, logger: logger, routeCache: routeCache}
 }
 
 // Handle dispatches /api/v1/product-lines/{id}/ontology[...] and
@@ -319,13 +326,19 @@ func (h *Handler) putConfig(w http.ResponseWriter, r *http.Request, pl *reposito
 
 	h.logMutation(r, "update", "ontology_config", pl.ID, domain.LoadConfig(before), cfg)
 
-	// Respond with what a subsequent GET would return, defaults filled in.
+	invalidated := h.routeCache.Invalidate(r.Context(), pl.ID)
+
+	// Respond with what a subsequent GET would return, defaults filled in, plus
+	// whether the change has actually reached the runtime yet.
 	after, err := h.pls.GetConfigJSON(r.Context(), pl.ID)
-	if err != nil {
-		writeJSON(w, http.StatusOK, cfg)
-		return
+	stored := cfg
+	if err == nil {
+		stored = domain.LoadConfig(after)
 	}
-	writeJSON(w, http.StatusOK, domain.LoadConfig(after))
+	writeJSON(w, http.StatusOK, struct {
+		*domain.Config
+		CacheInvalidated bool `json:"cache_invalidated"`
+	}{Config: stored, CacheInvalidated: invalidated})
 }
 
 // activeVersion returns the currently active version number for audit

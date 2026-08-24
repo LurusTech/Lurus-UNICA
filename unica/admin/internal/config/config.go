@@ -40,25 +40,36 @@ type Config struct {
 	ChatwootPlatformToken string
 	// ChatwootWebhookURL is the callback a provisioned API inbox posts to.
 	ChatwootWebhookURL string
+	// RouterInternalURL is where this service reaches the router's /configz.
+	//
+	// The router's behaviour switches — intent triage, scene mode, the ontology
+	// master switch, the cache lifetimes — are decided by the router process's
+	// own environment, and this service has none of those variables. Reading
+	// them here would report this process's environment, which is not what any
+	// message is routed by. Empty disables the lookup rather than failing at
+	// startup: a deployment that has not wired it up should show the runtime as
+	// unknown, not claim a default.
+	RouterInternalURL string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
 func Load() *Config {
 	return &Config{
-		Port:              envOrDefault("ADMIN_PORT", "8081"),
-		DatabaseURL:       envOrDefault("DATABASE_URL", "postgres://localhost:5432/unica?sslmode=disable"),
-		RedisURL:          envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
-		JWTSecret:         envOrDefault("JWT_SECRET", "change-me-in-production"),
-		AccessTokenTTL:    2 * time.Hour,
-		RefreshTokenTTL:   7 * 24 * time.Hour,
-		BcryptCost:        12,
-		AESEncryptionKey:  envOrDefault("AES_ENCRYPTION_KEY", ""),
-		GatewayHost:       envOrDefault("GATEWAY_HOST", "localhost:8080"),
-		DifyAdminURL:      envOrDefault("DIFY_ADMIN_URL", "http://dify:5001/console/api"),
-		DifyAdminToken:    envOrDefault("DIFY_ADMIN_TOKEN", ""),
-		DifyAPIBaseURL:    envOrDefault("DIFY_API_BASE_URL", "http://dify:5001/v1"),
-		DifyAdminEmail:    envOrDefault("DIFY_ADMIN_EMAIL", ""),
-		DifyAdminPassword: envOrDefault("DIFY_ADMIN_PASSWORD", ""),
+		Port:                  envOrDefault("ADMIN_PORT", "8081"),
+		RouterInternalURL:     os.Getenv("ROUTER_INTERNAL_URL"),
+		DatabaseURL:           envOrDefault("DATABASE_URL", "postgres://localhost:5432/unica?sslmode=disable"),
+		RedisURL:              envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
+		JWTSecret:             envOrDefault("JWT_SECRET", "change-me-in-production"),
+		AccessTokenTTL:        2 * time.Hour,
+		RefreshTokenTTL:       7 * 24 * time.Hour,
+		BcryptCost:            12,
+		AESEncryptionKey:      envOrDefault("AES_ENCRYPTION_KEY", ""),
+		GatewayHost:           envOrDefault("GATEWAY_HOST", "localhost:8080"),
+		DifyAdminURL:          envOrDefault("DIFY_ADMIN_URL", "http://dify:5001/console/api"),
+		DifyAdminToken:        envOrDefault("DIFY_ADMIN_TOKEN", ""),
+		DifyAPIBaseURL:        envOrDefault("DIFY_API_BASE_URL", "http://dify:5001/v1"),
+		DifyAdminEmail:        envOrDefault("DIFY_ADMIN_EMAIL", ""),
+		DifyAdminPassword:     envOrDefault("DIFY_ADMIN_PASSWORD", ""),
 		DifyDatasetAPIKey:     envOrDefault("DIFY_DATASET_API_KEY", ""),
 		DifyIndexingTechnique: envOrDefault("DIFY_INDEXING_TECHNIQUE", "high_quality"),
 
