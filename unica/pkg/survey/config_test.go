@@ -63,3 +63,41 @@ func TestPendingTTL_NonPositiveYieldsDefaultNotImmediateExpiry(t *testing.T) {
 		}
 	}
 }
+
+// The two customer-facing strings are delivered verbatim, so a blank one is a
+// blank message to a customer — the same delivery the router refuses to make
+// for an AI answer. Load falls back rather than passing it through.
+func TestLoad_BlankMessagesFallBackToPlatformText(t *testing.T) {
+	for name, raw := range map[string]string{
+		"empty":      `{"survey":{"prompt_message":"","thanks_message":""}}`,
+		"whitespace": `{"survey":{"prompt_message":"   ","thanks_message":"\n\t"}}`,
+		"zero width": `{"survey":{"prompt_message":"​","thanks_message":"ㅤ"}}`,
+		"key absent": `{"survey":{"enabled":true}}`,
+	} {
+		got := Load(json.RawMessage(raw))
+		if got.PromptMessage != Defaults().PromptMessage {
+			t.Errorf("%s: prompt_message = %q, want the platform text", name, got.PromptMessage)
+		}
+		if got.ThanksMessage != Defaults().ThanksMessage {
+			t.Errorf("%s: thanks_message = %q, want the platform text", name, got.ThanksMessage)
+		}
+	}
+}
+
+func TestLoad_ConfiguredMessagesSurvive(t *testing.T) {
+	got := Load(json.RawMessage(`{"survey":{"enabled":true,"prompt_message":"回复 1-5 打个分吧","thanks_message":"收到，谢谢"}}`))
+	if got.PromptMessage != "回复 1-5 打个分吧" {
+		t.Errorf("prompt_message = %q", got.PromptMessage)
+	}
+	if got.ThanksMessage != "收到，谢谢" {
+		t.Errorf("thanks_message = %q", got.ThanksMessage)
+	}
+}
+
+// The platform prompt has to satisfy the contract the console enforces on a
+// tenant's, or the console would reject the text it hands back on reset.
+func TestDefaultPromptSatisfiesItsOwnContract(t *testing.T) {
+	if !PromptDeclaresScale(Defaults().PromptMessage) {
+		t.Error("the platform prompt does not declare the 1-5 scale")
+	}
+}

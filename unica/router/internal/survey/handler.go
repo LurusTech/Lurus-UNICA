@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/kefu/unica/pkg/domain"
 	"github.com/kefu/unica/pkg/model"
 	shared "github.com/kefu/unica/pkg/survey"
 	"github.com/kefu/unica/router/internal/metrics"
@@ -25,18 +26,6 @@ const (
 	// OutboundStream is the Redis Stream key for outbound messages.
 	OutboundStream = "unica:outbound"
 )
-
-// surveyMessage is the template sent to customers after conversation closure.
-const surveyMessage = "感谢您的咨询！请为本次服务评分：\n" +
-	"回复数字 1-5（5分最高）\n" +
-	"1 - 非常不满意\n" +
-	"2 - 不满意\n" +
-	"3 - 一般\n" +
-	"4 - 满意\n" +
-	"5 - 非常满意"
-
-// surveyThanksMessage is sent after a valid survey reply is received.
-const surveyThanksMessage = "感谢您的评价！我们会继续努力提升服务质量。"
 
 // SurveyConfig is a product line's survey settings. It is an alias of the
 // shared definition, not a copy: the admin console reads and writes the same
@@ -58,13 +47,13 @@ type StateManager interface {
 
 // ConversationInfo holds the conversation data needed by the survey handler.
 type ConversationInfo struct {
-	ID            string
-	ChannelID     string
-	ProductLineID string
-	CustomerID    string
+	ID                     string
+	ChannelID              string
+	ProductLineID          string
+	CustomerID             string
 	CustomerPlatformUserID string
 	CustomerAccountID      string
-	CorrelationID string
+	CorrelationID          string
 }
 
 // Handler manages satisfaction survey lifecycle.
@@ -149,7 +138,7 @@ func (h *Handler) SendSurvey(ctx context.Context, conv *ConversationInfo, cfg *S
 			CustomerID:     conv.CustomerID,
 			Content: model.MessageContent{
 				Type: model.ContentTypeText,
-				Text: surveyMessage,
+				Text: promptText(cfg),
 			},
 			PlatformMeta: model.PlatformMeta{
 				PlatformUserID: conv.CustomerPlatformUserID,
@@ -204,6 +193,52 @@ func (h *Handler) SendSurvey(ctx context.Context, conv *ConversationInfo, cfg *S
 	return nil
 }
 
+// PendingWindow reports how long a survey sent for this product line stays
+// answerable. It is the same period the pending record is given, read from the
+// same settings, so the conversation stops being reachable at the moment the
+// record it would be matched against expires.
+//
+// A product line whose settings cannot be read yields zero rather than a guess:
+// zero leaves conversation lookup exactly as it was before surveys existed.
+func (h *Handler) PendingWindow(ctx context.Context, productLineID string) time.Duration {
+	if h.db == nil || productLineID == "" {
+		return 0
+	}
+	cfg, err := h.loadSurveyConfig(ctx, productLineID)
+	if err != nil {
+		log.Printf("[survey] warning: failed to load config for pending window on %s: %v", productLineID, err)
+		return 0
+	}
+	if !cfg.Enabled {
+		return 0
+	}
+	return cfg.PendingTTL()
+}
+
+// promptText and thanksText resolve the two customer-facing strings from a
+// product line's settings.
+//
+// Both fall back to the platform text on a nil config and on a blank one, and
+// the second case is the one that matters: shared.Load back-fills a blank
+// value, but a Config assembled in code rather than loaded from a row carries
+// empty strings, and there is more than one such caller. Publishing that would
+// send the customer an empty message — the exact delivery the router now
+// refuses to make for an AI answer, and there is no reason a survey should be
+// held to a lower standard.
+func promptText(cfg *SurveyConfig) string {
+	if cfg == nil || domain.IsBlankAnswer(cfg.PromptMessage) {
+		return shared.Defaults().PromptMessage
+	}
+	return cfg.PromptMessage
+}
+
+func thanksText(cfg *SurveyConfig) string {
+	if cfg == nil || domain.IsBlankAnswer(cfg.ThanksMessage) {
+		return shared.Defaults().ThanksMessage
+	}
+	return cfg.ThanksMessage
+}
+
 // HandleSurveyReply processes a potential survey reply message.
 // Checks if survey:pending:{conversation_id} exists.
 // Parses message as 1-5 rating. Stores in DB. Returns true if handled as survey.
@@ -236,16 +271,16 @@ func (h *Handler) HandleSurveyReply(ctx context.Context, convID, messageText str
 		log.Printf("[survey] warning: failed to delete pending survey key for %s: %v", convID, err)
 	}
 
-	// Extract product line for metrics from the pending data
-	var pending pendingSurveyData
-	if json.Unmarshal([]byte(val), &pending) == nil {
-		// Get product line from conversation for metrics
-		productLineID := h.getProductLineID(ctx, convID)
-		metrics.SurveyCompletedTotal.WithLabelValues(productLineID, strconv.Itoa(score)).Inc()
-	}
+	// The product line is resolved from the conversation rather than read out of
+	// the pending record. The record was written when the survey was sent, and
+	// widening it would leave every survey already in flight deserialising to an
+	// empty string on the day this ships — which is exactly the blank message
+	// the router now refuses to deliver.
+	productLineID := h.getProductLineID(ctx, convID)
+	metrics.SurveyCompletedTotal.WithLabelValues(productLineID, strconv.Itoa(score)).Inc()
 
 	// Send thank-you message
-	h.sendThankYouMessage(ctx, convID, val)
+	h.sendThankYouMessage(ctx, convID, val, h.thankYouConfig(ctx, productLineID))
 
 	log.Printf("[survey] survey completed for conversation %s (score=%d)", convID, score)
 	return true, nil
@@ -283,8 +318,24 @@ func (h *Handler) getProductLineID(ctx context.Context, convID string) string {
 	return plID
 }
 
+// thankYouConfig loads the settings behind the thank-you message, degrading to
+// the platform text rather than to silence: the rating has already been
+// recorded at this point, and a customer who rated and heard nothing back has
+// no way to tell that from a rating that was lost.
+func (h *Handler) thankYouConfig(ctx context.Context, productLineID string) *SurveyConfig {
+	if h.db == nil || productLineID == "" || productLineID == "unknown" {
+		return nil
+	}
+	cfg, err := h.loadSurveyConfig(ctx, productLineID)
+	if err != nil {
+		log.Printf("[survey] warning: failed to load config for thank-you on %s: %v", productLineID, err)
+		return nil
+	}
+	return cfg
+}
+
 // sendThankYouMessage sends a thank-you response after survey completion.
-func (h *Handler) sendThankYouMessage(ctx context.Context, convID, pendingDataJSON string) {
+func (h *Handler) sendThankYouMessage(ctx context.Context, convID, pendingDataJSON string, cfg *SurveyConfig) {
 	var pending pendingSurveyData
 	if err := json.Unmarshal([]byte(pendingDataJSON), &pending); err != nil {
 		log.Printf("[survey] warning: failed to parse pending data for thank-you: %v", err)
@@ -303,7 +354,7 @@ func (h *Handler) sendThankYouMessage(ctx context.Context, convID, pendingDataJS
 			CustomerID:     pending.CustomerID,
 			Content: model.MessageContent{
 				Type: model.ContentTypeText,
-				Text: surveyThanksMessage,
+				Text: thanksText(cfg),
 			},
 		},
 	}

@@ -119,6 +119,11 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 	if stateManager != nil && rdb != nil {
 		surveyH = survey.NewHandler(db, rdb, stateManager)
 
+		// A survey is sent as the conversation closes, so the rating is always
+		// the first message after closure. Without this the reply started a new
+		// conversation and was answered as an ordinary question.
+		stateManager.SetSurveyWindow(surveyH.PendingWindow)
+
 		// Register OnClose callback to send survey when conversation closes
 		stateManager.SetOnClose(func(ctx context.Context, conv *state.Conversation) {
 			shouldSend, surveyCfg, err := surveyH.ShouldSendSurvey(ctx, conv.ID, conv.ProductLineID)

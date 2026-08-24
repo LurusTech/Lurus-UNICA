@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	shared "github.com/kefu/unica/pkg/survey"
+	"strings"
 	"testing"
+
+	"github.com/kefu/unica/pkg/model"
+	shared "github.com/kefu/unica/pkg/survey"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -61,29 +64,147 @@ func setupTestRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	return rdb, mr
 }
 
-func TestSurveyMessage_Content(t *testing.T) {
-	// Verify the survey message template contains expected content
-	if surveyMessage == "" {
-		t.Error("survey message template is empty")
+// The prompt is now a per-line setting rather than a constant, so what is worth
+// pinning is not its wording but the contract it has to keep with the parser
+// that reads the reply.
+func TestPlatformPromptKeepsItsContractWithTheParser(t *testing.T) {
+	prompt := shared.Defaults().PromptMessage
+	if !shared.PromptDeclaresScale(prompt) {
+		t.Error("the platform prompt does not tell the customer the 1-5 scale the reply parser requires")
 	}
-	expected := "1 - 非常不满意"
-	if len(surveyMessage) == 0 {
-		t.Error("survey message should not be empty")
-	}
-	// Verify it contains the rating scale
-	for _, s := range []string{"1 -", "2 -", "3 -", "4 -", "5 -"} {
-		found := false
-		for i := 0; i < len(surveyMessage)-len(s)+1; i++ {
-			if surveyMessage[i:i+len(s)] == s {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("survey message should contain %q", s)
+	for _, digit := range []string{"1 -", "2 -", "3 -", "4 -", "5 -"} {
+		if !strings.Contains(prompt, digit) {
+			t.Errorf("platform prompt should spell out %q", digit)
 		}
 	}
-	_ = expected
+}
+
+// A prompt the customer cannot answer is the failure this contract exists to
+// catch: the reply parser takes 1-5 and nothing else, and everything else is
+// handed back as an ordinary message, so the rating is silently never recorded.
+func TestPromptDeclaresScale(t *testing.T) {
+	for prompt, want := range map[string]bool{
+		"请回复 1-5 为我们打分":      true,
+		"回复数字１到５（５分最高）":      true,
+		"请为服务打分，5 分最高，1 分最低": true,
+		"您对本次服务满意吗？":         false,
+		"请回复满意或不满意":          false,
+		"请回复 1-4 打分":         false,
+		"":                   false,
+	} {
+		if got := shared.PromptDeclaresScale(prompt); got != want {
+			t.Errorf("PromptDeclaresScale(%q) = %v, want %v", prompt, got, want)
+		}
+	}
+}
+
+// The two customer-facing strings follow the product line's settings. Without
+// this the console would offer a field whose value nothing reads — the shape of
+// defect this page has produced more than once.
+func TestSendSurvey_UsesConfiguredPrompt(t *testing.T) {
+	rdb, mr := setupTestRedis(t)
+	defer mr.Close()
+
+	h := NewHandler(nil, rdb, newMockStateManager())
+	ctx := context.Background()
+	conv := &ConversationInfo{ID: "conv-prompt", ChannelID: "ch-1", ProductLineID: "pl-1", CustomerID: "cust-1"}
+
+	cfg := shared.Load(json.RawMessage(`{"survey":{"enabled":true,"prompt_message":"本店定制：请回复 1-5 打分"}}`))
+	if err := h.SendSurvey(ctx, conv, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := lastOutboundText(t, rdb, ctx); got != "本店定制：请回复 1-5 打分" {
+		t.Errorf("survey prompt = %q, want the configured text", got)
+	}
+}
+
+// A Config built in code rather than loaded from a row carries empty strings,
+// and there is more than one such caller. Sending that would deliver a blank
+// message to the customer, which is the delivery the router refuses to make for
+// an AI answer.
+func TestSendSurvey_BlankConfiguredPromptFallsBackRatherThanSendingNothing(t *testing.T) {
+	rdb, mr := setupTestRedis(t)
+	defer mr.Close()
+
+	h := NewHandler(nil, rdb, newMockStateManager())
+	ctx := context.Background()
+
+	for name, cfg := range map[string]*SurveyConfig{
+		"zero value":     {Enabled: true, TimeoutHours: 6},
+		"whitespace":     {Enabled: true, PromptMessage: "  ​ "},
+		"nil altogether": nil,
+	} {
+		conv := &ConversationInfo{ID: "conv-blank-" + name, ChannelID: "ch-1", ProductLineID: "pl-1"}
+		if err := h.SendSurvey(ctx, conv, cfg); err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		if got := lastOutboundText(t, rdb, ctx); got != shared.Defaults().PromptMessage {
+			t.Errorf("%s: survey prompt = %q, want the platform text", name, got)
+		}
+	}
+}
+
+// The thank-you text is resolved by looking the product line up again rather
+// than by reading a wider pending record: widening that record would leave
+// every survey already in flight deserialising to an empty string on the day
+// the change ships. With no database to look up, the platform text is what the
+// customer gets — never silence, because the rating has already been recorded
+// and the customer cannot tell a missing acknowledgement from a lost rating.
+func TestHandleSurveyReply_ThankYouFallsBackWithoutADatabase(t *testing.T) {
+	rdb, mr := setupTestRedis(t)
+	defer mr.Close()
+
+	h := NewHandler(nil, rdb, newMockStateManager())
+	ctx := context.Background()
+	convID := "conv-thanks-fallback"
+
+	pendingJSON, _ := json.Marshal(pendingSurveyData{SentAt: "2026-03-06T10:00:00Z", ChannelID: "ch-1", CustomerID: "cust-1"})
+	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), shared.Defaults().PendingTTL())
+
+	handled, err := h.HandleSurveyReply(ctx, convID, "5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected the reply to be handled")
+	}
+	if got := lastOutboundText(t, rdb, ctx); got != shared.Defaults().ThanksMessage {
+		t.Errorf("thank-you = %q, want the platform text", got)
+	}
+}
+
+func TestThanksText_FollowsConfigAndFallsBackWhenBlank(t *testing.T) {
+	if got := thanksText(&SurveyConfig{ThanksMessage: "谢谢，已收到您的评分"}); got != "谢谢，已收到您的评分" {
+		t.Errorf("thanksText = %q, want the configured text", got)
+	}
+	for name, cfg := range map[string]*SurveyConfig{
+		"zero value": {},
+		"whitespace": {ThanksMessage: " ㅤ"},
+		"nil":        nil,
+	} {
+		if got := thanksText(cfg); got != shared.Defaults().ThanksMessage {
+			t.Errorf("%s: thanksText = %q, want the platform text", name, got)
+		}
+	}
+}
+
+// lastOutboundText reads the text of the most recent message on the outbound
+// stream, which is what the customer would actually receive.
+func lastOutboundText(t *testing.T, rdb *redis.Client, ctx context.Context) string {
+	t.Helper()
+	entries, err := rdb.XRange(ctx, OutboundStream, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("failed to read outbound stream: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("nothing was published to the outbound stream")
+	}
+	payload, _ := entries[len(entries)-1].Values["payload"].(string)
+	var msg model.StandardMessage
+	if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+		t.Fatalf("failed to unmarshal outbound payload: %v", err)
+	}
+	return msg.Data.Content.Text
 }
 
 func TestHandleSurveyReply_NoPendingSurvey(t *testing.T) {

@@ -9,25 +9,24 @@
 
 ---
 
-## D1 满意度调查从未真正发出
+## D1 调研发出后没人把超时的那些翻成 `no_response`
 
-`OnClose` 回调只在 `state.Manager.TransitionState(..., StateClosed)` 内部触发
-（`router/internal/state/manager.go:176-184`），但唯一真正关闭会话的
-`closeIdleConversations` 直接调 `repo.UpdateConversationState`
-（`state/manager.go:341`），**绕过了 `TransitionState`，也就绕过了回调**。
+> 本条原文是"满意度调查从未真正发出"。**发不出去与收不回来这两半已于 2026-08-24 修复并实机验收**
+> （空闲清扫补上 `OnClose`；会话查找在调研待答期内把已关会话认回来，
+> 见 `state/manager.go` 的 `fireOnClose` 与 `GetConversationByCustomer` 注释）。
+> 剩下的是下面这一条，它不影响客户，只影响统计口径。
 
-连带三处：
-- `survey_status='no_response'` 全仓库无写入点，只在迁移注释里出现（`005_survey.sql:6`）。`sent` 状态会永久卡住。
-- `SurveyConfig.TimeoutHours` 被解析（`survey/handler.go:46,256`）但从不使用，TTL 是写死常量（`handler.go:25`），配置项是摆设。
-- 指标 `SurveyTimeoutTotal`（`metrics/metrics.go:209-211`）定义后从未 `Inc()`。
+调研发出时写 `survey_status='sent'` 与一个带 TTL 的 Redis 待答记录。
+客户回复则翻成 `completed`；**不回复的那些，Redis 键静默过期，数据库里的 `sent` 永远留着**。
+全仓库没有任何地方写入 `no_response`（只在迁移注释 `005_survey.sql:6` 出现过），
+指标 `SurveyTimeoutTotal`（`metrics/metrics.go:219-221`）定义后从未 `Inc()`。
 
-**后果**：`satisfaction_score` 是纸面字段。任何依赖"客户满不满意"的功能
-（经验蒸馏筛选、坐席绩效、AI 质量度量）目前都没有数据源。
-reporter 的 `avg_satisfaction` 恒为 0。
+**后果**：`survey_status` 分不出"还在等"和"等不到了"，回收率算不出来；
+超时数永远是 0，看板上看不出调研是否石沉大海。**不影响客户收到什么**。
 
-**修的方向**：`closeIdleConversations` 改走 `TransitionState`，
-或在它内部显式触发 `OnClose`；补 `no_response` 的翻转任务；
-`TimeoutHours` 要么接上要么删掉。
+**修的方向**：起一个扫描任务，把 `survey_sent_at` 早于本产线 `timeout_hours`
+且仍为 `sent` 的翻成 `no_response` 并 `SurveyTimeoutTotal.Inc()`。
+注意时长是产线级配置，不能写死。
 
 ---
 

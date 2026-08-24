@@ -136,8 +136,19 @@ func (r *Repository) GetConversation(ctx context.Context, id string) (*Conversat
 	return conv, nil
 }
 
-// GetConversationByCustomer returns the most recent active (non-closed) conversation for a customer.
-func (r *Repository) GetConversationByCustomer(ctx context.Context, customerID string) (*Conversation, error) {
+// GetConversationByCustomer returns the most recent active conversation for a
+// customer, or the one still waiting for a satisfaction rating.
+//
+// surveyWindow widens the search to a conversation that is closed but was sent
+// a survey within that period, and it is what makes a survey answerable at all:
+// the survey is sent as the conversation closes, so the customer's rating is
+// always the first message after closure. Matching only on state left it
+// starting a brand-new conversation every time, where the reply was read as an
+// ordinary question — the score was never recorded and nobody was told.
+//
+// A zero window restores the plain "active conversations only" behaviour: the
+// comparison is against now(), which no timestamp is after.
+func (r *Repository) GetConversationByCustomer(ctx context.Context, customerID string, surveyWindow time.Duration) (*Conversation, error) {
 	conv := &Conversation{}
 	var state string
 	err := r.db.QueryRowContext(ctx,
@@ -145,9 +156,12 @@ func (r *Repository) GetConversationByCustomer(ctx context.Context, customerID s
 		        ai_confidence, assigned_agent_id, intent_summary, metadata,
 		        created_at, updated_at, closed_at
 		 FROM conversations
-		 WHERE customer_id = $1 AND state != 'closed'
+		 WHERE customer_id = $1
+		   AND (state != 'closed'
+		        OR (survey_status = 'sent'
+		            AND survey_sent_at > now() - make_interval(secs => $2)))
 		 ORDER BY created_at DESC
-		 LIMIT 1`, customerID,
+		 LIMIT 1`, customerID, surveyWindow.Seconds(),
 	).Scan(
 		&conv.ID, &conv.ChannelID, &conv.ProductLineID, &conv.CustomerID, &state,
 		&conv.AIConfidence, &conv.AssignedAgentID, &conv.IntentSummary, &conv.Metadata,

@@ -189,6 +189,19 @@
   .field.inert { opacity: .5; }
   .field.inert input { pointer-events: none; }
 
+
+  /* Customer-facing message boxes. Shorter than the prompt editor: these are a
+     few lines of copy, and a 240px box invites an essay where the channel will
+     only carry a short message. */
+  textarea.msg { min-height: 0; height: auto; font-size: 14px; }
+  .msg-meta {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-top: 6px; font-size: 12px; color: var(--text-muted);
+  }
+  .msg-meta .count { font-variant-numeric: tabular-nums; margin-left: auto; }
+  .msg-meta .verdict.bad, .msg-meta .count.bad { color: var(--bad); }
+  .msg-meta .verdict.ok { color: var(--ok); }
+
   .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
   .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.85rem; }
 
@@ -410,8 +423,30 @@
       <div class="field narrow">
         <label for="f-survey-timeout">等待回复时长（小时）</label>
         <input id="f-survey-timeout" type="number" min="1" step="1" />
-        <div class="hint">超过这个时长仍未回复，本次调研作废。</div>
+        <div class="hint">
+          超过这个时长仍未回复，本次调研作废。该时长在调研发出的那一刻写死，
+          改动只对此后新发出的调研生效。
+        </div>
       </div>
+
+      <div class="field">
+        <label for="f-survey-prompt">调研提问语</label>
+        <textarea id="f-survey-prompt" class="msg" rows="7"></textarea>
+        <div class="hint">
+          客户收到的邀请。<b>必须写明回复 1-5 打分</b>：回复里只有 1 到 5 这五个数字会被认作评分，
+          其余内容会被当成普通消息、重新开启对话——评分不记录，也不会有任何报错。清空可恢复平台文案。
+        </div>
+        <div class="msg-meta" id="survey-prompt-meta"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-survey-thanks">评分后的感谢语</label>
+        <textarea id="f-survey-thanks" class="msg" rows="3"></textarea>
+        <div class="hint">客户打分后收到的回执。清空可恢复平台文案。</div>
+        <div class="msg-meta" id="survey-thanks-meta"></div>
+      </div>
+
+      <div class="notice" id="survey-runtime" hidden></div>
 
       <div class="actions-row">
         <button class="primary" id="survey-save-btn">保存</button>
@@ -523,6 +558,11 @@
     fSurveyEnabled: document.getElementById("f-survey-enabled"),
     fSurveyMin: document.getElementById("f-survey-min"),
     fSurveyTimeout: document.getElementById("f-survey-timeout"),
+    fSurveyPrompt: document.getElementById("f-survey-prompt"),
+    fSurveyThanks: document.getElementById("f-survey-thanks"),
+    surveyPromptMeta: document.getElementById("survey-prompt-meta"),
+    surveyThanksMeta: document.getElementById("survey-thanks-meta"),
+    surveyRuntime: document.getElementById("survey-runtime"),
     surveySaveBtn: document.getElementById("survey-save-btn"),
     surveyState: document.getElementById("survey-state"),
 
@@ -765,7 +805,14 @@
       survey: {
         enabled: survey.enabled === true,
         min: typeof survey.min_customer_messages === "number" ? survey.min_customer_messages : 2,
-        timeout: typeof survey.timeout_hours === "number" ? survey.timeout_hours : 24
+        timeout: typeof survey.timeout_hours === "number" ? survey.timeout_hours : 24,
+        // The server answers with the text the customer will receive, which for
+        // a line that has customised nothing is the platform wording. There is
+        // deliberately no "inherited / overridden" badge: the stored block is
+        // written whole, so that distinction does not survive the first save
+        // and showing it would be a guess presented as a fact.
+        prompt: typeof survey.prompt_message === "string" ? survey.prompt_message : "",
+        thanks: typeof survey.thanks_message === "string" ? survey.thanks_message : ""
       }
     };
 
@@ -778,7 +825,11 @@
     els.fSurveyEnabled.checked = state.baseline.survey.enabled;
     els.fSurveyMin.value = state.baseline.survey.min;
     els.fSurveyTimeout.value = state.baseline.survey.timeout;
+    els.fSurveyPrompt.value = state.baseline.survey.prompt;
+    els.fSurveyThanks.value = state.baseline.survey.thanks;
     els.surveyState.textContent = "";
+    renderSurveyMessageMeta();
+    renderSurveyRuntime(cfg);
 
     renderModel(cfg.model);
     renderThresholdTiers(cfg, state.factsConfig);
@@ -1368,6 +1419,84 @@
     return new Error(what + "已被他人修改，本次未保存。请点「重新加载」查看当前设置后再改。");
   }
 
+
+  // ---------- Survey message texts ----------
+  //
+  // The prompt carries a contract, not a preference: the reply parser accepts a
+  // bare 1 to 5 and nothing else, so a prompt that drops the scale produces a
+  // survey the customer cannot answer correctly — their reply is read as an
+  // ordinary message, the conversation reopens, and no error is raised
+  // anywhere. The check runs while the text is being edited because that is
+  // when it can still be cheap to fix.
+  var SURVEY_MSG_MAX = 500;
+
+  function promptDeclaresScale(text) {
+    return (text.indexOf("1") >= 0 || text.indexOf("１") >= 0) &&
+           (text.indexOf("5") >= 0 || text.indexOf("５") >= 0);
+  }
+
+  function renderMessageMeta(box, text, verdictText, verdictClass) {
+    box.textContent = "";
+    var verdict = document.createElement("span");
+    verdict.className = "verdict " + (verdictClass || "");
+    verdict.textContent = verdictText || "";
+    var count = document.createElement("span");
+    var length = Array.from(text).length;
+    count.className = "count" + (length > SURVEY_MSG_MAX ? " bad" : "");
+    count.textContent = length + " / " + SURVEY_MSG_MAX;
+    box.appendChild(verdict);
+    box.appendChild(count);
+  }
+
+  function renderSurveyMessageMeta() {
+    var prompt = els.fSurveyPrompt.value;
+    var thanks = els.fSurveyThanks.value;
+
+    if (!prompt.trim()) {
+      renderMessageMeta(els.surveyPromptMeta, prompt, "留空即使用平台文案", "");
+    } else if (!promptDeclaresScale(prompt)) {
+      renderMessageMeta(els.surveyPromptMeta, prompt,
+        "缺少 1-5 的说明，客户的回复不会被认作评分", "bad");
+    } else {
+      renderMessageMeta(els.surveyPromptMeta, prompt, "已写明 1-5 打分", "ok");
+    }
+
+    renderMessageMeta(els.surveyThanksMeta, thanks,
+      thanks.trim() ? "" : "留空即使用平台文案", "");
+  }
+
+  // When the survey is sent is not a tenant setting: the platform decides how
+  // long a conversation may sit idle before it closes, and the survey goes out
+  // at that moment. A tenant can otherwise configure everything about this
+  // message except when it happens, which is worth saying out loud.
+  function renderSurveyRuntime(cfg) {
+    var rt = (cfg && cfg.runtime) || {};
+    if (!rt.available || !rt.idle_timeout) {
+      els.surveyRuntime.hidden = true;
+      return;
+    }
+    els.surveyRuntime.hidden = false;
+    els.surveyRuntime.textContent =
+      "平台设定：会话静默 " + formatDuration(rt.idle_timeout) + "后自动结束，调研就在那一刻发出。" +
+      "发起时机由平台方决定，本页改不了。";
+  }
+
+  // The runtime reports durations the way the language that produced them
+  // prints them ("30m0s"). That is a value, not a sentence, and it reads as a
+  // typo to everyone who has not written Go.
+  function formatDuration(text) {
+    var match = /^(?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?$/.exec(String(text || ""));
+    if (!match) return String(text || "");
+    var parts = [];
+    if (match[1]) parts.push(match[1] + " 小时");
+    if (match[2] && match[2] !== "0") parts.push(match[2] + " 分钟");
+    if (match[3] && parseFloat(match[3]) > 0) parts.push(match[3] + " 秒");
+    return parts.length ? parts.join(" ") : String(text);
+  }
+
+  els.fSurveyPrompt.addEventListener("input", renderSurveyMessageMeta);
+  els.fSurveyThanks.addEventListener("input", renderSurveyMessageMeta);
+
   // ---------- Satisfaction survey ----------
   // Written on its own endpoint rather than folded into the guardrail save: the
   // two blocks live under different keys of the same config and the runtime
@@ -1379,9 +1508,12 @@
     var enabled = els.fSurveyEnabled.checked;
     var min = parseInt(els.fSurveyMin.value, 10);
     var timeout = parseInt(els.fSurveyTimeout.value, 10);
+    var prompt = els.fSurveyPrompt.value.trim();
+    var thanks = els.fSurveyThanks.value.trim();
     var base = state.baseline.survey;
 
-    if (enabled === base.enabled && min === base.min && timeout === base.timeout) {
+    if (enabled === base.enabled && min === base.min && timeout === base.timeout &&
+        prompt === base.prompt && thanks === base.thanks) {
       toast("没有需要保存的改动", "warn");
       return;
     }
@@ -1395,6 +1527,14 @@
       toast("等待回复时长须大于 0 小时", "error");
       return;
     }
+    if (prompt && !promptDeclaresScale(prompt)) {
+      toast("提问语必须写明回复 1-5 打分，否则客户的回复不会被认作评分", "error");
+      return;
+    }
+    if (Array.from(prompt).length > SURVEY_MSG_MAX || Array.from(thanks).length > SURVEY_MSG_MAX) {
+      toast("单条文案不得超过 " + SURVEY_MSG_MAX + " 字", "error");
+      return;
+    }
 
     setBusy(true, els.surveySaveBtn, "保存中…");
     api(tenantPath("/ai-settings"))
@@ -1402,7 +1542,9 @@
         var live = (current && current.survey) || {};
         if ((live.enabled === true) !== base.enabled ||
             live.min_customer_messages !== base.min ||
-            live.timeout_hours !== base.timeout) {
+            live.timeout_hours !== base.timeout ||
+            (live.prompt_message || "") !== base.prompt ||
+            (live.thanks_message || "") !== base.thanks) {
           throw conflictError("满意度调研设置");
         }
         return api(tenantPath("/ai-settings/survey"), {
@@ -1410,7 +1552,9 @@
           body: JSON.stringify({
             enabled: enabled,
             min_customer_messages: min,
-            timeout_hours: timeout
+            timeout_hours: timeout,
+            prompt_message: prompt,
+            thanks_message: thanks
           })
         });
       })

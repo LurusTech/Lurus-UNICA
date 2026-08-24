@@ -11,9 +11,11 @@ package aisettings
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
@@ -137,7 +139,13 @@ type runtimeStatus struct {
 	OntologyEnabled bool   `json:"ontology_enabled"`
 	IntentTriage    string `json:"intent_triage,omitempty"`
 	SceneMode       string `json:"scene_mode,omitempty"`
-	Reason          string `json:"reason,omitempty"`
+	// IdleTimeout is how long a conversation may sit quiet before it closes.
+	// It belongs here because it decides *when* the satisfaction survey is
+	// sent: a tenant configures everything about that message except the one
+	// thing that triggers it, and a control panel that stays silent about that
+	// leaves the operator to conclude their own settings are broken.
+	IdleTimeout string `json:"idle_timeout,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // guardrailResponse is what a guardrail write answers with: the block as it now
@@ -176,9 +184,11 @@ type updateHandoffRulesRequest struct {
 // either, and a caller that flips the switch must not be made to restate the
 // numbers to avoid resetting them.
 type updateSurveyRequest struct {
-	Enabled             *bool `json:"enabled,omitempty"`
-	MinCustomerMessages *int  `json:"min_customer_messages,omitempty"`
-	TimeoutHours        *int  `json:"timeout_hours,omitempty"`
+	Enabled             *bool   `json:"enabled,omitempty"`
+	MinCustomerMessages *int    `json:"min_customer_messages,omitempty"`
+	TimeoutHours        *int    `json:"timeout_hours,omitempty"`
+	PromptMessage       *string `json:"prompt_message,omitempty"`
+	ThanksMessage       *string `json:"thanks_message,omitempty"`
 }
 
 // surveyResponse is what a survey write answers with: the block as it now
@@ -612,6 +622,7 @@ func (h *Handler) runtimeStatus(ctx context.Context) *runtimeStatus {
 		OntologyEnabled: sw.OntologyEnabled,
 		IntentTriage:    sw.IntentTriage,
 		SceneMode:       sw.SceneMode,
+		IdleTimeout:     sw.IdleTimeout,
 	}
 }
 
@@ -671,6 +682,34 @@ func (h *Handler) updateSurvey(w http.ResponseWriter, r *http.Request, pl *repos
 		errorJSON(w, http.StatusBadRequest, "timeout_hours must be greater than 0 (the runtime reads 0 as unset and falls back to its default)")
 		return
 	}
+	// Both messages go to a customer verbatim, so the bound is on what the
+	// channel will carry rather than on what the column will hold.
+	for field, value := range map[string]*string{
+		"prompt_message": req.PromptMessage,
+		"thanks_message": req.ThanksMessage,
+	} {
+		if value != nil && utf8.RuneCountInString(*value) > survey.MaxMessageRunes {
+			errorJSON(w, http.StatusBadRequest,
+				fmt.Sprintf("%s must be at most %d characters", field, survey.MaxMessageRunes))
+			return
+		}
+	}
+	// The prompt is the only place the customer is told what a valid reply is,
+	// and the reply parser accepts a bare 1 to 5 and nothing else. A prompt that
+	// drops the scale produces a survey nobody can answer correctly: the reply
+	// is read as an ordinary message, the conversation reopens, and no error is
+	// raised anywhere. Rejecting it here is the only point at which that is
+	// visible to the person causing it.
+	//
+	// Blank is allowed and means "use the platform text" — the loader
+	// substitutes it, so the console shows what the customer will receive.
+	if req.PromptMessage != nil && !domain.IsBlankAnswer(*req.PromptMessage) &&
+		!survey.PromptDeclaresScale(*req.PromptMessage) {
+		errorJSON(w, http.StatusBadRequest,
+			"提问语必须写明回复 1-5 打分：客户的回复只有 1 到 5 这五个数字会被识别为评分，"+
+				"其余内容会被当成普通消息，评分不会被记录，也不会有任何报错")
+		return
+	}
 
 	raw, err := h.pls.GetConfigJSON(r.Context(), pl.ID)
 	if err != nil {
@@ -689,6 +728,21 @@ func (h *Handler) updateSurvey(w http.ResponseWriter, r *http.Request, pl *repos
 	if req.TimeoutHours != nil {
 		cfg.TimeoutHours = *req.TimeoutHours
 	}
+	// A blank message is stored as blank rather than as the platform text, so a
+	// line that never customised one keeps following the platform text when it
+	// changes instead of freezing a copy of today's wording.
+	if req.PromptMessage != nil {
+		cfg.PromptMessage = strings.TrimSpace(*req.PromptMessage)
+		if domain.IsBlankAnswer(cfg.PromptMessage) {
+			cfg.PromptMessage = ""
+		}
+	}
+	if req.ThanksMessage != nil {
+		cfg.ThanksMessage = strings.TrimSpace(*req.ThanksMessage)
+		if domain.IsBlankAnswer(cfg.ThanksMessage) {
+			cfg.ThanksMessage = ""
+		}
+	}
 
 	if err := h.pls.SetConfigKey(r.Context(), pl.ID, survey.ConfigKey, cfg); err != nil {
 		log.Printf("[ai-settings] store survey error: %v", err)
@@ -696,7 +750,21 @@ func (h *Handler) updateSurvey(w http.ResponseWriter, r *http.Request, pl *repos
 		return
 	}
 
-	writeJSON(w, http.StatusOK, surveyResponse{ProductLineID: pl.ID, Config: cfg})
+	// Answer with the block as the runtime reads it: a blank message the loader
+	// fills from the platform text is answered with that text, because that is
+	// what the customer will receive.
+	writeJSON(w, http.StatusOK, surveyResponse{ProductLineID: pl.ID, Config: survey.Load(mustMarshalSurvey(cfg))})
+}
+
+// mustMarshalSurvey wraps a survey block in the shape Load expects, so a write
+// can answer with the same back-filled values a reader would see rather than
+// with the raw stored block.
+func mustMarshalSurvey(cfg *survey.Config) json.RawMessage {
+	raw, err := json.Marshal(map[string]*survey.Config{survey.ConfigKey: cfg})
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // writeGuardrail applies one caller's change to the tenant's guardrail block and

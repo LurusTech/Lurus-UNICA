@@ -13,7 +13,10 @@ package survey
 import (
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
+
+	"github.com/kefu/unica/pkg/domain"
 )
 
 // ConfigKey is the top-level key of product_lines.config_json holding this block.
@@ -32,7 +35,20 @@ type Config struct {
 	// TimeoutHours is how long a sent survey waits for a reply before the
 	// pending record expires.
 	TimeoutHours int `json:"timeout_hours"`
+	// PromptMessage is what the customer is asked. It carries the rating scale,
+	// so a line that rewrites it is rewriting the instructions the reply is
+	// parsed against — the parser accepts 1-5 and nothing else.
+	PromptMessage string `json:"prompt_message"`
+	// ThanksMessage is what the customer receives once a rating is recorded. It
+	// is the acknowledgement that the rating landed; a line that blanks it
+	// leaves the customer unsure whether it did.
+	ThanksMessage string `json:"thanks_message"`
 }
+
+// MaxMessageRunes bounds either message. Both are delivered to a customer over
+// channels with their own limits, and the bound is in runes rather than bytes
+// because the text is Chinese and a byte bound would cut a character in half.
+const MaxMessageRunes = 500
 
 // Defaults returns the settings a product line meets when it has configured none.
 func Defaults() *Config {
@@ -40,7 +56,34 @@ func Defaults() *Config {
 		Enabled:             false,
 		MinCustomerMessages: 2,
 		TimeoutHours:        24,
+		PromptMessage: "感谢您的咨询！请为本次服务评分：\n" +
+			"回复数字 1-5（5分最高）\n" +
+			"1 - 非常不满意\n" +
+			"2 - 不满意\n" +
+			"3 - 一般\n" +
+			"4 - 满意\n" +
+			"5 - 非常满意",
+		ThanksMessage: "感谢您的评价！我们会继续努力提升服务质量。",
 	}
+}
+
+// PromptDeclaresScale reports whether a survey prompt still tells the customer
+// what a valid reply looks like.
+//
+// This is a contract, not a style rule. The reply parser accepts a bare integer
+// 1 through 5 and nothing else; anything else is handed back to the caller as
+// an ordinary message, which reopens the conversation. So a prompt rewritten
+// into "您对本次服务满意吗？" produces a survey the customer cannot answer
+// correctly and a rating that is never recorded — and nothing anywhere reports
+// an error, because from the router's side the customer simply said something
+// unrelated.
+//
+// The test is deliberately loose: both ends of the range must appear, in ASCII
+// or in fullwidth digits. Requiring all five would reject "请回复 1-5 为我们
+// 打分", which is a perfectly answerable prompt.
+func PromptDeclaresScale(prompt string) bool {
+	return (strings.ContainsRune(prompt, '1') || strings.ContainsRune(prompt, '１')) &&
+		(strings.ContainsRune(prompt, '5') || strings.ContainsRune(prompt, '５'))
 }
 
 // PendingTTL is how long a sent survey stays pending. It is derived from the
@@ -94,6 +137,19 @@ func Load(configJSON json.RawMessage) *Config {
 	}
 	if cfg.TimeoutHours <= 0 {
 		cfg.TimeoutHours = defaults.TimeoutHours
+	}
+	// Blank rather than empty, and for the same reason the guardrail block
+	// treats its holding message that way: these two strings are delivered to a
+	// customer verbatim, so a line configured with a stray space or a pasted
+	// zero-width character would send the blank message the router now refuses
+	// to send for an AI answer. Falling back to the platform text keeps the
+	// survey answerable — a prompt with no scale in it cannot be replied to
+	// correctly, since the parser accepts 1-5 and nothing else.
+	if domain.IsBlankAnswer(cfg.PromptMessage) {
+		cfg.PromptMessage = defaults.PromptMessage
+	}
+	if domain.IsBlankAnswer(cfg.ThanksMessage) {
+		cfg.ThanksMessage = defaults.ThanksMessage
 	}
 	return cfg
 }

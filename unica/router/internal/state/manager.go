@@ -37,6 +37,13 @@ type Manager struct {
 	config    ManagerConfig
 	onCloseFn OnCloseFunc
 
+	// surveyWindowFn reports how long a closed conversation stays reachable so
+	// its satisfaction rating can be attributed to it. It is a hook rather than
+	// a config value because the period is a per-product-line setting that this
+	// package has no business reading, and because nil means "off": the state
+	// package cannot widen conversation lookup on its own.
+	surveyWindowFn func(ctx context.Context, productLineID string) time.Duration
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
@@ -48,6 +55,13 @@ func NewManager(repo *Repository, cache *Cache, config ManagerConfig) *Manager {
 		cache:  cache,
 		config: config,
 	}
+}
+
+// SetSurveyWindow registers the period during which a closed conversation is
+// still the conversation a customer's next message belongs to, so a rating sent
+// after closure is recorded against the conversation it rates.
+func (m *Manager) SetSurveyWindow(fn func(ctx context.Context, productLineID string) time.Duration) {
+	m.surveyWindowFn = fn
 }
 
 // SetOnClose registers a callback that fires when a conversation transitions to closed.
@@ -174,16 +188,34 @@ func (m *Manager) TransitionState(ctx context.Context, convID string, newState C
 	log.Printf("[state] transition conversation %s: %s -> %s (actor=%s)", convID, currentState, newState, actor)
 
 	// Fire OnClose callback when transitioning to closed
-	if newState == StateClosed && m.onCloseFn != nil {
-		conv, err := m.repo.GetConversation(ctx, convID)
-		if err != nil {
-			log.Printf("[state] warning: failed to load conversation %s for OnClose callback: %v", convID, err)
-		} else {
-			m.onCloseFn(ctx, conv)
-		}
+	if newState == StateClosed {
+		m.fireOnClose(ctx, convID)
 	}
 
 	return nil
+}
+
+// fireOnClose runs the registered close callback for a conversation that has
+// just been closed.
+//
+// It is a method rather than three lines inlined at the one call site because
+// there is a second way a conversation closes — the idle sweep — and for a long
+// time that path wrote the state straight to the database and returned. Since
+// the sweep is the only automatic closure the deployment has, everything hanging
+// off this callback was effectively unreachable: the satisfaction survey was
+// configurable, parsed, tested and never sent. Two closing paths and one of them
+// silently shorter is exactly the shape that produced it, so both go through
+// here now.
+func (m *Manager) fireOnClose(ctx context.Context, convID string) {
+	if m.onCloseFn == nil {
+		return
+	}
+	conv, err := m.repo.GetConversation(ctx, convID)
+	if err != nil {
+		log.Printf("[state] warning: failed to load conversation %s for OnClose callback: %v", convID, err)
+		return
+	}
+	m.onCloseFn(ctx, conv)
 }
 
 // findOrCreateCustomer looks up a customer by platform identity, creating one if needed.
@@ -222,8 +254,13 @@ func (m *Manager) findOrCreateCustomer(ctx context.Context, platformIdentity, ch
 
 // findOrCreateConversation finds an active conversation for the customer or creates a new one.
 func (m *Manager) findOrCreateConversation(ctx context.Context, customerID, channelID, productLineID string) (string, error) {
-	// Try to find an existing active conversation
-	conv, err := m.repo.GetConversationByCustomer(ctx, customerID)
+	// Try to find an existing active conversation, or one whose survey is still
+	// waiting to be answered.
+	var surveyWindow time.Duration
+	if m.surveyWindowFn != nil {
+		surveyWindow = m.surveyWindowFn(ctx, productLineID)
+	}
+	conv, err := m.repo.GetConversationByCustomer(ctx, customerID, surveyWindow)
 	if err == nil && conv != nil {
 		return conv.ID, nil
 	}
@@ -347,6 +384,9 @@ func (m *Manager) closeIdleConversations(ctx context.Context) {
 				log.Printf("[state] warning: failed to invalidate cache for idle conversation %s: %v", id, err)
 			}
 		}
+		// An idle closure is still a closure. Skipping this made the survey a
+		// setting with no reachable send path.
+		m.fireOnClose(ctx, id)
 		closed++
 	}
 
