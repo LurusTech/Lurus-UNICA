@@ -177,6 +177,77 @@ func TestEvaluate_UnexpectedHandoffReportsOnlyMismatch(t *testing.T) {
 	}
 }
 
+// TestEvaluate_EmptyAnswerFailsWhenNotHandoff is the direct regression for the
+// blank answers that scored green: a case carrying only negative assertions is
+// trivially satisfied by a string that says nothing.
+func TestEvaluate_EmptyAnswerFailsWhenNotHandoff(t *testing.T) {
+	c := newCase(t, Expect{
+		MustNotContain: []string{"7天"},
+		MustDeny:       []string{"货到付款"},
+		MustNotMatch:   []string{`\d+\s*元`},
+	})
+
+	o := Evaluate(c, "", false, false)
+	if o.Passed() {
+		t.Fatal("a blank answer satisfies every negative assertion; it must not pass")
+	}
+	if len(o.Failures) != 1 || o.Failures[0].Kind != FailEmptyAnswer {
+		t.Fatalf("expected exactly one empty_answer failure, got %v", kinds(o))
+	}
+	if !strings.Contains(o.Failures[0].Detail, "no readable content") {
+		t.Errorf("failure detail must name the emptiness, got %q", o.Failures[0].Detail)
+	}
+}
+
+// TestEvaluate_EmptyAnswerAllowedOnHandoff pins the one legal blank: the answer
+// was withheld, so there is nothing to deliver and nothing to assert.
+func TestEvaluate_EmptyAnswerAllowedOnHandoff(t *testing.T) {
+	c := newCase(t, Expect{MustNotContain: []string{"7天"}, Handoff: boolPtr(true)})
+
+	if o := Evaluate(c, "", true, true); !o.Passed() {
+		t.Errorf("a withheld answer may be empty, got %v", kinds(o))
+	}
+}
+
+// TestEvaluate_EmptyAnswerFailsOnSendAndHandoff covers the deliver-and-escalate
+// decision, which reaches Evaluate as handoff=false: it promises to send the
+// answer, so an empty one is still a blank delivered to the customer.
+func TestEvaluate_EmptyAnswerFailsOnSendAndHandoff(t *testing.T) {
+	c := newCase(t, Expect{MustNotContain: []string{"全额退款"}, Escalate: boolPtr(true)})
+
+	o := Evaluate(c, "", false, true)
+	if o.Passed() {
+		t.Fatal("send_and_handoff still delivers the answer; an empty one must fail")
+	}
+	if !hasKind(o, FailEmptyAnswer) {
+		t.Errorf("expected empty_answer, got %v", kinds(o))
+	}
+}
+
+// TestEvaluate_WhitespaceOnlyAnswerFails guards the TrimSpace: a reply made of
+// blank lines is as blank as "" to the customer reading it.
+func TestEvaluate_WhitespaceOnlyAnswerFails(t *testing.T) {
+	c := newCase(t, Expect{MustNotContain: []string{"7天"}})
+
+	for _, answer := range []string{" ", "\n", "\t\n  ", "　"} {
+		if o := Evaluate(c, answer, false, false); !hasKind(o, FailEmptyAnswer) {
+			t.Errorf("expected empty_answer for %q, got %v", answer, kinds(o))
+		}
+	}
+}
+
+// TestEvaluate_EmptyAnswerStillReportsHandoffMismatch keeps the routing
+// assertions ahead of the emptiness check: a case that expected a handoff and
+// did not get one must still say so, not only that the answer was blank.
+func TestEvaluate_EmptyAnswerStillReportsHandoffMismatch(t *testing.T) {
+	c := newCase(t, Expect{MustNotContain: []string{"7天"}, Handoff: boolPtr(true)})
+
+	o := Evaluate(c, "", false, false)
+	if !hasKind(o, FailHandoffMismatch) || !hasKind(o, FailEmptyAnswer) {
+		t.Errorf("expected both handoff_mismatch and empty_answer, got %v", kinds(o))
+	}
+}
+
 func TestOutcome_ErroredIsNeitherPassNorFail(t *testing.T) {
 	c := newCase(t, Expect{MustContainAll: []string{"15天"}})
 	o := Outcome{Case: c, Err: "dial tcp: connection refused"}
@@ -218,5 +289,101 @@ func TestRegexpPatternsAreRE2Safe(t *testing.T) {
 		if _, err := regexp.Compile(pattern); err != nil {
 			t.Errorf("pattern %q does not compile: %v", pattern, err)
 		}
+	}
+}
+
+// TestEvaluate_BlankAnswerWithheldByRouterStillFails is the regression for the
+// hole the D18 fix opened in the D19 fix. The router now demotes every blank
+// answer to a handoff, so cmd/evalset reports handoff=true for exactly the cases
+// this check exists to catch. With the check sitting behind the withheld-answer
+// short-circuit it never ran — and before D18 these same cases failed on
+// must_contain_all, so fixing the live path had made the golden set blinder than
+// it was.
+func TestEvaluate_BlankAnswerWithheldByRouterStillFails(t *testing.T) {
+	c := newCase(t, Expect{MustContainAll: []string{"7天"}})
+
+	o := Evaluate(c, "", true, true)
+	if o.Passed() {
+		t.Fatal("the model said nothing; the router covering for it is not a pass")
+	}
+	if !hasKind(o, FailEmptyAnswer) {
+		t.Errorf("expected empty_answer, got %v", kinds(o))
+	}
+}
+
+// TestEvaluate_InvisibleOnlyAnswerFails covers what TrimSpace could not see. A
+// zero width space or a BOM carried in from a knowledge-base chunk is not
+// unicode.IsSpace, so the first version of this check passed these answers and
+// the report printed a string that looked non-empty.
+func TestEvaluate_InvisibleOnlyAnswerFails(t *testing.T) {
+	c := newCase(t, Expect{MustNotContain: []string{"7天"}})
+
+	for _, answer := range blankRunes() {
+		if o := Evaluate(c, answer, false, false); !hasKind(o, FailEmptyAnswer) {
+			t.Errorf("expected empty_answer for %q, got %v", answer, kinds(o))
+		}
+	}
+}
+
+// TestEvaluate_TagResidueAnswerFails covers the other shape the tag protocols
+// produce: an answer that was nothing but tags leaves a lone separator behind
+// once they are stripped. "。" tells the customer exactly as much as "" did.
+func TestEvaluate_TagResidueAnswerFails(t *testing.T) {
+	c := newCase(t, Expect{MustNotContain: []string{"7天"}})
+
+	for _, answer := range []string{"。", "、", "-\n-", "]", "**", "---", ":"} {
+		if o := Evaluate(c, answer, false, false); !hasKind(o, FailEmptyAnswer) {
+			t.Errorf("expected empty_answer for %q, got %v", answer, kinds(o))
+		}
+	}
+}
+
+// TestEvaluate_TerseButRealAnswerIsScoredNormally pins the other side of the
+// predicate. Emoji and bare figures are content: they must reach the content
+// assertions and be judged there, not be written off as silence.
+func TestEvaluate_TerseButRealAnswerIsScoredNormally(t *testing.T) {
+	c := newCase(t, Expect{MustContainAll: []string{"7天"}})
+
+	for _, answer := range []string{"\U0001F44D", "7天", "¥199"} {
+		o := Evaluate(c, answer, false, false)
+		if hasKind(o, FailEmptyAnswer) {
+			t.Errorf("answer %q has content; it must not be scored as empty", answer)
+		}
+	}
+}
+
+// blankRunes builds the invisible answers by code point. Written as literals
+// they are a byte order mark in a source file, which the Go compiler rejects —
+// and unreadable to review besides, which is the whole problem with this class
+// of character.
+func blankRunes() []string {
+	return []string{
+		string(rune(0x200B)), // zero width space
+		string(rune(0xFEFF)), // byte order mark
+		string(rune(0x2060)), // word joiner
+		string(rune(0x00AD)), // soft hyphen
+		string(rune(0x2800)), // braille pattern blank
+		string(rune(0x3164)), // Hangul filler
+		string(rune(0x180E)), // Mongolian vowel separator
+		" " + string(rune(0x200B)) + "\n",
+	}
+}
+
+// TestEvaluateIntercepted_ScoresRoutingOnly keeps pre-dispatch triage apart from
+// model silence. The message never reached the model, so there is no answer to
+// blame it for — but the routing assertions still have to hold.
+func TestEvaluateIntercepted_ScoresRoutingOnly(t *testing.T) {
+	c := newCase(t, Expect{MustContainAll: []string{"15天"}})
+	if o := EvaluateIntercepted(c); !o.Passed() {
+		t.Errorf("an intercepted message has no answer to score, got %v", kinds(o))
+	}
+
+	wanted := newCase(t, Expect{MustContainAll: []string{"15天"}, Handoff: boolPtr(false)})
+	o := EvaluateIntercepted(wanted)
+	if !hasKind(o, FailHandoffMismatch) {
+		t.Errorf("a case that expected no handoff must still fail, got %v", kinds(o))
+	}
+	if hasKind(o, FailEmptyAnswer) {
+		t.Error("the model was never called; empty_answer would blame it for a message it never saw")
 	}
 }

@@ -309,7 +309,7 @@ func scoreCase(client *bridge.DifyClient, cfg lineConfig, c eval.Case, timeout t
 	// intercepted message never reaches the model, so no Dify call is made here
 	// either. Scoring a real call would misrepresent both latency and cost.
 	if triageMode.DecidesRouting() && intent.Classify(c.Query).NeedsHuman() {
-		return eval.Evaluate(c, "", true, true)
+		return eval.EvaluateIntercepted(c)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

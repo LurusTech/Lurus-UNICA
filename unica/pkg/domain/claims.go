@@ -22,7 +22,10 @@ import (
 // survives a model that ignores it (no tags simply means no claims to check, and
 // the answer is delivered exactly as it is today), and needs no change to the
 // app's output format.
-var factTagPattern = regexp.MustCompile(`\[FACT:([^\]=]+)=([^\]]*)\]`)
+// Matching is case-insensitive for the same reason the escalation protocol's
+// is: a tag the model wrote as [fact:...] is still a tag, and a pattern that
+// does not recognise it leaves internal markup in the customer's message.
+var factTagPattern = regexp.MustCompile(`(?i)\[FACT:([^\]=]+)=([^\]]*)\]`)
 
 // factTagStripPattern matches any [FACT:...] whatsoever, well-formed or not.
 //
@@ -33,7 +36,7 @@ var factTagPattern = regexp.MustCompile(`\[FACT:([^\]=]+)=([^\]]*)\]`)
 // case, not an exotic one: it was observed on 3 of 21 turns in a single
 // conversation. Parsing stays strict, because a tag with no value asserts
 // nothing checkable; removal is deliberately total.
-var factTagStripPattern = regexp.MustCompile(`\[FACT:[^\]]*\]`)
+var factTagStripPattern = regexp.MustCompile(`(?i)\[FACT:[^\]]*\]`)
 
 // Claim is one factual assertion the model made about its own answer.
 type Claim struct {

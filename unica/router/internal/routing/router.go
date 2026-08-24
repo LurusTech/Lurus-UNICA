@@ -678,6 +678,14 @@ func (r *Router) callDify(ctx context.Context, config *RouteConfig, msg *model.S
 		return nil, difyDuration, false
 	}
 
+	// A byte-for-byte empty answer is caught here only to skip a judgement that
+	// has nothing to judge and to attribute it to the model rather than to the
+	// decision chain. It is not the defence against empty answers: this sees the
+	// raw text, so whitespace-only replies and replies that are nothing but
+	// [HANDOFF:]/[FACT:] tags still look non-empty at this point and are caught
+	// after stripping, inside JudgeAnswer. Do not "strengthen" this into a
+	// TrimSpace check and assume the problem is handled here — the offline
+	// golden-set replay never runs this function at all.
 	if difyResp.Answer == "" {
 		log.Printf("[router] worker %d: Dify returned empty answer for conversation %s", workerID, convID)
 		metrics.DifyErrorsTotal.WithLabelValues("empty_answer").Inc()
@@ -752,6 +760,19 @@ func (r *Router) recordJudgement(ctx context.Context, config *RouteConfig, convI
 	if ac.ontology != nil && ac.ontologyCfg.Validates() {
 		metrics.OntologyBreakerOpen.WithLabelValues(config.ProductLineID).
 			Set(boolToFloat(r.breaker.Open(config.ProductLineID)))
+	}
+
+	// D18 stayed invisible for as long as it did because an empty answer looked
+	// like a normal send in every counter. It is counted under the same
+	// error_type as the raw-empty check in callDify so one dashboard covers both
+	// shapes — the answer that arrived empty and the answer that was empty once
+	// the tag protocols came off — and the raw length distinguishes them during
+	// review. The reason label is not enough on its own: when the model tagged
+	// an escalation, JudgeAnswer keeps that reason.
+	if j.EmptyAnswerWithheld {
+		metrics.DifyErrorsTotal.WithLabelValues("empty_answer").Inc()
+		log.Printf("[router] worker %d: empty answer withheld for conversation %s (reason=%s, confidence=%.3f, raw_answer_len=%d): handing off instead of delivering blank text",
+			workerID, convID, j.Result.Reason, j.Confidence, len(difyResp.Answer))
 	}
 
 	metrics.GuardrailDecisionsTotal.WithLabelValues(string(j.Result.Decision), j.Result.Reason).Inc()
@@ -950,6 +971,12 @@ func (r *Router) requeue(ctx context.Context, entry redis.XMessage) bool {
 }
 
 // publishAIResponse builds and publishes the AI response to the outbound stream and stores it in DB.
+//
+// answer is trusted to be non-blank because this is only reached from a
+// decision that Delivers(), and JudgeAnswer refuses to deliver a blank one. The
+// check belongs there and not here: this function is the last of several
+// delivery paths, and per-path checks are what let D18 through the
+// send_and_handoff branch after the plain send branch had one.
 func (r *Router) publishAIResponse(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, answer string, confidenceF32 float32, totalTokens int, ragSources int, difyDuration time.Duration) {
 	outMsg := model.StandardMessage{
 		ID:      uuid.New().String(),
@@ -1078,8 +1105,16 @@ type handoffEvent struct {
 // suppression is read from the decision rather than inferred from emptiness.
 // Getting this backwards would tell the agent the customer is waiting on a
 // first reply when they have already had one, and they would answer it twice.
+//
+// The emptiness guard is the other half of the same question: pre-AI triage and
+// a model that produced no text hand off without there being an answer to
+// suppress, and claiming otherwise would send the agent looking for a draft
+// that does not exist. Since JudgeAnswer guarantees a delivering decision has a
+// non-blank answer, the two terms can no longer disagree — an empty answer is
+// always a handoff, and always one where nothing was withheld from the customer
+// because nothing was ever written.
 func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMessage, convID, productLineID string, evalResult *guardrail.EvalResult, answer string) {
-	suppressed := answer != "" && !evalResult.Decision.Delivers()
+	suppressed := !domain.IsBlankAnswer(answer) && !evalResult.Decision.Delivers()
 	// Record the decision before publishing: the stream event is consumed and
 	// gone, while this row is what later answers "why did this conversation
 	// leave the AI". Best-effort by design — the recorder logs and swallows.

@@ -9,7 +9,12 @@ import (
 )
 
 // intentTagPattern matches [INTENT:signal_name] tags in Dify responses.
-var intentTagPattern = regexp.MustCompile(`\[INTENT:([a-z_]+)\]`)
+//
+// Case-insensitive, and the captured name is lowercased before it is looked up.
+// A case-sensitive pattern left [INTENT:PRICE_INQUIRY] in the customer-facing
+// text — the tag protocols exist so customers never see internal markup, and
+// case is not something a model reproduces reliably.
+var intentTagPattern = regexp.MustCompile(`(?i)\[INTENT:([a-z_]+)\]`)
 
 // ValidIntents defines the set of recognised intent signal names.
 var ValidIntents = map[string]bool{
@@ -40,7 +45,7 @@ func DetectIntents(answer string) DetectResult {
 		if len(match) < 2 {
 			continue
 		}
-		signal := match[1]
+		signal := strings.ToLower(match[1])
 		if !ValidIntents[signal] {
 			continue
 		}

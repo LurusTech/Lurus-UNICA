@@ -384,3 +384,16 @@ func TestValidate_CompanionStillCatchesOmission(t *testing.T) {
 		t.Errorf("expected missing_companion when the precondition is nowhere stated, got %v", kindsOf(v))
 	}
 }
+
+// TestParseClaims_TagNameIsCaseInsensitive: same reasoning as the escalation
+// protocol. A [fact:...] the model wrote in the wrong case used to be delivered
+// verbatim to the customer.
+func TestParseClaims_TagNameIsCaseInsensitive(t *testing.T) {
+	got := ParseClaims("退货窗口七天。[fact:return_window_days=7][Fact:fee=0]")
+	if len(got.Claims) != 2 {
+		t.Fatalf("claims = %+v, want 2", got.Claims)
+	}
+	if strings.Contains(strings.ToLower(got.CleanedAnswer), "fact:") {
+		t.Errorf("tag left in customer text: %q", got.CleanedAnswer)
+	}
+}

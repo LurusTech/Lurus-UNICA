@@ -16,6 +16,8 @@ package guardrail
 import (
 	"encoding/json"
 	"log"
+
+	"github.com/kefu/unica/pkg/domain"
 )
 
 // ConfigKey is the top-level key of product_lines.config_json holding this block.
@@ -88,7 +90,13 @@ func Load(configJSON json.RawMessage) *Config {
 	if len(cfg.HandoffKeywords) == 0 {
 		cfg.HandoffKeywords = defaults.HandoffKeywords
 	}
-	if cfg.HoldingMessage == "" {
+	// Blank rather than empty: the holding message is the one thing a customer
+	// receives when the AI answer is withheld, so a product line configured with
+	// a stray space — or with a zero width character pasted out of a document —
+	// would hand the customer the same blank message the router now refuses to
+	// send. The same predicate the router judges answers with, for the same
+	// reason.
+	if domain.IsBlankAnswer(cfg.HoldingMessage) {
 		cfg.HoldingMessage = defaults.HoldingMessage
 	}
 	// An absent blocked-topics list and an empty one mean the same thing to the

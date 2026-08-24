@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseEscalation_Vocabulary(t *testing.T) {
 	for _, tc := range []struct {
@@ -105,6 +108,32 @@ func TestAnnouncesTransfer(t *testing.T) {
 	for _, a := range notAnnouncing {
 		if AnnouncesTransfer(a) {
 			t.Errorf("AnnouncesTransfer(%q) = true, want false", a)
+		}
+	}
+}
+
+// TestParseEscalation_TagNameIsCaseInsensitive pins the case variants. A
+// case-sensitive pattern did neither of the two things this protocol exists to
+// do: the tag was not stripped, so the customer read internal markup, and the
+// escalation was not raised, so a payout request was swallowed with no trace
+// anywhere. That is worse than the blank-answer defect it was found next to —
+// the answer looks fine and nobody is told a person was needed.
+func TestParseEscalation_TagNameIsCaseInsensitive(t *testing.T) {
+	for _, answer := range []string{
+		"[handoff:payout]",
+		"[Handoff:payout]",
+		"[HandOff: Payout ]",
+		"退款需人工核定。[handoff:PAYOUT]",
+	} {
+		got := ParseEscalation(answer)
+		if !got.Requested {
+			t.Errorf("%q must raise an escalation", answer)
+		}
+		if got.Reason != EscalatePayout {
+			t.Errorf("%q gave reason %q, want %q", answer, got.Reason, EscalatePayout)
+		}
+		if strings.Contains(strings.ToLower(got.CleanedAnswer), "handoff") {
+			t.Errorf("%q left the tag in the customer text: %q", answer, got.CleanedAnswer)
 		}
 	}
 }

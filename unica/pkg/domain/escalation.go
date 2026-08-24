@@ -45,14 +45,22 @@ const (
 	EscalateOther = "other"
 )
 
-var escalateTagPattern = regexp.MustCompile(`\[HANDOFF:([^\]]*)\]`)
+// Both patterns are case-insensitive. The tag name is a protocol the model is
+// asked to reproduce, and a model that writes [handoff:payout] meant the tag —
+// but a case-sensitive pattern neither strips it nor acts on it, so the customer
+// reads internal markup and a payout escalation is swallowed whole. That is
+// strictly worse than the blank answer the emptiness check guards against: the
+// answer looks fine and nobody is ever told a person was needed. The tag value
+// was already lowercased before being looked up, so matching the name the same
+// way is the file doing what its own comment below already claims.
+var escalateTagPattern = regexp.MustCompile(`(?i)\[HANDOFF:([^\]]*)\]`)
 
 // escalateTagStripPattern matches any [HANDOFF...] whatsoever, including the
 // malformed shapes a model improvises — [HANDOFF] with no value, [HANDOFF:] with
 // no reason. ParseEscalation strips by this wider pattern so a tag never reaches
 // a customer just because it was written badly, exactly as the claim protocol
 // does.
-var escalateTagStripPattern = regexp.MustCompile(`\[HANDOFF[^\]]*\]`)
+var escalateTagStripPattern = regexp.MustCompile(`(?i)\[HANDOFF[^\]]*\]`)
 
 // EscalationResult is what ParseEscalation found.
 type EscalationResult struct {

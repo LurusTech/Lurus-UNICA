@@ -1,6 +1,7 @@
 package marketing
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -90,5 +91,18 @@ func TestDetectIntents_OnlyTags(t *testing.T) {
 	}
 	if len(result.Intents) != 1 {
 		t.Errorf("expected 1 intent, got %v", result.Intents)
+	}
+}
+
+// TestDetectIntents_TagNameIsCaseInsensitive: an [INTENT:PRICE_INQUIRY] used to
+// be left in the customer-facing text because the pattern required the value to
+// be lowercase. Tags never reach customers, whatever case the model chose.
+func TestDetectIntents_TagNameIsCaseInsensitive(t *testing.T) {
+	got := DetectIntents("这款现在有活动。[INTENT:PRICE_INQUIRY][intent:comparison]")
+	if strings.Contains(strings.ToLower(got.CleanedAnswer), "intent") {
+		t.Errorf("tag left in customer text: %q", got.CleanedAnswer)
+	}
+	if len(got.Intents) != 2 {
+		t.Fatalf("intents = %v, want price_inquiry and comparison", got.Intents)
 	}
 }
