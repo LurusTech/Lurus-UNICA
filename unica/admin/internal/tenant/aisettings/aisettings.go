@@ -57,6 +57,10 @@ type Config struct {
 	Channels     channelIDs
 	Dify         *bridge.DifyBridge
 	Redis        *redis.Client
+	// Router reads the platform switches from the router process. Nil is
+	// tolerated: the page then reports the runtime as unknown, which is the
+	// truth, rather than assuming defaults it cannot verify.
+	Router *bridge.RouterBridge
 }
 
 // Handler serves the ai-settings sub-resource of a tenant.
@@ -64,6 +68,7 @@ type Handler struct {
 	pls        productLines
 	dify       *bridge.DifyBridge
 	routeCache *routecache.Invalidator
+	router     *bridge.RouterBridge
 }
 
 // NewHandler creates an AI settings handler.
@@ -72,6 +77,7 @@ func NewHandler(cfg Config) *Handler {
 		pls:        cfg.ProductLines,
 		dify:       cfg.Dify,
 		routeCache: routecache.New(cfg.Redis, cfg.Channels),
+		router:     cfg.Router,
 	}
 }
 
@@ -93,6 +99,39 @@ type settingsResponse struct {
 	// facts or scene strategy appear to do nothing may simply not be receiving
 	// them — this is the only place that distinction is visible.
 	Variables *bridge.AppVariablesInfo `json:"variables,omitempty"`
+	// Knowledge is whether this tenant's knowledge base can be searched at all.
+	// A dataset that is not bound, or one whose retrieval method does not match
+	// the index its documents were built with, answers every query with nothing
+	// while reporting itself healthy.
+	Knowledge *knowledgeStatus `json:"knowledge,omitempty"`
+	// Runtime is the narrow slice of platform switches a tenant needs in order
+	// to explain what it sees. The master switches decide whether settings on
+	// this page have any effect, so withholding them would leave a tenant
+	// changing a control that a platform decision has already disabled.
+	//
+	// Behaviour switches only: cache lifetimes, worker counts and integration
+	// endpoints explain nothing a tenant can act on and are not here.
+	Runtime *runtimeStatus `json:"runtime,omitempty"`
+}
+
+// knowledgeStatus reports whether retrieval can work, not how it is configured.
+type knowledgeStatus struct {
+	DatasetBound bool `json:"dataset_bound"`
+	// IndexMatches is false when the retrieval method and the index disagree.
+	// Unknown datasets report false with a Reason rather than a cheerful true.
+	IndexMatches      bool   `json:"index_matches"`
+	IndexingTechnique string `json:"indexing_technique,omitempty"`
+	SearchMethod      string `json:"search_method,omitempty"`
+	TopK              int    `json:"top_k,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+}
+
+type runtimeStatus struct {
+	Available       bool   `json:"available"`
+	OntologyEnabled bool   `json:"ontology_enabled"`
+	IntentTriage    string `json:"intent_triage,omitempty"`
+	SceneMode       string `json:"scene_mode,omitempty"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 // guardrailResponse is what a guardrail write answers with: the block as it now
@@ -171,6 +210,7 @@ const thresholdRangeMessage = "threshold must be greater than 0 and at most 1 (t
 //	PUT    ai-settings/survey         satisfaction survey switch and thresholds
 //	POST   ai-settings/variables/repair  declare the router inputs the app is missing
 //	POST   ai-settings/dataset/bind   re-bind the knowledge dataset
+//	POST   ai-settings/dataset/retrieval  realign the search method with the index
 //	POST   ai-settings/test           send a test message to the app
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	segments := pathSegments(r.URL.Path, tenantRoutePrefix)
@@ -248,6 +288,15 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.bindDataset(w, r, pl)
 			return
 		}
+		// POST .../dataset/retrieval realigns the search method with the index.
+		if len(rest) > 1 && rest[1] == "retrieval" {
+			if r.Method != http.MethodPost {
+				errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			h.repairRetrieval(w, r, pl)
+			return
+		}
 		errorJSON(w, http.StatusNotFound, "unknown dataset action")
 	case "variables":
 		// POST .../variables/repair declares the router inputs an app is missing.
@@ -314,6 +363,8 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		Survey:          survey.Load(raw),
 		Model:           model,
 		Variables:       variables,
+		Knowledge:       h.knowledgeStatus(r.Context(), pl),
+		Runtime:         h.runtimeStatus(r.Context()),
 	})
 }
 
@@ -470,6 +521,85 @@ func (h *Handler) updateHandoffRules(w http.ResponseWriter, r *http.Request, pl 
 			cfg.HoldingMessage = *req.HoldingMessage
 		}
 	})
+}
+
+// repairRetrieval realigns a dataset's search method with the index its
+// documents were built with.
+//
+// Administrator only, like the other repairs here. The write refuses outright
+// when the deployment's indexing technique and the dataset's disagree, because
+// applying one to the other silently empties every search — see the bridge.
+func (h *Handler) repairRetrieval(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	claims := auth.GetClaims(r.Context())
+	if claims != nil && !rbac.IsAdmin(claims.Role) {
+		errorJSON(w, http.StatusForbidden, "retrieval repair requires the administrator role")
+		return
+	}
+	if pl.DifyDatasetID == nil || *pl.DifyDatasetID == "" {
+		errorJSON(w, http.StatusBadRequest, "no Dify dataset configured for this product line")
+		return
+	}
+
+	if err := h.dify.SetDatasetRetrieval(r.Context(), *pl.DifyDatasetID, ""); err != nil {
+		log.Printf("[ai-settings] repair retrieval error: %v", err)
+		errorJSON(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"product_line_id": pl.ID,
+		"knowledge":       h.knowledgeStatus(r.Context(), pl),
+	})
+}
+
+// knowledgeStatus reports whether this tenant's knowledge base can be searched.
+//
+// It asks Dify rather than reading the stored dataset id alone: a bound id says
+// documents have somewhere to go, not that a query will find them. The pairing
+// that matters is the retrieval method against the index the documents were
+// built with — mismatched, every search returns nothing and no error is raised
+// anywhere.
+func (h *Handler) knowledgeStatus(ctx context.Context, pl *repository.ProductLine) *knowledgeStatus {
+	if pl.DifyDatasetID == nil || *pl.DifyDatasetID == "" {
+		return &knowledgeStatus{
+			DatasetBound: false,
+			Reason:       "本产线没有知识库数据集，上传的文档无处可去，检索恒空",
+		}
+	}
+	cfg, err := h.dify.GetDatasetConfig(ctx, *pl.DifyDatasetID, "")
+	if err != nil {
+		log.Printf("[ai-settings] dataset status unavailable for %s: %v", pl.ID, err)
+		return &knowledgeStatus{
+			DatasetBound: true,
+			Reason:       "无法读取数据集当前配置：" + err.Error(),
+		}
+	}
+	st := &knowledgeStatus{
+		DatasetBound:      true,
+		IndexingTechnique: cfg.IndexingTechnique,
+		SearchMethod:      cfg.SearchMethod,
+		TopK:              cfg.TopK,
+	}
+	st.IndexMatches = difyapp.RetrievalMatchesIndex(cfg.IndexingTechnique, cfg.SearchMethod)
+	if !st.IndexMatches {
+		st.Reason = "检索方式与索引方式不匹配（索引 " + cfg.IndexingTechnique +
+			"，检索 " + cfg.SearchMethod + "），每次检索都会落空"
+	}
+	return st
+}
+
+// runtimeStatus narrows the router's switches to the ones a tenant can act on.
+func (h *Handler) runtimeStatus(ctx context.Context) *runtimeStatus {
+	sw, err := h.router.Switches(ctx)
+	if err != nil {
+		return &runtimeStatus{Available: false, Reason: err.Error()}
+	}
+	return &runtimeStatus{
+		Available:       true,
+		OntologyEnabled: sw.OntologyEnabled,
+		IntentTriage:    sw.IntentTriage,
+		SceneMode:       sw.SceneMode,
+	}
 }
 
 // repairVariables declares the router's inputs on an app that is missing them.

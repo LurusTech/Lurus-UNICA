@@ -166,11 +166,16 @@ func main() {
 	// The AI settings module writes the guardrail block the runtime reads, and
 	// drops the runtime's cached routes afterwards — hence the channel roster
 	// and the Redis client.
+	// One bridge shared by the console page and the platform endpoint, so both
+	// read the same short-lived cache rather than each polling the router.
+	routerBridge := bridge.NewRouterBridge(cfg.RouterInternalURL)
+
 	aiSettingsHandler := aisettings.NewHandler(aisettings.Config{
 		ProductLines: plRepo,
 		Channels:     channelRepo,
 		Dify:         difyBridge,
 		Redis:        rdb,
+		Router:       routerBridge,
 	})
 
 	auditLogHandler := handler.NewAuditLogHandler(auditRepo)
@@ -381,7 +386,6 @@ func main() {
 	// The router's behaviour switches, read from the router itself. Administrator
 	// only: they are platform state, and a tenant that could see them would be
 	// shown values it has no way to act on.
-	routerBridge := bridge.NewRouterBridge(cfg.RouterInternalURL)
 	mux.Handle("/api/v1/platform/runtime", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			handler.ErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -467,15 +471,16 @@ type tenantRouter struct {
 // closes the subtree: a name absent from it is a 404, not a request that reaches
 // the module and is refused there.
 var aiSettingsPaths = map[string]bool{
-	"":                 true,
-	"prompt":           true,
-	"prompt/reset":     true,
-	"threshold":        true,
-	"handoff-rules":    true,
-	"dataset/bind":     true,
-	"survey":           true,
-	"variables/repair": true,
-	"test":             true,
+	"":                  true,
+	"prompt":            true,
+	"prompt/reset":      true,
+	"threshold":         true,
+	"handoff-rules":     true,
+	"dataset/bind":      true,
+	"dataset/retrieval": true,
+	"survey":            true,
+	"variables/repair":  true,
+	"test":              true,
 }
 
 // factsPaths map the tenant-facing "facts" vocabulary onto the ontology

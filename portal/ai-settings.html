@@ -106,6 +106,61 @@
   .field.narrow { max-width: 240px; }
   input[type="checkbox"] { width: auto; padding: 0; }
   .inline-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+  /* ---- Connectivity diagnostic -------------------------------------------
+     The rows are a pipeline, not a checklist, and they are drawn as one: a
+     hairline runs through the status dots so an upstream failure reads as the
+     reason the rows under it cannot matter. A tenant whose facts appear to do
+     nothing is nearly always looking at a break higher up the line. */
+  .diag-card { border-top: 2px solid var(--border); }
+  .diag-card.state-warn { border-top-color: var(--warn); }
+  .diag-card.state-ok   { border-top-color: var(--ok); }
+
+  .diag { list-style: none; margin: 4px 0 0; padding: 0; }
+  .diag-item {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0 12px;
+    padding: 12px 0;
+    border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  }
+  .diag-item:first-child { border-top: 0; }
+
+  /* The rail: a dot on a line. The line is drawn by the rail itself so it
+     never depends on the height of the row above it. */
+  .diag-rail { position: relative; align-self: stretch; min-height: 20px; }
+  .diag-rail::before {
+    content: ""; position: absolute; left: 50%; top: -12px; bottom: -12px;
+    width: 1px; transform: translateX(-50%);
+    background: color-mix(in srgb, var(--border) 85%, transparent);
+  }
+  .diag-item:first-child .diag-rail::before { top: 8px; }
+  .diag-item:last-child  .diag-rail::before { bottom: calc(100% - 8px); }
+  .diag-dot {
+    position: absolute; left: 50%; top: 4px; transform: translateX(-50%);
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--text-muted);
+    box-shadow: 0 0 0 3px var(--surface), 0 0 0 4px color-mix(in srgb, var(--text-muted) 30%, transparent);
+  }
+  .is-ok      .diag-dot { background: var(--ok);   box-shadow: 0 0 0 3px var(--surface), 0 0 0 4px color-mix(in srgb, var(--ok) 32%, transparent); }
+  .is-warn    .diag-dot { background: var(--warn); box-shadow: 0 0 0 3px var(--surface), 0 0 0 4px color-mix(in srgb, var(--warn) 34%, transparent); }
+  .is-bad     .diag-dot { background: var(--bad);  box-shadow: 0 0 0 3px var(--surface), 0 0 0 4px color-mix(in srgb, var(--bad) 34%, transparent); }
+
+  .diag-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-weight: 600; }
+  .diag-state { font-weight: 400; font-size: 13px; color: var(--text-muted); }
+  .is-warn .diag-state { color: var(--warn); }
+  .is-bad  .diag-state { color: var(--bad); }
+  /* The explanation appears only where something is wrong. A note on every row
+     turns the card into prose nobody scans. */
+  .diag-note {
+    margin-top: 4px; font-size: 13px; line-height: 1.55;
+    color: color-mix(in srgb, var(--text) 78%, transparent);
+  }
+  .diag-act { align-self: center; }
+  .diag-act button { font-size: 13px; padding: 5px 12px; }
+  .diag-empty { color: var(--text-muted); font-size: 13px; padding: 12px 0; }
+
   .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
   .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.85rem; }
 
@@ -198,6 +253,19 @@
   <div id="loading" class="loading-text">加载中…</div>
 
   <div id="panels" hidden>
+    <!-- Connectivity diagnostic -->
+    <div class="card diag-card" id="diag-card">
+      <div class="card-head">
+        <h2>接通体检</h2>
+        <span class="pill" id="diag-verdict" hidden></span>
+      </div>
+      <p class="card-sub">
+        下面这条链路决定了本页其余设置有没有效果，按消息经过的顺序排列。
+        某一环断了，它下面的设置改了也不会有反应——先看这里，再改设置。
+      </p>
+      <ol class="diag" id="diag-list"></ol>
+    </div>
+
     <!-- System prompt -->
     <div class="card">
       <div class="card-head">
@@ -425,6 +493,10 @@
     modelPill: document.getElementById("model-pill"),
     modelInfo: document.getElementById("model-info"),
 
+    diagCard: document.getElementById("diag-card"),
+    diagVerdict: document.getElementById("diag-verdict"),
+    diagList: document.getElementById("diag-list"),
+
     datasetPill: document.getElementById("dataset-pill"),
     datasetBindBtn: document.getElementById("dataset-bind-btn"),
     datasetHint: document.getElementById("dataset-hint"),
@@ -613,10 +685,20 @@
     els.loading.textContent = "加载中…";
     els.panels.hidden = true;
 
-    return api(tenantPath("/ai-settings"))
-      .then(function (data) {
-        state.settings = data || {};
+    // The facts switch lives on its own page and its own endpoint, but whether
+    // it is having any effect can only be judged together with the platform
+    // master switch and the app's declared inputs — so the diagnostic reads it
+    // here. A failure to read it degrades that one row to "unknown" instead of
+    // failing the page.
+    return Promise.all([
+      api(tenantPath("/ai-settings")),
+      api(tenantPath("/facts/config")).catch(function () { return null; })
+    ])
+      .then(function (results) {
+        state.settings = results[0] || {};
+        state.factsConfig = results[1];
         fillForm(state.settings);
+        renderDiagnostics(buildDiagnostics(state.settings, state.factsConfig));
         els.loading.hidden = true;
         els.panels.hidden = false;
       })
@@ -853,6 +935,211 @@
       .catch(function (err) { reportError("重置提示词失败", err); })
       .finally(function () { setBusy(false, els.promptResetBtn, "重置为平台默认"); });
   });
+
+
+  // ---------- Connectivity diagnostic ----------
+  //
+  // Every row answers one question: is this link carrying anything? Not "what
+  // is it set to". That distinction is the whole point of the card — the page
+  // could show inject_facts as on while the facts were being discarded two
+  // steps earlier, and nothing said so.
+  //
+  // Rows are built in pipeline order and rendered whatever their state, so the
+  // shape of the chain stays constant between visits; only the dots move.
+  function buildDiagnostics(cfg, facts) {
+    var rows = [];
+    var rt = cfg.runtime || {};
+    var vars = cfg.variables || null;
+    var know = cfg.knowledge || null;
+    var model = cfg.model || null;
+
+    // 1. Does the app accept what the router sends it?
+    if (!vars) {
+      rows.push({ state: "unknown", title: "上下文变量", state_text: "读不到 AI 应用",
+        note: "本产线可能尚未开通 AI 应用，或 Dify 暂时不可达。" });
+    } else if (vars.complete) {
+      rows.push({ state: "ok", title: "上下文变量",
+        state_text: "已声明 " + (vars.declared || []).length + " 项" });
+    } else {
+      rows.push({ state: "bad", title: "上下文变量",
+        state_text: "缺 " + (vars.missing || []).join("、"),
+        note: "AI 应用没有声明这些输入，Dify 会把它们静默丢弃——确定性事实与应答策略即使开启也送不到模型。",
+        action: isAdmin() ? { label: "补齐声明", id: "diag-fix-vars" } : null });
+    }
+
+    // 2. Can the knowledge base be searched at all?
+    if (!know) {
+      rows.push({ state: "unknown", title: "知识库检索", state_text: "读不到" });
+    } else if (!know.dataset_bound) {
+      // No repair is offered here on purpose. Creating a dataset for a line
+      // that never had one is platform-side work that no endpoint does yet, and
+      // a button that cannot fix the thing beside it is worse than none — it
+      // costs a click, an error, and the operator's trust in every other button
+      // on this page.
+      rows.push({ state: "bad", title: "知识库检索", state_text: "没有数据集",
+        note: (know.reason || "本产线没有知识库数据集，上传的文档无处可去。") +
+          "　补建数据集需要平台侧处理，本页暂时无法自助修复。" });
+    } else if (!know.index_matches) {
+      rows.push({ state: "bad", title: "知识库检索", state_text: "检索方式与索引不匹配",
+        note: know.reason || "检索方式与文档建索引的方式不一致，每次检索都会落空，而且不会报错。",
+        action: isAdmin() ? { label: "修复检索", id: "diag-fix-retrieval" } : null });
+    } else {
+      rows.push({ state: "ok", title: "知识库检索",
+        state_text: know.search_method + " · 索引 " + know.indexing_technique +
+          (know.top_k ? " · top_k " + know.top_k : "") });
+    }
+
+    // 3. Are the deterministic facts actually reaching the model? Three
+    //    conditions in series; naming which one broke is the point.
+    var factsOn = facts && facts.inject_facts === true;
+    var declared = vars && (vars.declared || []).indexOf("facts_context") >= 0;
+    if (!rt.available) {
+      rows.push({ state: "unknown", title: "确定性事实注入", state_text: "无法确认",
+        note: "读不到平台运行状态" + (rt.reason ? "（" + rt.reason + "）" : "") + "，因此无法判断注入是否真的生效。" });
+    } else if (!rt.ontology_enabled) {
+      rows.push({ state: "warn", title: "确定性事实注入", state_text: "平台总闸已关闭",
+        note: "平台层关闭了本体功能，本租户即使开启事实注入也不会生效。这一项由平台方决定。" });
+    } else if (!factsOn) {
+      rows.push({ state: "warn", title: "确定性事实注入", state_text: "本租户未开启",
+        note: "在「确定性事实」页开启注入后，AI 回答才会以本体中的口径为准。" });
+    } else if (!declared) {
+      rows.push({ state: "bad", title: "确定性事实注入", state_text: "开启了但送不到",
+        note: "本租户已开启注入，但 AI 应用没有声明 facts_context，事实在到达模型之前就被丢弃了。" });
+    } else {
+      rows.push({ state: "ok", title: "确定性事实注入", state_text: "已接通" });
+    }
+
+    // 4. Response strategy rides the same rail and fails the same way.
+    if (!rt.available) {
+      rows.push({ state: "unknown", title: "应答策略注入", state_text: "无法确认" });
+    } else if (rt.scene_mode === "off") {
+      rows.push({ state: "warn", title: "应答策略注入", state_text: "平台已关闭",
+        note: "平台层未启用商业阶段策略，提示词中的应答策略始终为空。" });
+    } else {
+      rows.push({ state: "ok", title: "应答策略注入",
+        state_text: rt.scene_mode === "shadow" ? "仅观测（shadow）" : "已接通" });
+    }
+
+    // 5. Handoff keywords are retired wholesale under triage=on. The card says
+    //    so rather than letting an operator keep tuning a list nothing reads.
+    if (rt.available && rt.intent_triage === "on") {
+      rows.push({ state: "warn", title: "转人工关键词", state_text: "已由意图分诊接管",
+        note: "平台启用了意图分诊，下方的关键词表整体不再生效——转人工由分诊模型判定。屏蔽话题不受影响。" });
+    } else if (rt.available) {
+      rows.push({ state: "ok", title: "转人工关键词",
+        state_text: rt.intent_triage === "shadow" ? "生效（分诊仅观测）" : "生效" });
+    }
+
+    // 6. The model is a platform decision; a line that has drifted off it is
+    //    not comparable with the others, which belongs on this card too.
+    if (model) {
+      rows.push(model.pinned
+        ? { state: "ok", title: "生效模型", state_text: model.name }
+        : { state: "warn", title: "生效模型", state_text: model.name + "（已偏离平台设定）",
+            note: "本应用未使用平台指定的模型，其回答与其他产线不可比。请联系平台管理员。" });
+    }
+
+    return rows;
+  }
+
+  function renderDiagnostics(rows) {
+    els.diagList.textContent = "";
+    if (!rows.length) {
+      var empty = document.createElement("li");
+      empty.className = "diag-empty";
+      empty.textContent = "暂无可体检的项目。";
+      els.diagList.appendChild(empty);
+      return;
+    }
+
+    rows.forEach(function (row) {
+      var li = document.createElement("li");
+      li.className = "diag-item is-" + row.state;
+
+      var rail = document.createElement("span");
+      rail.className = "diag-rail";
+      var dot = document.createElement("span");
+      dot.className = "diag-dot";
+      rail.appendChild(dot);
+
+      var body = document.createElement("div");
+      var title = document.createElement("div");
+      title.className = "diag-title";
+      var name = document.createElement("span");
+      name.textContent = row.title;
+      var stateEl = document.createElement("span");
+      stateEl.className = "diag-state";
+      stateEl.textContent = row.state_text || "";
+      title.appendChild(name);
+      title.appendChild(stateEl);
+      body.appendChild(title);
+      if (row.note) {
+        var note = document.createElement("div");
+        note.className = "diag-note";
+        note.textContent = row.note;
+        body.appendChild(note);
+      }
+
+      var act = document.createElement("div");
+      act.className = "diag-act";
+      if (row.action) {
+        var btn = document.createElement("button");
+        btn.id = row.action.id;
+        btn.textContent = row.action.label;
+        (function (action, button) {
+          button.addEventListener("click", function () { runDiagFix(action, button); });
+        })(row.action, btn);
+        act.appendChild(btn);
+      }
+
+      li.appendChild(rail);
+      li.appendChild(body);
+      li.appendChild(act);
+      els.diagList.appendChild(li);
+    });
+
+    var broken = rows.filter(function (r) { return r.state === "bad"; }).length;
+    var warned = rows.filter(function (r) { return r.state === "warn"; }).length;
+    els.diagVerdict.hidden = false;
+    els.diagCard.classList.remove("state-ok", "state-warn");
+    if (broken) {
+      els.diagVerdict.textContent = broken + " 处断开";
+      els.diagVerdict.className = "pill bad";
+      els.diagCard.classList.add("state-warn");
+    } else if (warned) {
+      els.diagVerdict.textContent = warned + " 项待确认";
+      els.diagVerdict.className = "pill warn";
+      els.diagCard.classList.add("state-warn");
+    } else {
+      els.diagVerdict.textContent = "全部接通";
+      els.diagVerdict.className = "pill ok";
+      els.diagCard.classList.add("state-ok");
+    }
+  }
+
+  // Both repairs are existing idempotent endpoints; the card is a shorter path
+  // to them. The settings are reloaded afterwards so the row that prompted the
+  // fix is redrawn from the server rather than assumed fixed.
+  function runDiagFix(action, btn) {
+    if (state.busy) return;
+    var isVars = action.id === "diag-fix-vars";
+    var path = isVars ? "/ai-settings/variables/repair" : "/ai-settings/dataset/retrieval";
+    setBusy(true, btn, "处理中…");
+    api(tenantPath(path), { method: "POST", body: "{}" })
+      .then(function (res) {
+        if (isVars && res && res.already_complete) {
+          toast("声明本来就是齐的，未作改动", "warn");
+        } else {
+          toast("已修复，正在复检", "success");
+        }
+        return loadSettings();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        reportError("修复失败", err);
+      })
+      .finally(function () { setBusy(false, btn, action.label); });
+  }
 
   // ---------- Guardrail ----------
   els.guardrailSaveBtn.addEventListener("click", function () {

@@ -48,3 +48,22 @@ func RetrievalModel(indexingTechnique string) map[string]interface{} {
 		"score_threshold":         nil,
 	}
 }
+
+// RetrievalMatchesIndex reports whether a dataset's search method suits the
+// index its documents were built with.
+//
+// The pairing is not cosmetic: keyword search over an embedded index and
+// semantic search over a keyword index both return nothing, for every query,
+// while the dataset reports itself healthy and the API answers 200. This is the
+// check that tells a knowledge base which has nothing to say apart from one
+// which cannot be asked.
+func RetrievalMatchesIndex(indexingTechnique, searchMethod string) bool {
+	if indexingTechnique == "" || searchMethod == "" {
+		return false
+	}
+	want := searchSemantic
+	if indexingTechnique == IndexingEconomy {
+		want = searchKeyword
+	}
+	return searchMethod == want
+}
