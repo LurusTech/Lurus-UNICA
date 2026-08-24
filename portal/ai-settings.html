@@ -161,6 +161,34 @@
   .diag-act button { font-size: 13px; padding: 5px 12px; }
   .diag-empty { color: var(--text-muted); font-size: 13px; padding: 12px 0; }
 
+
+  /* ---- Threshold ladder ---------------------------------------------------
+     The threshold is not a dial with a linear feel: an answer scores the higher
+     of its retrieval average and a floor earned from the evidence behind it, so
+     each band is really a demand for a kind of evidence. Naming the bands, and
+     saying whether this tenant currently produces that evidence, is the
+     difference between choosing a policy and guessing a number. */
+  .tiers { list-style: none; margin: -4px 0 18px; padding: 0; font-size: 13px; }
+  .tier {
+    display: grid; grid-template-columns: 58px 1fr auto; gap: 10px;
+    align-items: baseline; padding: 5px 0;
+    border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+  }
+  .tier:first-child { border-top: 0; }
+  .tier-num { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .tier-req { color: var(--text-muted); }
+  .tier-state { font-size: 12px; }
+  .tier.reachable .tier-state { color: var(--ok); }
+  .tier.blocked   .tier-num, .tier.blocked .tier-req { opacity: .55; }
+  .tier.blocked   .tier-state { color: var(--warn); }
+  .tier.active { background: color-mix(in srgb, var(--primary) 7%, transparent); }
+  .tier.active .tier-num { color: var(--primary); }
+
+  /* A field whose value the runtime is currently ignoring. Left legible — an
+     operator still needs to read what is in there — but plainly not in play. */
+  .field.inert { opacity: .5; }
+  .field.inert input { pointer-events: none; }
+
   .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
   .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.85rem; }
 
@@ -299,7 +327,7 @@
       <div class="card-head">
         <h2>转人工与阈值</h2>
       </div>
-      <p class="card-sub">
+      <p class="card-sub" id="guardrail-sub">
         这些设置由消息管道实时读取：AI 置信度低于阈值、客户说了转人工关键词，
         或问到屏蔽话题时，会话转交人工客服。保存后本租户已接入的渠道立即生效。
       </p>
@@ -310,7 +338,11 @@
         <div class="hint">取值 0.01 ~ 1。越高越容易转人工。</div>
       </div>
 
-      <div class="field">
+      <ul class="tiers" id="threshold-tiers"></ul>
+
+      <div class="notice warn" id="keyword-notice" hidden></div>
+
+      <div class="field" id="handoff-field">
         <label for="f-handoff">转人工关键词</label>
         <input id="f-handoff" placeholder="以英文逗号分隔，如：转人工,人工客服,投诉" />
         <div class="hint">留空将回退到平台默认关键词。</div>
@@ -481,6 +513,10 @@
     fHandoff: document.getElementById("f-handoff"),
     fBlocked: document.getElementById("f-blocked"),
     fHolding: document.getElementById("f-holding"),
+    thresholdTiers: document.getElementById("threshold-tiers"),
+    keywordNotice: document.getElementById("keyword-notice"),
+    handoffField: document.getElementById("handoff-field"),
+    guardrailSub: document.getElementById("guardrail-sub"),
     guardrailSaveBtn: document.getElementById("guardrail-save-btn"),
     guardrailState: document.getElementById("guardrail-state"),
 
@@ -745,6 +781,8 @@
     els.surveyState.textContent = "";
 
     renderModel(cfg.model);
+    renderThresholdTiers(cfg, state.factsConfig);
+    applyKeywordAvailability(cfg);
 
     els.promptConflict.hidden = true;
     els.promptState.textContent = "";
@@ -979,6 +1017,11 @@
       rows.push({ state: "bad", title: "知识库检索", state_text: "没有数据集",
         note: (know.reason || "本产线没有知识库数据集，上传的文档无处可去。") +
           "　补建数据集需要平台侧处理，本页暂时无法自助修复。" });
+    } else if (know.empty) {
+      // Not a fault: a dataset with no documents has no index yet. Flagged only
+      // because uploading them is the obvious next step, never in red.
+      rows.push({ state: "warn", title: "知识库检索", state_text: "数据集为空",
+        note: know.reason || "数据集里还没有文档，检索暂时没有可用的内容。" });
     } else if (!know.index_matches) {
       rows.push({ state: "bad", title: "知识库检索", state_text: "检索方式与索引不匹配",
         note: know.reason || "检索方式与文档建索引的方式不一致，每次检索都会落空，而且不会报错。",
@@ -1141,6 +1184,90 @@
       .finally(function () { setBusy(false, btn, action.label); });
   }
 
+
+  // The bands come from the router's own scoring rule: an answer takes the
+  // higher of its retrieval average and a floor earned from the evidence behind
+  // it. So a threshold is a demand for a kind of evidence, and whether this
+  // tenant can meet it is knowable — which is what turns picking a number into
+  // picking a policy.
+  //
+  // Deliberately not phrased as "the highest score you can reach": the
+  // retrieval average is continuous and can exceed any of these floors, so a
+  // ceiling would be a number we cannot honestly promise.
+  var THRESHOLD_TIERS = [
+    { at: 0.70, req: "检索命中、历史经验、确定性事实，任一即可", need: "any" },
+    { at: 0.75, req: "必须有确定性事实，仅靠历史经验不够", need: "facts" },
+    { at: 0.80, req: "必须有事实，且答复的断言经过校验且无冲突", need: "checked" }
+  ];
+
+  function renderThresholdTiers(cfg, facts) {
+    var list = els.thresholdTiers;
+    if (!list) return;
+    list.textContent = "";
+
+    var factsOn = !!(facts && facts.inject_facts === true) &&
+      !!(cfg.runtime && cfg.runtime.ontology_enabled) &&
+      !!(cfg.variables && (cfg.variables.declared || []).indexOf("facts_context") >= 0);
+    var checked = factsOn && !!facts && facts.validation && facts.validation !== "off";
+    var current = typeof cfg.confidence_threshold === "number" ? cfg.confidence_threshold : null;
+
+    THRESHOLD_TIERS.forEach(function (tier, i) {
+      var next = THRESHOLD_TIERS[i + 1];
+      var reachable = tier.need === "any" || (tier.need === "facts" ? factsOn : checked);
+
+      var li = document.createElement("li");
+      li.className = "tier " + (reachable ? "reachable" : "blocked");
+      if (current !== null && current >= tier.at && (!next || current < next.at)) {
+        li.classList.add("active");
+      }
+
+      var num = document.createElement("span");
+      num.className = "tier-num";
+      num.textContent = "≥ " + tier.at.toFixed(2);
+
+      var req = document.createElement("span");
+      req.className = "tier-req";
+      req.textContent = tier.req;
+
+      var st = document.createElement("span");
+      st.className = "tier-state";
+      if (reachable) {
+        st.textContent = "本租户可达";
+      } else if (tier.need === "facts") {
+        st.textContent = "事实注入未接通，设到这里会全部转人工";
+      } else {
+        st.textContent = "需先开启事实注入与校验";
+      }
+
+      li.appendChild(num);
+      li.appendChild(req);
+      li.appendChild(st);
+      list.appendChild(li);
+    });
+  }
+
+  // Under triage=on the keyword list is not consulted at all. Leaving the field
+  // live would let an operator keep tuning a list nothing reads — the most
+  // expensive kind of silence this page can produce.
+  function applyKeywordAvailability(cfg) {
+    var rt = cfg.runtime || {};
+    var retired = rt.available && rt.intent_triage === "on";
+    els.handoffField.classList.toggle("inert", !!retired);
+    els.fHandoff.disabled = !!retired;
+    els.keywordNotice.hidden = !retired;
+    if (retired) {
+      els.keywordNotice.textContent =
+        "平台已启用意图分诊，下面这份关键词表整体不再生效——转人工改由分诊模型判定。" +
+        "屏蔽话题与置信度阈值不受影响，仍然照常生效。";
+    }
+    // The card's own description names the keyword list as a trigger. Under
+    // triage that sentence is false, and a warning below a false statement does
+    // not repair it — the statement is what gets read first.
+    els.guardrailSub.textContent = retired
+      ? "这些设置由消息管道实时读取：AI 置信度低于阈值，或客户问到屏蔽话题时，会话转交人工客服。保存后本租户已接入的渠道立即生效。"
+      : "这些设置由消息管道实时读取：AI 置信度低于阈值、客户说了转人工关键词，或问到屏蔽话题时，会话转交人工客服。保存后本租户已接入的渠道立即生效。";
+  }
+
   // ---------- Guardrail ----------
   els.guardrailSaveBtn.addEventListener("click", function () {
     if (state.busy) return;
@@ -1150,6 +1277,12 @@
     var topics = splitCsv(els.fBlocked.value);
 
     var holding = els.fHolding.value;
+
+    // A disabled field still holds text; writing it back would persist a list
+    // the runtime is not reading and hide the fact that it is retired.
+    if (els.fHandoff.disabled) {
+      keywords = state.baseline.keywords.slice();
+    }
 
     var thresholdChanged = threshold !== state.baseline.threshold;
     var rulesChanged = !sameList(keywords, state.baseline.keywords) ||

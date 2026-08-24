@@ -119,7 +119,13 @@ type knowledgeStatus struct {
 	DatasetBound bool `json:"dataset_bound"`
 	// IndexMatches is false when the retrieval method and the index disagree.
 	// Unknown datasets report false with a Reason rather than a cheerful true.
-	IndexMatches      bool   `json:"index_matches"`
+	IndexMatches bool `json:"index_matches"`
+	// Empty is true for a dataset Dify has not indexed anything into yet. It is
+	// reported apart from a mismatch because it is not a fault: a freshly
+	// provisioned dataset has no indexing technique until its first document is
+	// indexed, and calling that a mismatch would put a red row in front of every
+	// new tenant for something nobody did wrong.
+	Empty             bool   `json:"empty"`
 	IndexingTechnique string `json:"indexing_technique,omitempty"`
 	SearchMethod      string `json:"search_method,omitempty"`
 	TopK              int    `json:"top_k,omitempty"`
@@ -579,6 +585,13 @@ func (h *Handler) knowledgeStatus(ctx context.Context, pl *repository.ProductLin
 		IndexingTechnique: cfg.IndexingTechnique,
 		SearchMethod:      cfg.SearchMethod,
 		TopK:              cfg.TopK,
+	}
+	if cfg.IndexingTechnique == "" {
+		// Dify assigns the technique when the first document is indexed, so an
+		// empty value means "nothing uploaded yet", not "configured wrongly".
+		st.Empty = true
+		st.Reason = "数据集里还没有文档，索引方式要等第一篇文档索引后才确定"
+		return st
 	}
 	st.IndexMatches = difyapp.RetrievalMatchesIndex(cfg.IndexingTechnique, cfg.SearchMethod)
 	if !st.IndexMatches {
