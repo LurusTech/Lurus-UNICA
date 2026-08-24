@@ -364,6 +364,7 @@
       </p>
 
       <div class="notice warn" id="prompt-conflict" hidden></div>
+      <div class="notice info" id="prompt-drift" hidden></div>
 
       <div class="field">
         <label for="f-prompt">提示词内容</label>
@@ -597,6 +598,7 @@
 
     promptPill: document.getElementById("prompt-pill"),
     promptConflict: document.getElementById("prompt-conflict"),
+    promptDrift: document.getElementById("prompt-drift"),
     fPrompt: document.getElementById("f-prompt"),
     promptHint: document.getElementById("prompt-hint"),
     promptSaveBtn: document.getElementById("prompt-save-btn"),
@@ -982,8 +984,7 @@
         "「恢复平台模板」可一次补齐，但会覆盖本产线自己的改写。";
       return;
     }
-    setPill(els.promptPill, "ok", "已同步");
-    els.promptHint.textContent = "保存会直接更新 AI 应用中的提示词，对新会话立即生效。";
+    renderPromptAlignment();
   }
 
   function applyDatasetAvailability() {
@@ -1012,6 +1013,93 @@
     el.hidden = false;
   }
 
+
+
+  // ---------- Alignment with the platform template ----------
+  //
+  // "Differs from the platform template" is two different situations that look
+  // identical: a line that meant to differ, and a line that a template
+  // improvement left behind. The second is the one nobody has ever been told
+  // about, and it is only nameable because the console now records what it
+  // wrote. Where there is no such record the page says so rather than picking
+  // the more flattering of the two.
+  function renderPromptAlignment() {
+    var cfg = state.settings || {};
+    var alignment = cfg.prompt_alignment || "";
+    var origin = cfg.prompt_origin || null;
+    els.promptDrift.hidden = true;
+
+    if (alignment === "outdated") {
+      setPill(els.promptPill, "warn", "平台模板有更新");
+      els.promptHint.textContent = "保存会直接更新 AI 应用中的提示词，对新会话立即生效。";
+      showDriftNotice(origin);
+      return;
+    }
+    if (alignment === "custom") {
+      setPill(els.promptPill, "", "已自定义");
+      els.promptHint.textContent =
+        "本产线的提示词是自己写的，不会随平台模板更新" +
+        (origin && origin.applied_at ? "（最后一次保存：" + shortTime(origin.applied_at) + "）" : "") +
+        "。「恢复平台模板」会覆盖它。";
+      return;
+    }
+    if (alignment === "changed_elsewhere") {
+      setPill(els.promptPill, "warn", "控制台之外被改过");
+      els.promptHint.textContent =
+        "线上提示词与本控制台最后一次写入的不一致——多半是有人直接在 Dify 里改了。" +
+        "在这里保存一次即可让两边重新对上。";
+      return;
+    }
+    if (alignment === "unknown") {
+      setPill(els.promptPill, "", "来源未知");
+      els.promptHint.textContent =
+        "这段提示词早于本页开始记录来源，因此无法判断它是本产线自己写的、还是停在了旧版平台模板上。" +
+        "下次在这里保存或恢复一次之后就能分清。";
+      return;
+    }
+    setPill(els.promptPill, "ok", "与平台模板一致");
+    els.promptHint.textContent = "保存会直接更新 AI 应用中的提示词，对新会话立即生效。";
+  }
+
+  // The notice carries the action, because the whole point of naming this state
+  // is that there is something to do about it and the tenant can now do it.
+  function showDriftNotice(origin) {
+    els.promptDrift.className = "notice info";
+    els.promptDrift.textContent = "";
+
+    var title = document.createElement("span");
+    title.className = "title";
+    title.textContent = "平台模板已更新，本产线仍是旧版";
+    var detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent =
+      "本产线的提示词与平台模板一致地写入过" +
+      (origin && origin.applied_at ? "（" + shortTime(origin.applied_at) + "）" : "") +
+      "，此后平台模板改过，而本产线没有跟上。模板的改动通常是为了修正 AI 的作答行为——" +
+      "它不会自动流下来，也不会有别的地方提醒你。";
+    els.promptDrift.appendChild(title);
+    els.promptDrift.appendChild(detail);
+
+    var row = document.createElement("div");
+    row.className = "actions-row";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "更新到最新模板";
+    btn.addEventListener("click", function () { els.promptResetBtn.click(); });
+    row.appendChild(btn);
+    els.promptDrift.appendChild(row);
+    els.promptDrift.hidden = false;
+  }
+
+  // Timestamps arrive as RFC3339 in UTC; only the day and minute are useful
+  // here, and the seconds make the sentence harder to read.
+  function shortTime(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    function pad(n) { return n < 10 ? "0" + n : "" + n; }
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+      " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
 
   // ---------- Prompt contract ----------
   //

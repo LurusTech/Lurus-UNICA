@@ -154,20 +154,28 @@ func (f *fakeDify) writtenConfig() map[string]interface{} {
 }
 
 func newPromptHandler(dify *fakeDify) *Handler {
+	h, _ := newPromptHandlerWithStore(dify)
+	return h
+}
+
+// newPromptHandlerWithStore also hands back the config store, for tests about
+// what a prompt write records rather than what it sends to Dify.
+func newPromptHandlerWithStore(dify *fakeDify) (*Handler, *fakeProductLines) {
 	appID := "app-1"
+	pls := &fakeProductLines{pl: &repository.ProductLine{
+		ID:          "pl-1",
+		Name:        "Acme",
+		DisplayName: "Acme",
+		DifyAgentID: &appID,
+	}}
 	return NewHandler(Config{
-		ProductLines: &fakeProductLines{pl: &repository.ProductLine{
-			ID:          "pl-1",
-			Name:        "Acme",
-			DisplayName: "Acme",
-			DifyAgentID: &appID,
-		}},
+		ProductLines: pls,
 		Dify: bridge.NewDifyBridge(bridge.DifyBridgeConfig{
 			AdminURL:   dify.server.URL,
 			AdminToken: "test-console-token",
 			APIBaseURL: dify.server.URL,
 		}),
-	})
+	}), pls
 }
 
 func TestResetPrompt_WritesDefaultTemplate(t *testing.T) {

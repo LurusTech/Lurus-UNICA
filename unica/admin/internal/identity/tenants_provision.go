@@ -91,7 +91,9 @@ func (h *TenantHandler) provisionDifyLine(ctx context.Context, id string) (*prov
 
 	provisionName := fmt.Sprintf("UNICA-%s", pl.Name)
 
-	app, err := h.difyBridge.CreateChatApp(ctx, token, provisionName)
+	// The app is listed in Dify under the prefixed name; the assistant answers
+	// as the product line.
+	app, err := h.difyBridge.CreateChatApp(ctx, token, provisionName, pl.Name)
 	if err != nil {
 		log.Printf("[tenants] dify create app error: %v", err)
 		return nil, &difyProvisionError{http.StatusBadGateway, "创建 Dify 应用失败: " + err.Error()}

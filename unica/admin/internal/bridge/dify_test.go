@@ -285,15 +285,22 @@ func TestDifyBridge_CreateChatApp_Success(t *testing.T) {
 
 	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL})
 
-	app, err := b.CreateChatApp(context.Background(), "console-token", "UNICA-Acme")
+	app, err := b.CreateChatApp(context.Background(), "console-token", "UNICA-Acme", "Acme")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if app.ID != "app-001" {
 		t.Errorf("expected ID 'app-001', got %q", app.ID)
 	}
-	if !strings.Contains(sawPrePrompt, "UNICA-Acme") {
-		t.Errorf("expected default system prompt to mention product line name, got: %q", sawPrePrompt)
+	// The app is listed in Dify under the prefixed name; the assistant answers
+	// as the product line. These were one argument, and the prompt therefore
+	// said "你是UNICA-Acme的在线客服" — the platform's provisioning convention,
+	// spoken to customers, and a text unlike the template the console writes.
+	if !strings.Contains(sawPrePrompt, "你是Acme的在线客服") {
+		t.Errorf("the assistant does not introduce itself as the product line: %q", sawPrePrompt)
+	}
+	if strings.Contains(sawPrePrompt, "UNICA-") {
+		t.Errorf("the Dify app naming convention leaked into the customer-facing prompt: %q", sawPrePrompt)
 	}
 }
 

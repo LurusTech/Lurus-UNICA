@@ -124,3 +124,68 @@ func TestAuditState_SurvivesAnUnreachablePrompt(t *testing.T) {
 		t.Errorf("the guardrail half of the snapshot was lost with it: %s", raw)
 	}
 }
+
+// A prompt write has to leave behind what it wrote, or the line falls back to
+// "unknown" and the drift notice this record exists for can never fire.
+func TestUpdatePrompt_RecordsWhatItWrote(t *testing.T) {
+	dify := newFakeDify(t)
+	h, pls := newPromptHandlerWithStore(dify)
+
+	own := difyapp.DefaultSystemPrompt("Acme") + "\n\n补充：本店周末照常发货。"
+	body, _ := json.Marshal(map[string]string{"prompt": own})
+	if w := do(t, h, http.MethodPut, "/api/v1/tenants/pl-1/ai-settings/prompt", string(body)); w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+
+	if pls.writtenKey != difyapp.PromptOriginKey {
+		t.Fatalf("wrote config_json key %q, want %q", pls.writtenKey, difyapp.PromptOriginKey)
+	}
+	var origin difyapp.PromptOrigin
+	if err := json.Unmarshal(pls.writtenValue, &origin); err != nil {
+		t.Fatalf("recorded origin is not an object: %v", err)
+	}
+	if origin.SHA256 != difyapp.PromptHash(own) {
+		t.Error("the record does not identify the text that was written")
+	}
+	// The tenant's own text is not the template, and saying it was would make
+	// the line report itself as left behind the next time the template moves.
+	if origin.TemplateSHA256 != "" {
+		t.Error("a tenant's own text was recorded as a platform template")
+	}
+	if origin.AppliedAt == "" {
+		t.Error("the record has no time, so nothing can say when the line was last aligned")
+	}
+}
+
+// Restoring the template records that this line is on it, which is what turns a
+// later template change into a reportable state rather than an invisible one.
+func TestResetPrompt_RecordsAlignmentWithTheTemplate(t *testing.T) {
+	dify := newFakeDify(t)
+	h, pls := newPromptHandlerWithStore(dify)
+
+	if w := do(t, h, http.MethodPost, "/api/v1/tenants/pl-1/ai-settings/prompt/reset", ""); w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var origin difyapp.PromptOrigin
+	if err := json.Unmarshal(pls.writtenValue, &origin); err != nil {
+		t.Fatalf("recorded origin is not an object: %v", err)
+	}
+	want := difyapp.PromptHash(difyapp.DefaultSystemPrompt("Acme"))
+	if origin.SHA256 != want || origin.TemplateSHA256 != want {
+		t.Errorf("origin = %+v, want both hashes to be the template's %s", origin, want[:12])
+	}
+}
+
+// The audit snapshot has to carry every block this module writes to config_json.
+func TestAuditState_CoversThePromptOrigin(t *testing.T) {
+	h, _, _, _ := newGuardrailFixture(t,
+		`{"prompt_origin":{"sha256":"abc123","template_sha256":"abc123","applied_at":"2026-08-24T00:00:00Z"}}`)
+
+	raw, err := h.AuditState(context.Background(), "pl-1")
+	if err != nil {
+		t.Fatalf("AuditState: %v", err)
+	}
+	if !strings.Contains(string(raw), "abc123") {
+		t.Errorf("the origin record is missing from the snapshot: %s", raw)
+	}
+}

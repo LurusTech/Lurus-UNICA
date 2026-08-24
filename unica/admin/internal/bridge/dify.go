@@ -218,7 +218,18 @@ func (b *DifyBridge) Login(ctx context.Context, email, password string) (string,
 
 // CreateChatApp provisions a new Dify chat app in the default workspace and applies the
 // default system prompt to it, mirroring UpdateSystemPrompt semantics.
-func (b *DifyBridge) CreateChatApp(ctx context.Context, token, name string) (*DifyAppCreated, error) {
+//
+// appName and productLineName are separate because they are different things
+// that happened to be one argument. appName is how the app is listed in the
+// Dify console, and this deployment prefixes it ("UNICA-XDYX") so a shared
+// workspace stays legible. productLineName is the name the assistant answers
+// with, and it went into the prompt as "你是UNICA-XDYX的在线客服" — the
+// platform's own provisioning convention, spoken to customers. It also left
+// every freshly provisioned line looking unlike the platform template it had
+// just been given, because the console writes that template with the product
+// line's own name.
+func (b *DifyBridge) CreateChatApp(ctx context.Context, token, appName, productLineName string) (*DifyAppCreated, error) {
+	name := appName
 	reqBody := map[string]interface{}{
 		"name":        name,
 		"mode":        "chat",
@@ -238,7 +249,7 @@ func (b *DifyBridge) CreateChatApp(ctx context.Context, token, name string) (*Di
 	// Setting the system prompt requires a configured model provider, which usually
 	// does not exist yet at provisioning time. Treat failure as non-fatal: the prompt
 	// can be configured later in the Dify console or via the AI-config API.
-	prompt := difyapp.DefaultSystemPrompt(name)
+	prompt := difyapp.DefaultSystemPrompt(productLineName)
 	if err := b.updateSystemPromptWithToken(ctx, resp.ID, prompt, token); err != nil {
 		log.Printf("[dify-bridge] WARN: default system prompt not applied for app_id=%s (configure it in Dify after adding a model provider): %v", resp.ID, err)
 	} else {

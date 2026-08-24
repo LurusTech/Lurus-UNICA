@@ -17,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/kefu/unica/admin/internal/auth"
@@ -122,6 +123,15 @@ type settingsResponse struct {
 	// able to see it — and because the connectivity card would otherwise call
 	// fact injection connected for a prompt that has no place to put the facts.
 	PromptContract *promptContractStatus `json:"prompt_contract,omitempty"`
+	// PromptAlignment says how this line's prompt relates to the platform
+	// template: on it, left behind by it, or deliberately its own. Those last
+	// two are indistinguishable without a record of what the console wrote, and
+	// that is exactly why a line left behind by a template improvement has never
+	// been told — it looks identical to a line that meant to differ.
+	PromptAlignment string `json:"prompt_alignment,omitempty"`
+	// PromptOrigin is what the console last wrote, so an interface can say when
+	// the line was aligned rather than only that it no longer is.
+	PromptOrigin *difyapp.PromptOrigin `json:"prompt_origin,omitempty"`
 }
 
 // promptContractStatus lists what a prompt is missing, with the consequence of
@@ -373,6 +383,8 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		return
 	}
 
+	origin := loadPromptOrigin(raw)
+
 	var systemPrompt string
 	var model *bridge.AppModelInfo
 	var variables *bridge.AppVariablesInfo
@@ -380,6 +392,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 	// complete contract for a prompt nobody could fetch would be the most
 	// reassuring possible answer to the least certain question.
 	var contract *promptContractStatus
+	var alignment difyapp.PromptAlignment
 	switch {
 	case pl.DifyAgentID == nil || *pl.DifyAgentID == "":
 		systemPrompt = "(no Dify app configured for this product line)"
@@ -399,10 +412,13 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 				Missing:      missing,
 				Requirements: difyapp.PromptRequirements(),
 			}
+			alignment = difyapp.ClassifyPrompt(systemPrompt, difyapp.DefaultSystemPrompt(pl.Name), origin)
 		}
 	}
 
 	writeJSON(w, http.StatusOK, settingsResponse{
+		PromptAlignment: string(alignment),
+		PromptOrigin:    origin,
 		ProductLineID:   pl.ID,
 		ProductLineName: pl.DisplayName,
 		SystemPrompt:    systemPrompt,
@@ -449,6 +465,20 @@ func (h *Handler) updatePrompt(w http.ResponseWriter, r *http.Request, pl *repos
 		return
 	}
 
+	// Record what was written, so a prompt that later differs from the platform
+	// template can be told apart from one left behind by it. TemplateSHA256 is
+	// set only when the text happens to be the template — a tenant who pastes
+	// the template back is, for every purpose that matters here, on it.
+	template := difyapp.DefaultSystemPrompt(pl.Name)
+	origin := &difyapp.PromptOrigin{
+		SHA256:    difyapp.PromptHash(req.Prompt),
+		AppliedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if req.Prompt == template {
+		origin.TemplateSHA256 = origin.SHA256
+	}
+	h.storePromptOrigin(r.Context(), pl.ID, origin)
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":         "system prompt updated",
 		"product_line_id": pl.ID,
@@ -493,11 +523,47 @@ func (h *Handler) resetPrompt(w http.ResponseWriter, r *http.Request, pl *reposi
 	// second read-modify-write over the same object would give two full writes
 	// racing on one document, and the loser would silently take the prompt with
 	// it.
+	h.storePromptOrigin(r.Context(), pl.ID, &difyapp.PromptOrigin{
+		SHA256:         difyapp.PromptHash(prompt),
+		TemplateSHA256: difyapp.PromptHash(prompt),
+		AppliedAt:      time.Now().UTC().Format(time.RFC3339),
+	})
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":         "system prompt reset to platform default",
 		"product_line_id": pl.ID,
 		"prompt_length":   utf8.RuneCountInString(prompt),
 	})
+}
+
+// loadPromptOrigin reads the record of what the console last wrote. A blob that
+// has none, or one that cannot be parsed, yields nil — which classifies as
+// "unknown" rather than as anything more definite.
+func loadPromptOrigin(raw json.RawMessage) *difyapp.PromptOrigin {
+	if len(raw) == 0 {
+		return nil
+	}
+	var wrapper struct {
+		Origin *difyapp.PromptOrigin `json:"prompt_origin"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return nil
+	}
+	if wrapper.Origin == nil || wrapper.Origin.SHA256 == "" {
+		return nil
+	}
+	return wrapper.Origin
+}
+
+// storePromptOrigin records a prompt write. A failure here is logged and not
+// returned: the prompt itself is already in Dify, and failing the request after
+// the write it reports would be a worse answer than a missing record — the
+// record's absence degrades to "unknown", which is a state the reader handles.
+func (h *Handler) storePromptOrigin(ctx context.Context, tenantID string, origin *difyapp.PromptOrigin) {
+	if err := h.pls.SetConfigKey(ctx, tenantID, difyapp.PromptOriginKey, origin); err != nil {
+		log.Printf("[ai-settings] WARN: prompt written but its origin was not recorded for %s: %v; "+
+			"this line will read as 'unknown' until the next save", tenantID, err)
+	}
 }
 
 // promptContractError answers a rejected prompt with the list itself rather
@@ -936,12 +1002,17 @@ func (h *Handler) AuditState(ctx context.Context, tenantID string) (json.RawMess
 	}
 	return json.Marshal(struct {
 		guardrailConfig
-		Survey *survey.Config `json:"survey"`
-		Prompt *promptDigest  `json:"prompt"`
+		Survey *survey.Config        `json:"survey"`
+		Prompt *promptDigest         `json:"prompt"`
+		Origin *difyapp.PromptOrigin `json:"prompt_origin"`
 	}{
 		guardrailConfig: loadGuardrail(raw),
 		Survey:          survey.Load(raw),
 		Prompt:          h.promptDigest(ctx, tenantID),
+		// Every block this module writes to config_json belongs in the snapshot,
+		// or a write that only moves this one leaves an audit row whose before
+		// and after are the same.
+		Origin: loadPromptOrigin(raw),
 	})
 }
 
