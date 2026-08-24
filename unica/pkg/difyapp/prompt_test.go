@@ -103,3 +103,49 @@ func TestNoStrategyAsksTheCustomerToSelfClassify(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultPromptSatisfiesItsOwnContract is the guard against defining a
+// contract the platform's own template fails.
+//
+// The console enforces this list on every prompt write and offers "restore the
+// platform template" as the way out of a rejection. A template that failed the
+// check would make that button lead back to the same rejection, leaving a
+// tenant with no way to save anything at all.
+func TestDefaultPromptSatisfiesItsOwnContract(t *testing.T) {
+	prompt := DefaultSystemPrompt("测试产线")
+	if missing := MissingPromptRequirements(prompt); len(missing) > 0 {
+		for _, req := range missing {
+			t.Errorf("platform template is missing %s (%s)", req.Label, req.Token)
+		}
+	}
+}
+
+func TestMissingPromptRequirements(t *testing.T) {
+	full := DefaultSystemPrompt("X")
+
+	if got := MissingPromptRequirements(""); len(got) != len(PromptRequirements()) {
+		t.Errorf("an empty prompt reported %d missing, want all %d", len(got), len(PromptRequirements()))
+	}
+
+	// Removing one placeholder must be reported as exactly that one: an
+	// operator acts on the list, so a list that over-reports gets ignored.
+	without := strings.Replace(full, "{{facts_context}}", "", 1)
+	got := MissingPromptRequirements(without)
+	if len(got) != 1 || got[0].Token != "{{facts_context}}" {
+		t.Errorf("removing facts_context reported %+v", got)
+	}
+	if got[0].Breaks == "" {
+		t.Error("a requirement with no consequence written down is a rule nobody can weigh")
+	}
+}
+
+// The contract must not be reachable for modification through the accessor:
+// callers render it, and a caller that could truncate it would quietly relax
+// what everyone else enforces.
+func TestPromptRequirements_ReturnsACopy(t *testing.T) {
+	first := PromptRequirements()
+	first[0].Token = "mutated"
+	if PromptRequirements()[0].Token == "mutated" {
+		t.Error("PromptRequirements handed out the package's own slice")
+	}
+}

@@ -205,8 +205,17 @@ func TestResetPrompt_WritesDefaultTemplate(t *testing.T) {
 	}
 }
 
-func TestResetPrompt_RequiresAdmin(t *testing.T) {
-	h := newPromptHandler(newFakeDify(t))
+// TestResetPrompt_IsOpenToTheTenant pins the reversal.
+//
+// Reset used to require an administrator while overwriting the prompt with
+// anything at all required nothing — the guard was on the only operation that
+// can just move a line towards the platform's own text, and absent from the one
+// that can break it. A tenant who had broken their prompt had no way back. The
+// guarding now lives on the write, where a prompt that drops a contract item is
+// refused, and this is the button that fixes such a prompt.
+func TestResetPrompt_IsOpenToTheTenant(t *testing.T) {
+	dify := newFakeDify(t)
+	h := newPromptHandler(dify)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/pl-1/ai-settings/prompt/reset", nil)
 	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
@@ -214,8 +223,11 @@ func TestResetPrompt_RequiresAdmin(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.Handle(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for a non-administrator, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a tenant restoring the platform template, got %d: %s", w.Code, w.Body.String())
+	}
+	if dify.writtenConfig() == nil {
+		t.Error("no model-config write reached Dify")
 	}
 }
 

@@ -36,6 +36,89 @@ var ContextVariables = []ContextVariable{
 	{Name: "product_line", Label: "产品线"},
 }
 
+// PromptRequirement is one thing a system prompt has to carry for a stage of
+// the pipeline to work at all.
+//
+// Every one of these fails silently when it goes missing. That is the whole
+// reason they are enumerated: a prompt without {{knowledge_context}} still
+// produces answers, the retrieval still runs and still reports sources, and the
+// recalled text simply never reaches the model. Nothing in a status code, a log
+// line or a metric says so, and the console would go on showing the knowledge
+// base as connected. The list is the only place that distinguishes "the
+// business has nothing to say about this" from "what the business says was
+// never delivered".
+type PromptRequirement struct {
+	// Token is the literal the prompt must contain. For the injected variables
+	// it is the placeholder Dify substitutes; for the two tag protocols it is
+	// the opening of the tag itself, because a prompt that teaches the protocol
+	// has to show it.
+	Token string `json:"token"`
+	// Label names the requirement for a person.
+	Label string `json:"label"`
+	// Breaks says what stops working, in the words of someone who would notice.
+	Breaks string `json:"breaks"`
+}
+
+// promptRequirements is the contract between a product line's prompt and the
+// rest of the pipeline. It is deliberately short: every entry here is enforced
+// on write, so an entry that is merely a good idea would become an obstruction.
+//
+// TestDefaultPromptSatisfiesItsOwnContract keeps the platform template honest
+// against this list — a contract the platform's own template fails is a
+// contract that would lock every tenant out of the reset that fixes them.
+var promptRequirements = []PromptRequirement{
+	{
+		Token:  "{{facts_context}}",
+		Label:  "确定性事实占位符",
+		Breaks: "本产线发布的确定性事实不会送进模型，AI 会按通用常识作答，而本体页仍显示已发布",
+	},
+	{
+		Token:  "{{knowledge_context}}",
+		Label:  "参考知识占位符",
+		Breaks: "知识库检索照常进行、也照常记命中数，但检索到的内容不会送进模型",
+	},
+	{
+		Token:  "{{scene_context}}",
+		Label:  "应答策略占位符",
+		Breaks: "商业阶段应答策略恒为空，体检卡却仍会显示应答策略已接通",
+	},
+	{
+		Token:  "{{experience_context}}",
+		Label:  "历史经验占位符",
+		Breaks: "沉淀下来的历史经验不会送进模型",
+	},
+	{
+		Token:  "[FACT:",
+		Label:  "事实引用标签协议",
+		Breaks: "模型不再标注引用了哪条事实，断言校验因此无事可校，违规记录页会一直是空的——看起来像没有违规",
+	},
+	{
+		Token:  "[HANDOFF:",
+		Label:  "转人工标签协议",
+		Breaks: "模型自己判断该转人工时无法真正转接，客户会收到「为您转接」却等不到人",
+	},
+}
+
+// PromptRequirements returns the contract, for an interface that needs to show
+// it rather than only enforce it.
+func PromptRequirements() []PromptRequirement {
+	out := make([]PromptRequirement, len(promptRequirements))
+	copy(out, promptRequirements)
+	return out
+}
+
+// MissingPromptRequirements returns the parts of the contract a prompt does not
+// keep, in the order they are declared.
+func MissingPromptRequirements(prompt string) []PromptRequirement {
+	var missing []PromptRequirement
+	for _, req := range promptRequirements {
+		if !strings.Contains(prompt, req.Token) {
+			missing = append(missing, req)
+		}
+	}
+	return missing
+}
+
 // DefaultSystemPrompt returns the system prompt for a product line's chat app.
 //
 // It contains no policy numbers on purpose. Everything specific to the business

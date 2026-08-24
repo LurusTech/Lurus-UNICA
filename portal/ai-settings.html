@@ -202,6 +202,50 @@
   .msg-meta .verdict.bad, .msg-meta .count.bad { color: var(--bad); }
   .msg-meta .verdict.ok { color: var(--ok); }
 
+
+  /* ---- Prompt contract ----------------------------------------------------
+     Six things the prompt has to carry. Every one of them fails silently when
+     it goes missing — the answers keep coming and the stage it feeds simply
+     stops receiving anything — so the list is shown at all times rather than
+     only when a save is refused. */
+  .contract { margin: 10px 0 0; padding: 0; list-style: none; }
+  .contract-head {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 12px; color: var(--text-muted); margin-top: 12px;
+  }
+  .contract-item {
+    display: grid; grid-template-columns: 16px 1fr; gap: 8px;
+    align-items: baseline; padding: 3px 0; font-size: 13px;
+  }
+  .contract-item .mark { font-size: 12px; line-height: 1.5; }
+  .contract-item.present .mark { color: var(--ok); }
+  .contract-item.absent .mark { color: var(--bad); }
+  .contract-item.absent .name { color: var(--bad); }
+  .contract-item .token {
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 12px; color: var(--text-muted); margin-left: 6px;
+  }
+  .contract-item .breaks {
+    grid-column: 2; font-size: 12px; color: var(--text-muted); margin-top: 2px;
+  }
+
+  /* A diff shown in place rather than in a modal: the thing being changed is
+     right above it, and an overwrite with no version history deserves to be
+     read next to its source. */
+  .diff { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .diff-line {
+    display: grid; grid-template-columns: 18px 1fr; gap: 6px;
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 12px; line-height: 1.55; padding: 1px 10px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .diff-line .sign { color: var(--text-muted); user-select: none; }
+  .diff-line.del { background: color-mix(in srgb, var(--bad) 10%, transparent); }
+  .diff-line.add { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .diff-line.del .sign { color: var(--bad); }
+  .diff-line.add .sign { color: var(--ok); }
+  .diff-more { padding: 6px 10px; font-size: 12px; color: var(--text-muted); }
+
   .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
   .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.85rem; }
 
@@ -327,9 +371,21 @@
         <div class="hint" id="prompt-hint"></div>
       </div>
 
+      <div class="contract-head">
+        <strong id="contract-title">提示词契约</strong>
+        <span id="contract-summary"></span>
+      </div>
+      <p class="hint" style="margin-top:4px">
+        下面每一项都是提示词与链路其他部分的接口。缺了任何一项<b>都不会报错</b>，
+        只会让对应功能静默失效——所以保存时会拦，而不是等到有人发现 AI 答得不对。
+      </p>
+      <ul class="contract" id="prompt-contract"></ul>
+
+      <div class="notice" id="prompt-diff" hidden></div>
+
       <div class="actions-row">
         <button class="primary" id="prompt-save-btn">保存提示词</button>
-        <button id="prompt-reset-btn" hidden>重置为平台默认</button>
+        <button id="prompt-reset-btn">恢复平台模板</button>
         <span class="spacer"></span>
         <span class="hint" id="prompt-state"></span>
       </div>
@@ -519,6 +575,9 @@
     // operator actually changed, and only if the server still holds what this
     // baseline says it did.
     baseline: null,
+    // The prompt contract as the server defines it. Held rather than hardcoded
+    // so the checklist and the write path cannot come to disagree.
+    contract: null,
     busy: false
   };
 
@@ -542,6 +601,9 @@
     promptHint: document.getElementById("prompt-hint"),
     promptSaveBtn: document.getElementById("prompt-save-btn"),
     promptResetBtn: document.getElementById("prompt-reset-btn"),
+    promptContract: document.getElementById("prompt-contract"),
+    contractSummary: document.getElementById("contract-summary"),
+    promptDiff: document.getElementById("prompt-diff"),
     promptState: document.getElementById("prompt-state"),
 
     fThreshold: document.getElementById("f-threshold"),
@@ -816,6 +878,10 @@
       }
     };
 
+    // The contract belongs to the prompt that is stored, and the checklist is
+    // redrawn from the textarea, so both are refreshed together.
+    state.contract = cfg.prompt_contract || null;
+
     els.fPrompt.value = prompt;
     els.fThreshold.value = threshold;
     els.fHandoff.value = keywords.join(",");
@@ -832,6 +898,7 @@
     renderSurveyRuntime(cfg);
 
     renderModel(cfg.model);
+    renderPromptContract();
     renderThresholdTiers(cfg, state.factsConfig);
     applyKeywordAvailability(cfg);
 
@@ -841,9 +908,11 @@
 
     applyPromptAvailability(prompt);
     applyDatasetAvailability();
-    // Prompt reset and dataset binding reach into the AI application on the
-    // platform's behalf, and the server allows them to an administrator only.
-    els.promptResetBtn.hidden = !isAdmin();
+    // Restoring the platform template is open to the tenant, unlike the dataset
+    // and variable repairs beside it: it is the way out of a prompt that has
+    // lost part of its contract, and the only operation on this page that can
+    // only ever move a line towards the platform's own text.
+    els.promptResetBtn.hidden = false;
   }
 
   // The model card reports what the tenant's application actually answers with.
@@ -901,6 +970,18 @@
         "服务端说明：" + prompt;
       return;
     }
+    // The pill reports the stored prompt, not the textarea — what is typed is
+    // the checklist's business. A line whose stored prompt has lost part of the
+    // contract must not wear a green pill: "已同步" answers "did we read it",
+    // and read next to a broken checklist it is heard as "nothing is wrong".
+    var missingStored = (state.contract && state.contract.missing) || [];
+    if (missingStored.length) {
+      setPill(els.promptPill, "warn", "契约缺 " + missingStored.length + " 项");
+      els.promptHint.textContent =
+        "线上提示词缺少 " + missingStored.length + " 项必需内容（见下方清单），对应功能正在静默失效。" +
+        "「恢复平台模板」可一次补齐，但会覆盖本产线自己的改写。";
+      return;
+    }
     setPill(els.promptPill, "ok", "已同步");
     els.promptHint.textContent = "保存会直接更新 AI 应用中的提示词，对新会话立即生效。";
   }
@@ -931,6 +1012,160 @@
     el.hidden = false;
   }
 
+
+  // ---------- Prompt contract ----------
+  //
+  // The list of requirements comes from the server rather than from here. A
+  // second copy of it in the page is how the two would come to disagree, and
+  // this is the side where a disagreement is invisible: the page would go on
+  // showing a tick for something the write path rejects.
+  function renderPromptContract() {
+    var reqs = (state.contract && state.contract.requirements) || [];
+    var text = els.fPrompt.value || "";
+    els.promptContract.textContent = "";
+
+    if (!reqs.length) {
+      els.contractSummary.textContent = "";
+      return [];
+    }
+
+    var missing = [];
+    reqs.forEach(function (req) {
+      var present = text.indexOf(req.token) >= 0;
+      if (!present) missing.push(req);
+
+      var li = document.createElement("li");
+      li.className = "contract-item " + (present ? "present" : "absent");
+
+      var mark = document.createElement("span");
+      mark.className = "mark";
+      mark.textContent = present ? "✓" : "✗";
+
+      var name = document.createElement("span");
+      name.className = "name";
+      name.textContent = req.label;
+      var token = document.createElement("span");
+      token.className = "token";
+      token.textContent = req.token;
+      name.appendChild(token);
+
+      li.appendChild(mark);
+      li.appendChild(name);
+      if (!present) {
+        var breaks = document.createElement("span");
+        breaks.className = "breaks";
+        breaks.textContent = "缺失后果：" + req.breaks;
+        li.appendChild(breaks);
+      }
+      els.promptContract.appendChild(li);
+    });
+
+    els.contractSummary.textContent = missing.length
+      ? missing.length + " 项缺失，保存会被拒绝"
+      : reqs.length + " 项齐全";
+    els.contractSummary.style.color = missing.length ? "var(--bad)" : "var(--text-muted)";
+    return missing;
+  }
+
+  // ---------- Line diff ----------
+  //
+  // A prompt overwrite has no version history behind it: the previous text is
+  // gone the moment it is written, and only the audit row's hash survives it.
+  // That is why the change is shown before it happens rather than announced
+  // afterwards.
+  function diffLines(before, after) {
+    var a = before.split("\n"), b = after.split("\n");
+    // Longest common subsequence over lines. A prompt is tens of lines, so the
+    // quadratic table costs nothing here and keeps the result readable — a
+    // character-level diff of reflowed Chinese prose is noise.
+    var m = a.length, n = b.length;
+    var lcs = [], i, j;
+    for (i = 0; i <= m; i++) {
+      lcs.push(new Array(n + 1).fill(0));
+    }
+    for (i = m - 1; i >= 0; i--) {
+      for (j = n - 1; j >= 0; j--) {
+        lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1
+                                  : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      }
+    }
+    var out = [];
+    i = 0; j = 0;
+    while (i < m && j < n) {
+      if (a[i] === b[j]) { i++; j++; }
+      else if (lcs[i + 1][j] >= lcs[i][j + 1]) { out.push({ sign: "-", text: a[i] }); i++; }
+      else { out.push({ sign: "+", text: b[j] }); j++; }
+    }
+    while (i < m) { out.push({ sign: "-", text: a[i] }); i++; }
+    while (j < n) { out.push({ sign: "+", text: b[j] }); j++; }
+    return out;
+  }
+
+  var DIFF_MAX_LINES = 30;
+
+  function showPromptDiff(live, next, onConfirm) {
+    var changes = diffLines(live, next);
+    var removed = 0, added = 0;
+    changes.forEach(function (c) { if (c.sign === "-") removed++; else added++; });
+
+    els.promptDiff.className = "notice warn";
+    els.promptDiff.textContent = "";
+
+    var title = document.createElement("span");
+    title.className = "title";
+    title.textContent = "确认覆盖提示词";
+    var detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent = "删除 " + removed + " 行，新增 " + added +
+      " 行。提示词没有版本历史，" +
+      "覆盖后旧文本无法找回——" +
+      "审计里只留下它的摘要。";
+    els.promptDiff.appendChild(title);
+    els.promptDiff.appendChild(detail);
+
+    var box = document.createElement("div");
+    box.className = "diff";
+    changes.slice(0, DIFF_MAX_LINES).forEach(function (c) {
+      var line = document.createElement("div");
+      line.className = "diff-line " + (c.sign === "-" ? "del" : "add");
+      var sign = document.createElement("span");
+      sign.className = "sign";
+      sign.textContent = c.sign;
+      var text = document.createElement("span");
+      text.textContent = c.text;
+      line.appendChild(sign);
+      line.appendChild(text);
+      box.appendChild(line);
+    });
+    if (changes.length > DIFF_MAX_LINES) {
+      var more = document.createElement("div");
+      more.className = "diff-more";
+      more.textContent = "另有 " + (changes.length - DIFF_MAX_LINES) +
+        " 行改动未显示。";
+      box.appendChild(more);
+    }
+    els.promptDiff.appendChild(box);
+
+    var row = document.createElement("div");
+    row.className = "actions-row";
+    var ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "primary";
+    ok.textContent = "确认覆盖";
+    ok.addEventListener("click", function () {
+      els.promptDiff.hidden = true;
+      onConfirm();
+    });
+    var cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "取消";
+    cancel.addEventListener("click", function () { els.promptDiff.hidden = true; });
+    row.appendChild(ok);
+    row.appendChild(cancel);
+    els.promptDiff.appendChild(row);
+    els.promptDiff.hidden = false;
+  }
+
   // ---------- Prompt ----------
   els.promptSaveBtn.addEventListener("click", function () {
     if (state.busy) return;
@@ -944,11 +1179,22 @@
       return;
     }
 
+    // The contract is checked here as well as on the server, for a different
+    // reason: the server refuses the write, this says which piece to put back
+    // before the round trip.
+    var missing = renderPromptContract();
+    if (missing.length) {
+      toast("提示词缺少 " + missing.length + " 项必需内容，未保存——见下方契约清单", "error");
+      return;
+    }
+
     // Re-read before writing. Between opening this page and pressing save, a
     // colleague — or a platform prompt reset — may have changed the prompt; the
     // textarea still holds what it looked like on open, and saving it blind is
-    // how that change gets silently undone.
-    setBusy(true, els.promptSaveBtn, "保存中…");
+    // how that change gets silently undone. The diff is taken against this
+    // reading rather than against the baseline, so what is shown is what is
+    // actually about to be replaced.
+    setBusy(true, els.promptSaveBtn, "读取线上版本…");
     api(tenantPath("/ai-settings"))
       .then(function (current) {
         var live = current && typeof current.system_prompt === "string" ? current.system_prompt : "";
@@ -959,16 +1205,7 @@
           showPromptConflict(live);
           throw new Error("skip");
         }
-        return api(tenantPath("/ai-settings/prompt"), {
-          method: "PUT",
-          body: JSON.stringify({ prompt: next })
-        });
-      })
-      .then(function () {
-        state.baseline.prompt = next;
-        els.promptConflict.hidden = true;
-        els.promptState.textContent = "已保存 " + nowText();
-        toast("提示词已保存", "success");
+        showPromptDiff(live, next, function () { writePrompt(next); });
       })
       .catch(function (err) {
         if (err.message === "skip" || err.message === "unauthorized") return;
@@ -976,6 +1213,32 @@
       })
       .finally(function () { setBusy(false, els.promptSaveBtn, "保存提示词"); });
   });
+
+  // The write itself, after the operator has looked at what it replaces.
+  function writePrompt(next) {
+    if (state.busy) return;
+    setBusy(true, els.promptSaveBtn, "保存中…");
+    api(tenantPath("/ai-settings/prompt"), {
+      method: "PUT",
+      body: JSON.stringify({ prompt: next })
+    })
+      .then(function () {
+        state.baseline.prompt = next;
+        els.promptConflict.hidden = true;
+        els.promptState.textContent = "已保存 " + nowText();
+        toast("提示词已保存", "success");
+        // The stored contract status is now the one just written, and the
+        // connectivity card reads it.
+        return loadSettings();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        reportError("保存提示词失败", err);
+      })
+      .finally(function () { setBusy(false, els.promptSaveBtn, "保存提示词"); });
+  }
+
+  els.fPrompt.addEventListener("input", renderPromptContract);
 
   // The conflict is not resolved for the operator: the two texts are different
   // intentions and only a person can say which one is meant.
@@ -1011,18 +1274,18 @@
 
   els.promptResetBtn.addEventListener("click", function () {
     if (state.busy) return;
-    if (!confirm("确认把提示词恢复为平台默认模板吗？当前提示词会被覆盖。")) return;
+    if (!confirm("确认恢复平台模板吗？本产线当前的提示词会被覆盖，且无法找回。")) return;
 
-    setBusy(true, els.promptResetBtn, "重置中…");
+    setBusy(true, els.promptResetBtn, "恢复中…");
     api(tenantPath("/ai-settings/prompt/reset"), { method: "POST" })
       .then(function () {
-        toast("提示词已重置为平台默认", "success");
+        toast("已恢复为平台模板", "success");
         // The reset wrote a prompt this page has never seen, so the baseline
         // comes from a fresh read rather than from anything held here.
         return loadSettings();
       })
-      .catch(function (err) { reportError("重置提示词失败", err); })
-      .finally(function () { setBusy(false, els.promptResetBtn, "重置为平台默认"); });
+      .catch(function (err) { reportError("恢复平台模板失败", err); })
+      .finally(function () { setBusy(false, els.promptResetBtn, "恢复平台模板"); });
   });
 
 
@@ -1041,6 +1304,16 @@
     var vars = cfg.variables || null;
     var know = cfg.knowledge || null;
     var model = cfg.model || null;
+
+    // A placeholder the prompt no longer has is a break in the same link the
+    // switches above it control, and it fails the same way: silently. Without
+    // this the card would report fact injection as connected for a prompt with
+    // nowhere to put the facts.
+    function promptLacks(token) {
+      var contract = cfg.prompt_contract;
+      if (!contract || !contract.missing) return false;
+      return contract.missing.some(function (req) { return req.token === token; });
+    }
 
     // 1. Does the app accept what the router sends it?
     if (!vars) {
@@ -1077,6 +1350,12 @@
       rows.push({ state: "bad", title: "知识库检索", state_text: "检索方式与索引不匹配",
         note: know.reason || "检索方式与文档建索引的方式不一致，每次检索都会落空，而且不会报错。",
         action: isAdmin() ? { label: "修复检索", id: "diag-fix-retrieval" } : null });
+    } else if (promptLacks("{{knowledge_context}}")) {
+      // Retrieval works and reports its hits; the prompt has nowhere to put
+      // them. This reads as healthy everywhere else on the page.
+      rows.push({ state: "bad", title: "知识库检索", state_text: "检索得到，但送不进模型",
+        note: "系统提示词里没有 {{knowledge_context}}，检索到的内容在到达模型之前就被丢弃了——" +
+          "命中数照常统计，答复里却完全用不上。" });
     } else {
       rows.push({ state: "ok", title: "知识库检索",
         state_text: know.search_method + " · 索引 " + know.indexing_technique +
@@ -1099,6 +1378,10 @@
     } else if (!declared) {
       rows.push({ state: "bad", title: "确定性事实注入", state_text: "开启了但送不到",
         note: "本租户已开启注入，但 AI 应用没有声明 facts_context，事实在到达模型之前就被丢弃了。" });
+    } else if (promptLacks("{{facts_context}}")) {
+      rows.push({ state: "bad", title: "确定性事实注入", state_text: "开启了但提示词不用它",
+        note: "系统提示词里没有 {{facts_context}}，本体发布的口径送到了应用却没有落脚点——" +
+          "本体页仍会显示已发布，AI 却在按通用常识作答。" });
     } else {
       rows.push({ state: "ok", title: "确定性事实注入", state_text: "已接通" });
     }
@@ -1109,6 +1392,9 @@
     } else if (rt.scene_mode === "off") {
       rows.push({ state: "warn", title: "应答策略注入", state_text: "平台已关闭",
         note: "平台层未启用商业阶段策略，提示词中的应答策略始终为空。" });
+    } else if (promptLacks("{{scene_context}}")) {
+      rows.push({ state: "bad", title: "应答策略注入", state_text: "平台已开启，提示词不用它",
+        note: "系统提示词里没有 {{scene_context}}，平台判定出的商业阶段策略送不到模型。" });
     } else {
       rows.push({ state: "ok", title: "应答策略注入",
         state_text: rt.scene_mode === "shadow" ? "仅观测（shadow）" : "已接通" });

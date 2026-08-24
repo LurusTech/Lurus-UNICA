@@ -1,6 +1,7 @@
 package aisettings
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -116,7 +117,7 @@ func TestAuditState_CoversTheSurveyMessages(t *testing.T) {
 	h, _, _, _ := newGuardrailFixture(t,
 		`{"survey":{"enabled":true,"prompt_message":"审计用文案 1-5","thanks_message":"审计用感谢"}}`)
 
-	raw, err := h.AuditState(t.Context(), "pl-1")
+	raw, err := h.AuditState(context.Background(), "pl-1")
 	if err != nil {
 		t.Fatalf("AuditState: %v", err)
 	}

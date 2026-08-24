@@ -10,6 +10,8 @@ package aisettings
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -114,6 +116,25 @@ type settingsResponse struct {
 	// Behaviour switches only: cache lifetimes, worker counts and integration
 	// endpoints explain nothing a tenant can act on and are not here.
 	Runtime *runtimeStatus `json:"runtime,omitempty"`
+	// PromptContract reports whether the prompt still carries the parts the
+	// pipeline is wired to. It is here rather than only enforced on write
+	// because a line whose prompt drifted before the check existed has to be
+	// able to see it — and because the connectivity card would otherwise call
+	// fact injection connected for a prompt that has no place to put the facts.
+	PromptContract *promptContractStatus `json:"prompt_contract,omitempty"`
+}
+
+// promptContractStatus lists what a prompt is missing, with the consequence of
+// each. The consequence travels with the item because every one of them fails
+// silently: without it a reader has a rule and no reason.
+type promptContractStatus struct {
+	Complete bool                        `json:"complete"`
+	Missing  []difyapp.PromptRequirement `json:"missing,omitempty"`
+	// Requirements is the whole contract, not only what is broken, so an
+	// interface can check a prompt as it is being typed without keeping its own
+	// copy of the list. A second copy is how the two would come to disagree,
+	// and the console is where the disagreement would be invisible.
+	Requirements []difyapp.PromptRequirement `json:"requirements"`
 }
 
 // knowledgeStatus reports whether retrieval can work, not how it is configured.
@@ -355,6 +376,10 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 	var systemPrompt string
 	var model *bridge.AppModelInfo
 	var variables *bridge.AppVariablesInfo
+	// contract stays nil unless a prompt was actually read: reporting a
+	// complete contract for a prompt nobody could fetch would be the most
+	// reassuring possible answer to the least certain question.
+	var contract *promptContractStatus
 	switch {
 	case pl.DifyAgentID == nil || *pl.DifyAgentID == "":
 		systemPrompt = "(no Dify app configured for this product line)"
@@ -368,6 +393,12 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 			systemPrompt = appInfo.SystemPrompt
 			model = appInfo.Model
 			variables = appInfo.Variables
+			missing := difyapp.MissingPromptRequirements(systemPrompt)
+			contract = &promptContractStatus{
+				Complete:     len(missing) == 0,
+				Missing:      missing,
+				Requirements: difyapp.PromptRequirements(),
+			}
 		}
 	}
 
@@ -381,6 +412,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		Variables:       variables,
 		Knowledge:       h.knowledgeStatus(r.Context(), pl),
 		Runtime:         h.runtimeStatus(r.Context()),
+		PromptContract:  contract,
 	})
 }
 
@@ -400,6 +432,16 @@ func (h *Handler) updatePrompt(w http.ResponseWriter, r *http.Request, pl *repos
 		errorJSON(w, http.StatusBadRequest, "prompt cannot be empty")
 		return
 	}
+	// The prompt is not free text: it is the one place several pipeline stages
+	// are wired together, and every one of them fails silently when its part
+	// goes missing. A prompt that has lost {{knowledge_context}} still answers,
+	// the retrieval still runs and still reports how many sources it found, and
+	// the recalled text simply never arrives. This is the only moment at which
+	// that is visible to the person causing it.
+	if missing := difyapp.MissingPromptRequirements(req.Prompt); len(missing) > 0 {
+		promptContractError(w, missing)
+		return
+	}
 
 	if err := h.dify.UpdateSystemPrompt(r.Context(), *pl.DifyAgentID, req.Prompt); err != nil {
 		log.Printf("[ai-settings] update prompt error: %v", err)
@@ -410,22 +452,29 @@ func (h *Handler) updatePrompt(w http.ResponseWriter, r *http.Request, pl *repos
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":         "system prompt updated",
 		"product_line_id": pl.ID,
-		"prompt_length":   len(req.Prompt),
+		// Characters, not bytes: every prompt here is Chinese, and a byte count
+		// reads as roughly three times the text anyone can see.
+		"prompt_length": utf8.RuneCountInString(req.Prompt),
 	})
 }
 
 // resetPrompt overwrites the app's system prompt with the platform's current
-// default template. Restricted to an administrator: the template carries the
-// platform's response strategies and fact-precedence rules, and "reset" is the
-// only sanctioned way to propagate a template change to an existing app — the
-// portal's prompt editor writes back whatever stale text its textarea holds,
-// so a tenant's own people must not be able to race this. Idempotent.
+// default template.
+//
+// Open to the tenant, which reverses the earlier rule. It was administrator
+// only on the reasoning that the template carries platform policy and a tenant
+// should not race a platform-wide propagation — but the permissions were the
+// wrong way round: overwriting the prompt with anything at all needed no
+// privilege, while the one operation that can only ever move a line *towards*
+// the platform's own text needed the highest one. That left a tenant who had
+// broken their own prompt with no way back and a support ticket, which is also
+// why every existing line is stuck on the template it was provisioned with
+// (D16). The write side is where the guarding belongs, and now has it: a prompt
+// that breaks the contract is refused, and this is the button that fixes it.
+//
+// Idempotent, and destructive to the tenant's own customisation by design — the
+// console asks first, and the audit row carries the digest of what was there.
 func (h *Handler) resetPrompt(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
-	claims := auth.GetClaims(r.Context())
-	if claims != nil && !rbac.IsAdmin(claims.Role) {
-		errorJSON(w, http.StatusForbidden, "prompt reset requires the administrator role")
-		return
-	}
 	if pl.DifyAgentID == nil || *pl.DifyAgentID == "" {
 		errorJSON(w, http.StatusBadRequest, "no Dify app configured for this product line")
 		return
@@ -438,10 +487,34 @@ func (h *Handler) resetPrompt(w http.ResponseWriter, r *http.Request, pl *reposi
 		return
 	}
 
+	// No separate variable repair here, though the template it just wrote refers
+	// to inputs by placeholder and Dify substitutes only what an app declares:
+	// UpdateSystemPrompt declares them in the same model-config write. Adding a
+	// second read-modify-write over the same object would give two full writes
+	// racing on one document, and the loser would silently take the prompt with
+	// it.
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":         "system prompt reset to platform default",
 		"product_line_id": pl.ID,
-		"prompt_length":   len(prompt),
+		"prompt_length":   utf8.RuneCountInString(prompt),
+	})
+}
+
+// promptContractError answers a rejected prompt with the list itself rather
+// than a sentence about it. The caller has to act on each item, and a person
+// reading "缺少必需占位符" has to guess which and why.
+func promptContractError(w http.ResponseWriter, missing []difyapp.PromptRequirement) {
+	labels := make([]string, 0, len(missing))
+	for _, req := range missing {
+		labels = append(labels, req.Label+"（"+req.Token+"）")
+	}
+	// The requirements travel as themselves rather than as a rebuilt map: the
+	// same shape is returned by GET /ai-settings, and a caller that had to read
+	// two shapes for one list would eventually handle only one of them.
+	writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+		"error": "提示词缺少必需内容，未保存：" + strings.Join(labels, "、") +
+			"。缺了它们不会报错，只会让对应功能静默失效。若不确定如何补回，可点「恢复平台模板」。",
+		"missing_requirements": missing,
 	})
 }
 
@@ -864,10 +937,53 @@ func (h *Handler) AuditState(ctx context.Context, tenantID string) (json.RawMess
 	return json.Marshal(struct {
 		guardrailConfig
 		Survey *survey.Config `json:"survey"`
+		Prompt *promptDigest  `json:"prompt"`
 	}{
 		guardrailConfig: loadGuardrail(raw),
 		Survey:          survey.Load(raw),
+		Prompt:          h.promptDigest(ctx, tenantID),
 	})
+}
+
+// promptDigest identifies the prompt without copying it into the audit table.
+//
+// The prompt is the largest thing this module writes and the only one that does
+// not live in config_json, so the snapshot used to record a prompt overwrite as
+// a row whose before and after were byte-identical — a record that something
+// happened and no way to see what. A hash answers the question the row is for
+// ("did this change it, and back to what?") and, unlike the text, does not turn
+// the audit table into a second store of every prompt any tenant ever typed.
+//
+// A prompt that cannot be read yields a digest saying so rather than an error:
+// the guardrail and survey halves of the snapshot are still worth having, and
+// an audit failure must never be the reason a write is not recorded.
+type promptDigest struct {
+	SHA256 string `json:"sha256,omitempty"`
+	Runes  int    `json:"runes,omitempty"`
+	// ContractComplete is nil when the prompt could not be read.
+	ContractComplete *bool  `json:"contract_complete,omitempty"`
+	Unavailable      string `json:"unavailable,omitempty"`
+}
+
+func (h *Handler) promptDigest(ctx context.Context, tenantID string) *promptDigest {
+	pl, err := h.pls.GetByID(ctx, tenantID)
+	if err != nil || pl == nil {
+		return &promptDigest{Unavailable: "product line not found"}
+	}
+	if pl.DifyAgentID == nil || *pl.DifyAgentID == "" {
+		return &promptDigest{Unavailable: "no Dify app"}
+	}
+	info, err := h.dify.GetAppConfig(ctx, *pl.DifyAgentID)
+	if err != nil {
+		return &promptDigest{Unavailable: err.Error()}
+	}
+	sum := sha256.Sum256([]byte(info.SystemPrompt))
+	complete := len(difyapp.MissingPromptRequirements(info.SystemPrompt)) == 0
+	return &promptDigest{
+		SHA256:           hex.EncodeToString(sum[:]),
+		Runes:            utf8.RuneCountInString(info.SystemPrompt),
+		ContractComplete: &complete,
+	}
 }
 
 // writeJSON writes a JSON response with the given status code.
