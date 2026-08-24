@@ -20,6 +20,8 @@ import (
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/pkg/difyapp"
+	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/survey"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -86,6 +88,12 @@ type settingsResponse struct {
 	ProductLineName string `json:"product_line_name"`
 	SystemPrompt    string `json:"system_prompt"`
 	guardrailConfig
+	Survey *survey.Config `json:"survey"`
+	// Model is what this tenant's application answers with. Read-only: the
+	// model is a platform decision. It is reported rather than omitted because
+	// a tenant who cannot see which model serves them also cannot notice when
+	// it is not the one everyone else is on.
+	Model *bridge.AppModelInfo `json:"model,omitempty"`
 }
 
 // guardrailResponse is what a guardrail write answers with: the block as it now
@@ -107,6 +115,28 @@ type updateHandoffRulesRequest struct {
 	HandoffKeywords []string `json:"handoff_keywords"`
 	BlockedTopics   []string `json:"blocked_topics"`
 	Threshold       *float64 `json:"threshold,omitempty"`
+	// HoldingMessage is optional so a caller that only changes the keywords is
+	// not forced to restate it. Until now it had no writer at all: the field
+	// was parsed, back-filled and read by the runtime, and no interface could
+	// set it.
+	HoldingMessage *string `json:"holding_message,omitempty"`
+}
+
+// updateSurveyRequest carries the satisfaction-survey block. Every field is a
+// pointer for the same reason the holding message is: this block had no writer
+// either, and a caller that flips the switch must not be made to restate the
+// numbers to avoid resetting them.
+type updateSurveyRequest struct {
+	Enabled             *bool `json:"enabled,omitempty"`
+	MinCustomerMessages *int  `json:"min_customer_messages,omitempty"`
+	TimeoutHours        *int  `json:"timeout_hours,omitempty"`
+}
+
+// surveyResponse is what a survey write answers with: the block as it now
+// stands, which is also the block the runtime will read.
+type surveyResponse struct {
+	ProductLineID string `json:"product_line_id"`
+	*survey.Config
 }
 
 type testMessageRequest struct {
@@ -123,6 +153,8 @@ type testMessageResponse struct {
 // reads a zero threshold as "never configured" and falls back to its default,
 // so accepting zero here would report a setting the running system does not
 // have.
+const holdingMessageBlankMessage = "holding_message cannot be blank: the runtime sends it to the customer verbatim, so whitespace reaches them as an empty message"
+
 const thresholdRangeMessage = "threshold must be greater than 0 and at most 1 (the runtime reads 0 as unset and falls back to its default)"
 
 // Handle routes the ai-settings sub-resource of a tenant:
@@ -132,6 +164,7 @@ const thresholdRangeMessage = "threshold must be greater than 0 and at most 1 (t
 //	POST   ai-settings/prompt/reset   restore the platform's template
 //	PUT    ai-settings/threshold      confidence threshold
 //	PUT    ai-settings/handoff-rules  handoff keywords and blocked topics
+//	PUT    ai-settings/survey         satisfaction survey switch and thresholds
 //	POST   ai-settings/dataset/bind   re-bind the knowledge dataset
 //	POST   ai-settings/test           send a test message to the app
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
@@ -211,6 +244,12 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		errorJSON(w, http.StatusNotFound, "unknown dataset action")
+	case "survey":
+		if r.Method != http.MethodPut {
+			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.updateSurvey(w, r, pl)
 	case "test":
 		if r.Method != http.MethodPost {
 			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -233,6 +272,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 	}
 
 	var systemPrompt string
+	var model *bridge.AppModelInfo
 	switch {
 	case pl.DifyAgentID == nil || *pl.DifyAgentID == "":
 		systemPrompt = "(no Dify app configured for this product line)"
@@ -244,6 +284,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 			systemPrompt = "(unable to fetch from Dify: " + err.Error() + ")"
 		} else {
 			systemPrompt = appInfo.SystemPrompt
+			model = appInfo.Model
 		}
 	}
 
@@ -252,6 +293,8 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		ProductLineName: pl.DisplayName,
 		SystemPrompt:    systemPrompt,
 		guardrailConfig: loadGuardrail(raw),
+		Survey:          survey.Load(raw),
+		Model:           model,
 	})
 }
 
@@ -390,6 +433,13 @@ func (h *Handler) updateHandoffRules(w http.ResponseWriter, r *http.Request, pl 
 		errorJSON(w, http.StatusBadRequest, thresholdRangeMessage)
 		return
 	}
+	// A holding message of nothing but whitespace is the last remaining way to
+	// send a blank message to a customer: the runtime would deliver it verbatim
+	// while the console showed a field that merely looked filled.
+	if req.HoldingMessage != nil && domain.IsBlankAnswer(*req.HoldingMessage) {
+		errorJSON(w, http.StatusBadRequest, holdingMessageBlankMessage)
+		return
+	}
 
 	h.writeGuardrail(w, r, pl.ID, func(cfg *guardrailConfig) {
 		cfg.HandoffKeywords = req.HandoffKeywords
@@ -397,7 +447,61 @@ func (h *Handler) updateHandoffRules(w http.ResponseWriter, r *http.Request, pl 
 		if req.Threshold != nil {
 			cfg.ConfidenceThreshold = *req.Threshold
 		}
+		if req.HoldingMessage != nil {
+			cfg.HoldingMessage = *req.HoldingMessage
+		}
 	})
+}
+
+// updateSurvey writes the satisfaction-survey block.
+//
+// Unlike a guardrail write this does not invalidate the route cache: the
+// runtime reads these settings straight from the row each time a conversation
+// closes, so there is no cached copy to drop. Calling the invalidation anyway
+// would suggest a coupling that does not exist.
+func (h *Handler) updateSurvey(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	var req updateSurveyRequest
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Zero and negative are rejected rather than accepted and back-filled: the
+	// loader reads them as "unset" and substitutes the default, so accepting
+	// them would answer with a number the caller did not ask for.
+	if req.MinCustomerMessages != nil && *req.MinCustomerMessages <= 0 {
+		errorJSON(w, http.StatusBadRequest, "min_customer_messages must be greater than 0 (the runtime reads 0 as unset and falls back to its default)")
+		return
+	}
+	if req.TimeoutHours != nil && *req.TimeoutHours <= 0 {
+		errorJSON(w, http.StatusBadRequest, "timeout_hours must be greater than 0 (the runtime reads 0 as unset and falls back to its default)")
+		return
+	}
+
+	raw, err := h.pls.GetConfigJSON(r.Context(), pl.ID)
+	if err != nil {
+		log.Printf("[ai-settings] load config_json error: %v", err)
+		errorJSON(w, http.StatusInternalServerError, "failed to load AI settings")
+		return
+	}
+
+	cfg := survey.Load(raw)
+	if req.Enabled != nil {
+		cfg.Enabled = *req.Enabled
+	}
+	if req.MinCustomerMessages != nil {
+		cfg.MinCustomerMessages = *req.MinCustomerMessages
+	}
+	if req.TimeoutHours != nil {
+		cfg.TimeoutHours = *req.TimeoutHours
+	}
+
+	if err := h.pls.SetConfigKey(r.Context(), pl.ID, survey.ConfigKey, cfg); err != nil {
+		log.Printf("[ai-settings] store survey error: %v", err)
+		errorJSON(w, http.StatusInternalServerError, "failed to store AI settings")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, surveyResponse{ProductLineID: pl.ID, Config: cfg})
 }
 
 // writeGuardrail applies one caller's change to the tenant's guardrail block and
@@ -503,14 +607,25 @@ func (h *Handler) sendTestMessage(w http.ResponseWriter, r *http.Request, pl *re
 	})
 }
 
-// AuditState returns the tenant's guardrail block for the audit trail, which is
-// the whole of what a write to this module changes in the database.
+// AuditState returns the config_json blocks this module writes, which is what
+// an audit row has to be able to show before and after.
+//
+// Every block a write here can change belongs in this snapshot. When it
+// returned the guardrail block alone, a survey write would have left an audit
+// row whose before and after were identical — a record that something happened
+// and no way to see what.
 func (h *Handler) AuditState(ctx context.Context, tenantID string) (json.RawMessage, error) {
 	raw, err := h.pls.GetConfigJSON(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(loadGuardrail(raw))
+	return json.Marshal(struct {
+		guardrailConfig
+		Survey *survey.Config `json:"survey"`
+	}{
+		guardrailConfig: loadGuardrail(raw),
+		Survey:          survey.Load(raw),
+	})
 }
 
 // writeJSON writes a JSON response with the given status code.

@@ -121,7 +121,7 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 
 		// Register OnClose callback to send survey when conversation closes
 		stateManager.SetOnClose(func(ctx context.Context, conv *state.Conversation) {
-			shouldSend, err := surveyH.ShouldSendSurvey(ctx, conv.ID, conv.ProductLineID)
+			shouldSend, surveyCfg, err := surveyH.ShouldSendSurvey(ctx, conv.ID, conv.ProductLineID)
 			if err != nil {
 				log.Printf("[router] survey check error for conversation %s: %v", conv.ID, err)
 				return
@@ -135,7 +135,7 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 				ProductLineID: conv.ProductLineID,
 				CustomerID:    conv.CustomerID,
 			}
-			if err := surveyH.SendSurvey(ctx, convInfo); err != nil {
+			if err := surveyH.SendSurvey(ctx, convInfo, surveyCfg); err != nil {
 				log.Printf("[router] failed to send survey for conversation %s: %v", conv.ID, err)
 			}
 		})

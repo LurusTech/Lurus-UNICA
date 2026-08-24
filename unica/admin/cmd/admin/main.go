@@ -439,6 +439,7 @@ var aiSettingsPaths = map[string]bool{
 	"threshold":     true,
 	"handoff-rules": true,
 	"dataset/bind":  true,
+	"survey":        true,
 	"test":          true,
 }
 

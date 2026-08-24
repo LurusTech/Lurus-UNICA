@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
+	shared "github.com/kefu/unica/pkg/survey"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -117,7 +120,7 @@ func TestHandleSurveyReply_ValidScore(t *testing.T) {
 		CustomerID: "cust-1",
 	}
 	pendingJSON, _ := json.Marshal(pendingData)
-	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), surveyPendingTTL)
+	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), shared.Defaults().PendingTTL())
 
 	tests := []struct {
 		name      string
@@ -133,7 +136,7 @@ func TestHandleSurveyReply_ValidScore(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Re-set pending key for each test
-			rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), surveyPendingTTL)
+			rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), shared.Defaults().PendingTTL())
 
 			handled, err := h.HandleSurveyReply(ctx, convID, tt.input)
 			if err != nil {
@@ -184,7 +187,7 @@ func TestHandleSurveyReply_InvalidScore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), surveyPendingTTL)
+			rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), shared.Defaults().PendingTTL())
 
 			handled, err := h.HandleSurveyReply(ctx, convID, tt.input)
 			if err != nil {
@@ -211,7 +214,7 @@ func TestHandleSurveyReply_UpdateError(t *testing.T) {
 	// Set up pending survey
 	pendingData := pendingSurveyData{SentAt: "2026-03-06T10:00:00Z", ChannelID: "ch-1", CustomerID: "cust-1"}
 	pendingJSON, _ := json.Marshal(pendingData)
-	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), surveyPendingTTL)
+	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), shared.Defaults().PendingTTL())
 
 	_, err := h.HandleSurveyReply(ctx, convID, "5")
 	if err == nil {
@@ -237,7 +240,7 @@ func TestSendSurvey(t *testing.T) {
 		CorrelationID:          "corr-1",
 	}
 
-	err := h.SendSurvey(ctx, conv)
+	err := h.SendSurvey(ctx, conv, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -335,7 +338,7 @@ func TestSendSurvey_DuplicatePrevention(t *testing.T) {
 	}
 
 	// Send first survey
-	if err := h.SendSurvey(ctx, conv); err != nil {
+	if err := h.SendSurvey(ctx, conv, nil); err != nil {
 		t.Fatalf("first send failed: %v", err)
 	}
 
@@ -360,7 +363,7 @@ func TestHandleSurveyReply_PendingKeyRemoved(t *testing.T) {
 	// Set up pending survey
 	pendingData := pendingSurveyData{SentAt: "2026-03-06T10:00:00Z", ChannelID: "ch-1", CustomerID: "cust-1"}
 	pendingJSON, _ := json.Marshal(pendingData)
-	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), surveyPendingTTL)
+	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), shared.Defaults().PendingTTL())
 
 	// Handle survey reply
 	handled, err := h.HandleSurveyReply(ctx, convID, "4")
@@ -391,7 +394,7 @@ func TestHandleSurveyReply_ThankYouMessage(t *testing.T) {
 	// Set up pending survey
 	pendingData := pendingSurveyData{SentAt: "2026-03-06T10:00:00Z", ChannelID: "ch-1", CustomerID: "cust-1"}
 	pendingJSON, _ := json.Marshal(pendingData)
-	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), surveyPendingTTL)
+	rdb.Set(ctx, surveyPendingKeyPrefix+convID, string(pendingJSON), shared.Defaults().PendingTTL())
 
 	handled, err := h.HandleSurveyReply(ctx, convID, "5")
 	if err != nil {
@@ -429,5 +432,33 @@ func TestConversationInfo_Fields(t *testing.T) {
 	}
 	if info.ProductLineID != "pl-1" {
 		t.Error("ProductLineID mismatch")
+	}
+}
+
+// The timeout was parsed and defaulted for a long time while nothing read it,
+// so a deployment that shortened it saw no change. This pins the value to the
+// key that actually expires.
+func TestSendSurvey_PendingTTLFollowsConfig(t *testing.T) {
+	rdb, mr := setupTestRedis(t)
+	defer mr.Close()
+
+	h := NewHandler(nil, rdb, newMockStateManager())
+	ctx := context.Background()
+	conv := &ConversationInfo{ID: "conv-ttl", ChannelID: "ch-1", ProductLineID: "pl-1", CustomerID: "cust-1"}
+
+	if err := h.SendSurvey(ctx, conv, &SurveyConfig{Enabled: true, TimeoutHours: 6}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := mr.TTL(surveyPendingKeyPrefix + conv.ID); got != 6*time.Hour {
+		t.Errorf("pending TTL = %v, want 6h", got)
+	}
+
+	// No config at all keeps the period the fixed constant used to give.
+	conv2 := &ConversationInfo{ID: "conv-ttl-default", ChannelID: "ch-1", ProductLineID: "pl-1", CustomerID: "cust-1"}
+	if err := h.SendSurvey(ctx, conv2, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := mr.TTL(surveyPendingKeyPrefix + conv2.ID); got != 24*time.Hour {
+		t.Errorf("default pending TTL = %v, want 24h", got)
 	}
 }

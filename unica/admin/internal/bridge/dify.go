@@ -77,6 +77,21 @@ type AppInfo struct {
 	Name         string `json:"name"`
 	Mode         string `json:"mode"`
 	SystemPrompt string `json:"system_prompt,omitempty"`
+	// Model is what the app actually answers with. It was not reported before,
+	// which is why five product lines could sit on two different models with
+	// nothing in any interface saying so.
+	Model *AppModelInfo `json:"model,omitempty"`
+}
+
+// AppModelInfo is the model an app is configured with, flattened for display.
+type AppModelInfo struct {
+	Provider    string  `json:"provider"`
+	Name        string  `json:"name"`
+	Temperature float64 `json:"temperature"`
+	MaxTokens   int     `json:"max_tokens"`
+	// Pinned reports whether this matches the platform model. False means the
+	// app has drifted and its answers are not comparable with the other lines'.
+	Pinned bool `json:"pinned"`
 }
 
 // TestMessageResponse represents the response from a Dify test chat message.
@@ -369,8 +384,77 @@ func (b *DifyBridge) GetAppConfig(ctx context.Context, appID string) (*AppInfo, 
 			info.SystemPrompt = pp
 		}
 	}
+	if mc, ok := raw["model_config"].(map[string]interface{}); ok {
+		if model, ok := mc["model"].(map[string]interface{}); ok {
+			info.Model = flattenModel(model)
+		}
+	}
 
 	return info, nil
+}
+
+// flattenModel renders Dify's nested model object for display, and records
+// whether it is the platform's.
+func flattenModel(model map[string]interface{}) *AppModelInfo {
+	out := &AppModelInfo{Pinned: difyapp.PlatformModel().Matches(model)}
+	out.Provider, _ = model["provider"].(string)
+	out.Name, _ = model["name"].(string)
+	if params, ok := model["completion_params"].(map[string]interface{}); ok {
+		if t, ok := params["temperature"].(float64); ok {
+			out.Temperature = t
+		}
+		if m, ok := params["max_tokens"].(float64); ok {
+			out.MaxTokens = int(m)
+		}
+	}
+	return out
+}
+
+// PinPlatformModel points an app at the one model the platform serves every
+// tenant with.
+//
+// Nothing used to write this at all, so a provisioned app inherited whatever
+// the Dify workspace default happened to be — which is how the fleet ended up
+// split across two models, with different token ceilings, and no interface
+// reporting it. Pinning it at provisioning time is what keeps the fleet from
+// drifting apart again one new tenant at a time.
+//
+// Like the system prompt, this goes through POST /apps/{id}/model-config, which
+// replaces the whole configuration object; the current one is read first and
+// written back with only the model changed.
+func (b *DifyBridge) PinPlatformModel(ctx context.Context, appID, token string) error {
+	if appID == "" {
+		return fmt.Errorf("app id is empty")
+	}
+	if token == "" {
+		var err error
+		if token, err = b.consoleToken(ctx); err != nil {
+			return err
+		}
+	}
+
+	body, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/apps/"+appID, nil, token)
+	if err != nil {
+		return fmt.Errorf("read app config: %w", err)
+	}
+	var envelope struct {
+		ModelConfig map[string]interface{} `json:"model_config"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return fmt.Errorf("unmarshal app config: %w", err)
+	}
+	cfg := envelope.ModelConfig
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
+	cfg["model"] = difyapp.PlatformModel().AsModelConfig()
+
+	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPost, "/apps/"+appID+"/model-config", cfg, token); err != nil {
+		return fmt.Errorf("write model config: %w", err)
+	}
+	log.Printf("[dify-bridge] pinned app_id=%s to %s/%s", appID,
+		difyapp.PlatformModel().Provider, difyapp.PlatformModel().Name)
+	return nil
 }
 
 // UpdateSystemPrompt updates the system prompt of a Dify app.

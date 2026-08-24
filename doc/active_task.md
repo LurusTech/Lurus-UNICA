@@ -1,203 +1,109 @@
-# Active Task: 配置面重构 阶段 0 —— 收敛重复落点（不改行为）
+# Active Task: 配置面重构 阶段 1 —— 补缺口 + 锁死平台模型
 
 ## Context
-配置面重构的地基工程：把"同一件事有两个落点、靠注释约束同步"的五处收敛掉。
-本阶段**不新增任何功能、不改变任何运行时行为**——后续所有"门户显示生效值"的改动
-都建立在两边一致之上，在不一致的地基上做上层功能只会把偏差固化。
-完整设计见 `doc/plan-config-surface.md`（六个阶段，本文件是阶段 0）。
-预期结果：guardrail 只剩一份定义，三处无人写却仍被读的旁路消失，
-并有一个对拍脚本长期守住"门户所示 == 运行时所用"。
+把三处"根本没有地方配"的东西给个地方，并堵住模型漂移的产生源。
+四件事里**只有开户锁死模型是强制项**——它防的是问题继续产生：
+2026-08-23 把五条线拉平到 v4-flash 是一次操作，不是一个状态，
+`provisionDifyLine` 建 Dify 应用时不写 model 字段，新租户会落到工作空间默认值上重新漂开。
+其余三件（holding_message 入口、survey 入口、模型只读卡片）不改任何运行时行为。
+完整设计见 `doc/plan-config-surface.md`。
+
+## 摸底确认的两件事（都改变了做法）
+1. **`timeout_hours` 是死字段**：被解析、有默认值、有单测，但没有任何逻辑读它——
+   真正的 TTL 是硬编码的 `surveyPendingTTL = 24 * time.Hour`。
+   直接暴露到门户等于交付一个**改了没反应**的开关，比没有更糟。故先接线再暴露。
+2. **`AuditState` 只审计 guardrail 块**（`aisettings.go:508`，接线在 `main.go:247/251`）。
+   新增 survey 写入而不扩展它，这些写操作不留任何审计痕迹。
+   `holding_message` 在 guardrail 块内，天然已覆盖。
+
+## 平台模型这个值放哪（已定）
+代码里的常量是权威（`pkg/difyapp`，与 `DefaultSystemPrompt` 同处，符合既有惯例），
+admin 环境变量可覆盖作为**紧急切换通道**，注释写明正式入口是后续阶段的平台配置页。
+理由：常量保证任何部署都有确定值，env 不做成永久配置面。
 
 ## Critical Files
-- `unica/pkg/guardrail/`（新建：GuardrailConfig 与默认值的唯一权威）
-- `unica/admin/internal/tenant/aisettings/guardrail.go`（删本地副本，改 import）
-- `unica/router/internal/guardrail/config.go`（删本地副本，改 import）
-- `unica/router/internal/knowledge/`（死包，零外部引用，整包删除）
-- `unica/router/internal/handoff/summary.go`（删 config_json.dify 覆盖读取）
-- `unica/admin/internal/identity/tenants_onboarding.go`（Chatwoot 绑定定权威后删回填逻辑）
-- `unica/admin/go.mod` / `unica/router/go.mod`（新增对 pkg 的 require）
-- `tmp/config_parity.py`（新建：五线对拍）
+- `unica/pkg/survey/`（新建：SurveyConfig 的唯一权威，比照 pkg/guardrail）
+- `unica/router/internal/survey/handler.go`（改为 import，并把 TTL 接到配置上）
+- `unica/pkg/difyapp/prompt.go`（新增 PlatformModel 定义）
+- `unica/admin/internal/bridge/dify.go`（AppInfo 补模型字段；新增写 model 的路径）
+- `unica/admin/internal/identity/tenants_provision.go`（开户时写模型）
+- `unica/admin/internal/tenant/aisettings/aisettings.go`（holding_message、survey、AuditState）
+- `unica/admin/cmd/admin/main.go`（`aiSettingsPaths` 闭合路由表）
+- `portal/ai-settings.html`（三处界面）
 
 ## Step-by-Step Plan
-- [x] 1. 新建 `unica/pkg/guardrail`：把 `GuardrailConfig` 结构体、`DefaultGuardrailConfig()`、
-      以及从 `product_lines.config_json` 解析与回填的共用逻辑收进去。默认值以 **router 那份为准**
-      （它是运行时实际生效的一份），admin 的副本按字段逐条比对后丢弃。
-- [x] 2. admin 与 router 改为 import 新包，删掉两处硬编码与两份重复 struct。
-      注意两个模块的 `go.mod` 要加 require；`go.work` 已覆盖本地替换。
-      完成标志：全仓库搜 `Must stay identical` 零命中。
-- [x] 3. 删除死包 `unica/router/internal/knowledge`（已确认零外部 import）。
-      它的分段规则用单换行、与 admin 实际生效的 `
-
-` 矛盾，留着的唯一作用是
-      被下一个人误接回主链路后静默破坏索引。
-- [x] 4. 删除 `handoff/summary.go` 里 `config_json.dify.{base_url,api_key}` 的覆盖读取路径。
-      该键**没有任何写入方**，但仍在被读——一旦有人手工改库就会静默覆盖列里的凭证，
-      而门户与开户流程都看不见。`product_lines` 的列是唯一权威。
-- [x] 5. Chatwoot 绑定定权威：`config_json.chatwoot` 为准。普查 `chatwoot_account_id` 列的
-      全部读取方后二选一——改为派生 / 直接删列；随后删掉 `ensureChatwoot` 里为两者不一致
-      而写的那段回填修复逻辑。
-- [x] 6. 写 `tmp/config_parity.py`：对五条产线，比对**门户 `GET /ai-settings` 返回值**
-      与**按新 pkg 逻辑从库内 config_json 计算出的生效值**，逐字段核对。
-      这是本阶段的长期守卫，不是一次性脚本。
-- [x] 6b. **D18 的根治**（新增，优先于第 7 步）：判定层遇到 `answer == ""` 必须转人工，
-      不得把空字符串投递给客户。参数调到 4096 只是把触发概率压低，
-      问题更长、知识库更大时还会撞上，而它是**静默**失败。
-      同时按 D19 给断言层加一条无条件前置检查：非转人工的用例，答复不得为空。
-- [x] 7. 验证：`pkg` / `admin` / `router` / `gateway` 四模块 `go test ./...` 全绿；
-      对拍 5/5；抽 XDYX 与 MegaStore 各跑一次金标，确认与阶段 0 之前的基线**无差异**
-      （本阶段任何分数变化都是回归，不是改进）。
+- [x] 1. 新建 `unica/pkg/survey`：`Config` + `Defaults()` + `Load()`，回填逐字段。
+      router 的 survey 包改为 import。不这么做就会重新造出刚刚消灭掉的那种双份定义。
+- [x] 2. `timeout_hours` 接线：`surveyPendingTTL` 由配置推导，默认仍是 24 小时，
+      现有行为不变。零值与负值走默认。加单测钉住"配置 12 小时则 TTL 是 12 小时"。
+- [x] 3. `holding_message` 写入：`updateHandoffRulesRequest` 加**可选**字段
+      （指针类型，不传即不改，既有调用方不受影响）。校验用 `domain.IsBlankAnswer`——
+      纯空白的转人工话术正是最后一条能把空白消息送到客户眼前的路径。
+- [x] 4. `survey` 写入：新增 `PUT ai-settings/survey`，同时改 `aiSettingsPaths` 闭合表
+      与 `Handle` 的 switch。读-改-写复用 `SetConfigKey` 的 jsonb 单键替换。
+      **不需要失效路由缓存**（router 的 survey 每次现查库，与 guardrail 不同）——
+      实现时要验证这一点，写进注释。
+- [x] 5. 扩展 `AuditState`：把 survey 块一并纳入，否则 survey 的每一次修改都不留痕。
+- [x] 6. 模型只读卡片的服务端：`AppInfo` 补 provider/name/completion_params，
+      `GetAppConfig` 解析 `model_config.model`，`settingsResponse` 带出去。
+- [x] 7. **开户锁死模型**（强制项）：`pkg/difyapp` 定义 `PlatformModel`，
+      开户创建应用后按"读出整个 model_config、只改 model、整体写回"写入
+      （与 `updateSystemPromptWithToken` 同一形状，Dify 无部分更新）。
+      失败要**报告**而不是静默——静默正是 D8/D16 那一类缺陷的成因。
+- [x] 8. 门户三处：转人工卡片加 holding_message 输入；新增 survey 卡片；
+      新增模型只读卡片（复用现有 `.card` / `.hint` / `.mono` 样式，页面无框架无构建）。
+- [x] 9. 验证：五模块 build+vet+test；**开一个全新租户，断言其 Dify 应用的 model
+      等于平台设定**（这是本阶段唯一的强制验收）；从门户改 holding_message 与 survey，
+      确认 router 侧立即读到新值。
 
 ## Current Status
-- [x] 阶段 0 完成（2026-08-23）。6b 未做，见下。
+- [x] 阶段 1 完成（2026-08-24）
 
-### 落点与计划的差异
+### 实机验收（强制项已过）
 
-**第 6 步改用 Go 而非 Python。** 计划写的是 `tmp/config_parity.py`，但 Python 版
-必须重新实现一遍回填规则——那就是造出第三份副本，恰是本阶段要消灭的东西。
-改成 `unica/router/cmd/configparity`：一侧直接调 `pkg/guardrail.Load`
-（消息链路调的同一个函数），另一侧调门户 `GET /ai-settings`，中间不夹任何重写。
-**10 个租户全部一致**（含 5 条历史 DrillCo）。
+开一个全新租户 `PINTEST`，其 Dify 应用被自动锁定：
 
-**第 5 步修正了判断：Chatwoot 那一列不删。** 盘点把它归成"冗余双写"，
-但读代码后发现它有真实读取方——销户时用它定位要删除的 Chatwoot 账户，
-且带 config_json 回退与偏移修复。删列要迁移、要改 INSERT，收益只是整洁。
-**但里面有一个真问题已修**：`chatwootAccountOf` 原先**优先读列**，
-而写入顺序是先块后列——会滞后的恰恰是列。列一旦陈旧，销户会删掉另一个
-活着的租户的工作台，同时把该删的留成孤儿。已改为块优先、列兜底，
-代码遵循的权威与设计声明的权威从此一致。
+```
+model: {"provider":"openai_api_compatible","name":"deepseek-v4-flash",
+        "temperature":0.3,"max_tokens":4096,"pinned":true}
+```
 
-### 验收结果
+开户日志留痕 `[dify-bridge] pinned app_id=... to openai_api_compatible/deepseek-v4-flash`。
+存量租户 XDYX 同样报 `pinned: true`。验收后已销户，Dify 应用/数据集、
+Chatwoot 账户 9、门户账号全部随之清理（顺带验证了阶段 0 那处"config_json 优先"的销户改动）。
 
-| 项 | 结果 |
-|---|---|
-| 五模块 `go build` | 全过 |
-| 四模块 `go test` | 全绿 |
-| `pkg` 模块 | **1 条先于本阶段就红的用例**，见下 |
-| 配置对拍 | 10/10 一致 |
-| MegaStore 金标 | 24/24，0 回归（较基线 +1） |
-| XDYX 金标 | 首跑 25/29「2 回归」，复跑 27/29 **0 回归** |
+其余三项：
+- `holding_message` 可读可写；**纯空白被 400 拒绝**——用全角空格+零宽空格实测，
+  `TrimSpace` 会放行，`domain.IsBlankAnswer` 拦下了。
+- `survey` 可读可写，落库确认 `{"enabled":true,"timeout_hours":6,"min_customer_messages":3}`。
+- 模型只读卡片在门户渲染，偏离平台设定时显示"已偏离平台设定"的告警胶囊。
 
-XDYX 首跑那 2 条（xdyx-02、xdyx-12）复跑即消失、且换成了另一条通过
-（xdyx-08），失败集在漂移而非稳定回归——符合已记录的 XDYX 抖动区间。
-本阶段对 router 判定路径是恒等变换（别名 + 同一份逻辑），唯一行为差异是
-`blocked_topics` 由 nil 归一为 `[]`，对评估器无影响。
+### 与计划的差异
 
-### 6b 完成（2026-08-24，多 agent 编排 9 个 agent）
-
-判空谓词收进 `pkg/domain.IsBlankAnswer`，判定层与金标层共用同一份——
-两处各写一遍 `TrimSpace` 正是这次两层同时失守的直接原因。
-谓词不是 `TrimSpace`：逐 rune 判定，覆盖零宽空格 U+200B、BOM U+FEFF、
-word joiner U+2060、软连字符 U+00AD、盲文空白 U+2800、韩文填充符 U+3164 等
-`unicode.IsSpace` 不认的字符，并把纯标点也算作无内容（刻意判断：
-标签剥离后剩个"。"与空白对客户没有区别；判错代价是一次多余转人工，
-判漏代价是这个缺陷本身）。emoji 与货币符号留在"有内容"一侧，边界双向测试钉死。
-
-**拦截后不发任何兜底文案**，走既有 `DecisionHandoff`。客户收到编造的话比收到
-空白更糟：前者会让他以为问题已被处理。
-
-编排中剥出两个各自独立的坑：
-
-1. **修 D18 会让 D19 变成死代码**。`JudgeAnswer` 把空答复降级成 `DecisionHandoff`，
-   而 evalset 传给断言层的 `handoff` 正是"是否 DecisionHandoff"，空值检查前面的
-   `if handoff { return }` 每次先返回——修之前空答复走 `send` 会判失败，
-   修完反而 pass，**金标比修复前更瞎**。改为"用例声明要转人工 **且** 运行时确实转了"
-   才允许沉默，两个条件缺一不可。
-2. **triage 预分流拦截的用例模型根本没被调用**，检查前移后会被判成"模型什么都没说"，
-   把模型没见过的消息算到它头上。新增 `eval.EvaluateIntercepted` 区分。
-
-**超出 6b 原定范围的一处**：三套标签协议正则改为大小写不敏感
-（`escalation.go` / `claims.go` / `marketing/detector.go`）。理由是 `[handoff:payout]`
-既不剥离也不升级——客户读到内部标记、一次要钱的升级被吞掉，比空白更严重，属同一类故障。
-全角括号写法**未修**，已登记为 D20（根治要抽出统一的标签规范化步骤，不是再打第四层正则补丁）。
-
-**验证**：五模块 build + vet 全过；router/eval/pkg 测试全绿（除既存的
-`TestSeedOntologiesMatchCannedResponses`）；无临时探针残留。
-五线金标 116/125，**全量空答复 0 条**——新检查一次都没触发，
-7 条较基线的差异全是内容充实的正常答复（64~106 字）的措辞波动，
-落在同一份代码前后两跑已测得的抖动区间内。
-即：本次跑分**没有证明修复有效**（证明它有效的是单测与 28 个不可见码位的探针），
-只证明了它**不误伤真答复**——安全网装着但不响，正是预期形态。
+1. **`ShouldSendSurvey` 改了签名**，返回 `(bool, *SurveyConfig, error)`。
+   原打算在 `SendSurvey` 里现查配置，写完发现测试里 `db` 为 nil 直接 panic——
+   那说明这个做法给函数引入了它原本没有的依赖。改由已经加载过配置的调用方传下去，
+   一次加载、无新依赖。
+2. **`settingsResponse` 漏带 model 字段**，第一次验收拿到 `model: null`，
+   而 Dify 侧查下来锁定其实成功了。教训是"日志说做了"和"接口能看到"是两件事，
+   只读卡片的价值恰恰在后者。
+3. **门户 JS 里的 `
+` 在写入时被折叠成真实换行**，导致字符串字面量跨行、语法错误。
+   现在用数组 `.join("
+")` 组装，并在提交前用 `node --check` 校验抽出的脚本块。
 
 ### 遗留
 
-- `empty_answer` 只进指标与日志，**不落库**。模型自声明升级 + 空答复时
-  `handoff_events.reason` 保留原因值，事后无法从数据库回溯"这条工单当时是空答复"。
-- 判空边界主动留口：`So`/`Sc`/`Co`（emoji、货币符号、私用区）算有内容。
-- 共用谓词只接了三处（`JudgeAnswer`、`eval.Evaluate`、`guardrail.Load` 的
-  holding message）；`handoff/summary.go` 与 survey 的出站未接，判断是不需要，
-  但没有测试钉住这个判断。
+- 平台模型目前是 `pkg/difyapp.PlatformModel()` 里的常量，**env 覆盖通道还没做**。
+  当前没有它也能工作（改值重编译即可），正式入口是后续阶段的平台配置页。
+  先不加 env，避免把临时通道做成事实上的永久配置面。
+- `AuditState` 已含 survey 块，但**提示词仍不在审计范围内**（它不在 config_json 里，
+  权威源在 Dify）。阶段 2 把提示词权威源收回本地后应一并纳入。
 
-### 先于本阶段就存在的红灯（未处理）
+## 后续阶段（见 doc/plan-config-surface.md）
+- 阶段 2：提示词权威源回收（本地版本表 + publish/rollback），解 D16
+- 阶段 3：检索方式与分段规则回收；修 `provisionDifyLine` 早退条件，解 D8
+- 阶段 4/5：env 业务开关下放、租户自带 key（均标注可不做）
 
-`pkg/domain` 的 `TestSeedOntologiesMatchCannedResponses` 失败：上个增量把
-采集清单写进了 `deploy/config/ontology/{freshmart,megastore,techzone}.yaml`
-（D8 的权宜之计），而 `canned_responses.yaml` 没跟着更新，该测试把两者钉在一起。
-已确认与本次改动无关——这些属性在 HEAD 版本的 YAML 里根本不存在，是工作树里新增的。
-**不在阶段 0 范围内**：它的根治是 D8（给三条零售线补建数据集、把清单挪回知识库），
-属阶段 3。在那之前这条会一直红。
-
-## 后续阶段（不在本增量内，见 doc/plan-config-surface.md）
-1. **阶段 1 补缺口**：`holding_message`、`survey.*` 补写入接口与表单；门户加"当前模型/供应商"只读卡片。
-2. **阶段 2 提示词权威源回收**：本地版本表 + publish/rollback，Dify 降为投影，出"存量租户落后于模板"差异视图。解 D16。
-3. **阶段 3 模型与检索权威源回收**：模型选择、temperature/max_tokens、检索方式、分段规则收进门户；顺带修 `provisionDifyLine` 的早退条件。解 D8。
-4. **阶段 4（可不做）**：`INTENT_TRIAGE`/`SCENE_MODE`/`ONTOLOGY_ENABLED`/`DIFY_INDEXING_TECHNIQUE` 从 env 下放。
-5. **阶段 5（可不做）**：租户自带模型 key（平台代持方案）。
-
-## 已定的前置决策（2026-08-23）
-
-**模型全平台唯一，租户不可选。** 不论租户在界面上设置什么，生效的只有一个模型。
-当前定为 `openai_api_compatible / deepseek-v4-flash`，temperature 0.3、max_tokens 1024。
-刻意选一个不强的模型：强模型会用推理能力盖住提示词、检索、本体这三层的缺陷、
-让金标虚高，弱模型把缺陷逼到台面上。跑分是为了发现问题，不是拿好看的数字。
-因此门户上模型相关的一切都是**只读展示**——看得见，改不了。
-
-环境已拉平（`tmp/unify_model.py`，先 dry-run 后 `--push`）：XDYX 与 AJYJ 从
-`deepseek/deepseek-chat` + Dify 默认参数改到目标模型，另三条线本已一致。
-写后已核验提示词（1498~1503 字符、含 `[HANDOFF:]` 与规则 8/9）与数据集绑定均未被
-`model-config` 的整体覆盖冲掉。回退值已知：`deepseek/deepseek-chat`、`{"stop":[]}`。
-
-**但统一是个状态，不是一次操作。** 开户流程创建 Dify 应用时不写 model 字段，
-新租户会落到工作空间默认值上、重新漂开。该强制项已排进阶段 1。
-
-## 基线已重冻（2026-08-23，已完成）
-
-新基线 `unica/router/testdata/golden/baseline-v4flash-unified.json`，
-口径 `-inject-facts`（与历史基线一致）。旧的两份基线保留不覆盖。
-
-**118 / 125（94.4%），空答复 0 条。**
-
-| 产线 | 分数 |
-|---|---|
-| AJYJ | 24/24（100%）|
-| FreshMart | 23/24 |
-| MegaStore | 23/24 |
-| TechZone | 22/24 |
-| XDYX | 26/29 |
-
-对旧基线（111/125，混合模型 + max_tokens 1024）：旧过新挂 3 条
-（tech-01 / xdyx-01 / xdyx-08），旧挂新过 10 条。
-
-### 过程中剥出两条缺陷，均已登记
-
-第一次重跑得 109/125，其中 **18 条答复完全为空**。查明是
-`max_tokens: 1024` 不够走完该模型的推理，生成在"还在想"时被截断，
-Dify 返回空串而非半句话，链路把它当正常答复照发给客户（**D18**）。
-实测真实需要 386~2021 tokens，2048 仍会掐掉最长的一条，故五线统一改为 4096
-（`tmp/unify_model.py`）。改后同样的问题不但有答复，答案还是对的——
-这批失败与模型能力无关。
-
-那 18 条里有 **6 条被金标判为通过**：它们的断言只有否定式，
-空答复天然满足（**D19**）。其中 ajyj-19 是 `handoff=false` 的纯静默通过。
-
-### 剩下 7 条失败里有 2 条是断言误杀
-
-`xdyx-08` 答"责任也**属于公司一方**"、`xdyx-11` 答"责任归属**在公司一方**"，
-结论都对，但断言只收 `由公司/公司承担/我们承担/公司责任` 这几个字面量，
-判失败。**裁定（2026-08-23）：断言不放宽。** 这两条记为**模型未达到口径**，
-不是断言写错。责任归属是要发给客户、也要给坐席看的结论，措辞必须收敛到
-一组确定说法，"属于公司一方"这种松散表述不算达标。放宽断言等于把口径要求
-让渡给模型的即兴措辞，今天放宽一个词，明天就测不出东西。
-两条在新基线里保持 false，要修就修提示词或知识库，不修测试。
-
-另外 5 条是真漏：fresh-02 漏"拍照"、mega-19 该采集却只给了热线、
-tech-01 漏"未拆封"、tech-13 漏"分期"、xdyx-01 漏"24小时"。
+## 未处理的既存红灯
+`pkg/domain` 的 `TestSeedOntologiesMatchCannedResponses` 先于阶段 0 就红，根治在阶段 3。

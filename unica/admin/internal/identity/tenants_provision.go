@@ -112,6 +112,21 @@ func (h *TenantHandler) provisionDifyLine(ctx context.Context, id string) (*prov
 		return nil, &difyProvisionError{http.StatusBadGateway, "创建 Dify API Key 失败: " + err.Error()}
 	}
 
+	// Pin the model before anything else can answer with the app. Nothing wrote
+	// this field until now, so a new app took the Dify workspace default and the
+	// fleet drifted apart one tenant at a time — silently, because no interface
+	// reported which model a line was on.
+	//
+	// Reported rather than fatal, for the same reason the prompt is: this needs
+	// a model provider configured in the workspace, which a fresh deployment may
+	// not have yet, and that must not block onboarding. It must not be silent
+	// either — silence is precisely how the drift went unnoticed.
+	var warnings []string
+	if err := h.difyBridge.PinPlatformModel(ctx, app.ID, token); err != nil {
+		log.Printf("[tenants] WARN: app %s not pinned to the platform model; it will answer with the Dify workspace default: %v", app.ID, err)
+		warnings = append(warnings, "未能锁定平台模型，该应用会使用 Dify 工作空间的默认模型，其回答与其他产线不可比: "+err.Error())
+	}
+
 	// Without this the app and its dataset stay unconnected: uploads succeed,
 	// indexing completes, and not one answer ever draws on them.
 	//
@@ -119,7 +134,6 @@ func (h *TenantHandler) provisionDifyLine(ctx context.Context, id string) (*prov
 	// POST /apps/{id}/model-config, which a workspace with no model provider yet
 	// rejects, and that must not block onboarding. Unlike before, it is reported
 	// — silence here is exactly how the missing binding survived undetected.
-	var warnings []string
 	if err := h.difyBridge.AttachDatasetWithToken(ctx, app.ID, dataset.ID, token); err != nil {
 		log.Printf("[tenants] WARN: dataset %s not bound to app %s; the knowledge base will not be consulted until it is: %v", dataset.ID, app.ID, err)
 		warnings = append(warnings, "知识库未能绑定到 Dify 应用，上传的文档暂不会参与回答，请稍后重试绑定: "+err.Error())

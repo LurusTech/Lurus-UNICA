@@ -15,14 +15,13 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/kefu/unica/pkg/model"
+	shared "github.com/kefu/unica/pkg/survey"
 	"github.com/kefu/unica/router/internal/metrics"
 )
 
 const (
 	// surveyPendingKeyPrefix is the Redis key prefix for pending survey tracking.
 	surveyPendingKeyPrefix = "survey:pending:"
-	// surveyPendingTTL is the TTL for pending survey keys.
-	surveyPendingTTL = 24 * time.Hour
 	// OutboundStream is the Redis Stream key for outbound messages.
 	OutboundStream = "unica:outbound"
 )
@@ -39,12 +38,10 @@ const surveyMessage = "感谢您的咨询！请为本次服务评分：\n" +
 // surveyThanksMessage is sent after a valid survey reply is received.
 const surveyThanksMessage = "感谢您的评价！我们会继续努力提升服务质量。"
 
-// SurveyConfig holds survey configuration parsed from product_line config_json.
-type SurveyConfig struct {
-	Enabled            bool `json:"enabled"`
-	MinCustomerMessages int  `json:"min_customer_messages"`
-	TimeoutHours       int  `json:"timeout_hours"`
-}
+// SurveyConfig is a product line's survey settings. It is an alias of the
+// shared definition, not a copy: the admin console reads and writes the same
+// block, and it persists what it displays.
+type SurveyConfig = shared.Config
 
 // pendingSurveyData is stored in Redis to track pending surveys.
 type pendingSurveyData struct {
@@ -88,46 +85,56 @@ func NewHandler(db *sql.DB, rdb *redis.Client, sm StateManager) *Handler {
 
 // ShouldSendSurvey checks if a survey should be sent for the closing conversation.
 // Returns true if: survey enabled for product line, conv has >= min customer messages, survey not already sent.
-func (h *Handler) ShouldSendSurvey(ctx context.Context, convID, productLineID string) (bool, error) {
+//
+// The settings it loaded are returned alongside the verdict so the send that
+// follows can use them without reading the row again — and, more to the point,
+// without SendSurvey needing a database at all. They are nil whenever the
+// verdict is false.
+func (h *Handler) ShouldSendSurvey(ctx context.Context, convID, productLineID string) (bool, *SurveyConfig, error) {
 	// Load survey config from product_lines
 	config, err := h.loadSurveyConfig(ctx, productLineID)
 	if err != nil {
-		return false, fmt.Errorf("load survey config: %w", err)
+		return false, nil, fmt.Errorf("load survey config: %w", err)
 	}
 	if !config.Enabled {
-		return false, nil
+		return false, nil, nil
 	}
 
 	// Check if survey was already sent
 	key := surveyPendingKeyPrefix + convID
 	exists, err := h.rdb.Exists(ctx, key).Result()
 	if err != nil {
-		return false, fmt.Errorf("check pending survey: %w", err)
+		return false, nil, fmt.Errorf("check pending survey: %w", err)
 	}
 	if exists > 0 {
-		return false, nil
+		return false, nil, nil
 	}
 
-	// Check minimum customer messages
+	// No clamp on the threshold here: Load back-fills a non-positive value from
+	// the shared defaults, and repeating the number would put it in two places.
 	minMsgs := config.MinCustomerMessages
-	if minMsgs <= 0 {
-		minMsgs = 2
-	}
 	count, err := h.sm.CountCustomerMessages(ctx, convID)
 	if err != nil {
-		return false, fmt.Errorf("count customer messages: %w", err)
+		return false, nil, fmt.Errorf("count customer messages: %w", err)
 	}
 	if count < minMsgs {
-		return false, nil
+		return false, nil, nil
 	}
 
-	return true, nil
+	return true, config, nil
 }
 
 // SendSurvey creates the survey outbound message and publishes to unica:outbound.
 // Also sets survey_sent_at and survey_status='sent' in DB.
-// Stores Redis key survey:pending:{conversation_id} with TTL=24h.
-func (h *Handler) SendSurvey(ctx context.Context, conv *ConversationInfo) error {
+// Stores Redis key survey:pending:{conversation_id}, whose TTL is the product
+// line's configured timeout rather than a fixed period — the setting existed
+// and was parsed for a long time without anything reading it, so a deployment
+// that changed it saw nothing happen.
+//
+// cfg is what ShouldSendSurvey already loaded; nil falls back to the platform
+// defaults so a caller that has none is given the previous fixed behaviour
+// rather than an immediate expiry.
+func (h *Handler) SendSurvey(ctx context.Context, conv *ConversationInfo, cfg *SurveyConfig) error {
 	// Build outbound survey message
 	outMsg := model.StandardMessage{
 		ID:      uuid.New().String(),
@@ -179,7 +186,11 @@ func (h *Handler) SendSurvey(ctx context.Context, conv *ConversationInfo) error 
 	}
 	pendingJSON, _ := json.Marshal(pendingData)
 	key := surveyPendingKeyPrefix + conv.ID
-	if err := h.rdb.Set(ctx, key, string(pendingJSON), surveyPendingTTL).Err(); err != nil {
+	ttl := shared.Defaults().PendingTTL()
+	if cfg != nil {
+		ttl = cfg.PendingTTL()
+	}
+	if err := h.rdb.Set(ctx, key, string(pendingJSON), ttl).Err(); err != nil {
 		log.Printf("[survey] warning: failed to set pending survey key for %s: %v", conv.ID, err)
 	}
 
@@ -250,32 +261,11 @@ func (h *Handler) loadSurveyConfig(ctx context.Context, productLineID string) (*
 		return nil, fmt.Errorf("query product line config: %w", err)
 	}
 
-	config := &SurveyConfig{
-		Enabled:            false,
-		MinCustomerMessages: 2,
-		TimeoutHours:       24,
-	}
-
-	if !configJSONStr.Valid || configJSONStr.String == "" {
-		return config, nil
-	}
-
-	// Parse the full config JSON and extract the "survey" block
-	var fullConfig map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(configJSONStr.String), &fullConfig); err != nil {
-		return config, nil
-	}
-
-	surveyJSON, ok := fullConfig["survey"]
-	if !ok {
-		return config, nil
-	}
-
-	if err := json.Unmarshal(surveyJSON, config); err != nil {
-		return config, nil
-	}
-
-	return config, nil
+	// Read straight from the row on every call: unlike the guardrail block,
+	// which the router caches with the channel route, these settings have no
+	// cached copy, so a console write is met by the next conversation without
+	// an invalidation step.
+	return shared.Load(json.RawMessage(configJSONStr.String)), nil
 }
 
 // getProductLineID retrieves the product line ID for a conversation.

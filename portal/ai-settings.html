@@ -104,6 +104,8 @@
   textarea { min-height: 240px; resize: vertical; line-height: 1.6; }
   .field { margin-bottom: 16px; }
   .field.narrow { max-width: 240px; }
+  input[type="checkbox"] { width: auto; padding: 0; }
+  .inline-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
   .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
   .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.85rem; }
 
@@ -252,6 +254,12 @@
         <div class="hint">命中这些话题时 AI 不作答，直接转人工。</div>
       </div>
 
+      <div class="field">
+        <label for="f-holding">转接等待语</label>
+        <input id="f-holding" placeholder="正在为您转接人工客服，请稍候..." />
+        <div class="hint">转人工时发给客户的那句话。不能只填空格——它会原样发出，客户看到的是一条空消息。</div>
+      </div>
+
       <div class="actions-row">
         <button class="primary" id="guardrail-save-btn">保存</button>
         <span class="spacer"></span>
@@ -274,6 +282,55 @@
         <span class="spacer"></span>
         <span class="hint" id="dataset-hint"></span>
       </div>
+    </div>
+
+    <!-- Satisfaction survey -->
+    <div class="card">
+      <div class="card-head">
+        <h2>满意度调研</h2>
+      </div>
+      <p class="card-sub">
+        会话结束后自动向客户发一条评分邀请。默认关闭——一条客户没预期的消息，
+        不该由没有配置过它的部署替品牌发出去。
+      </p>
+
+      <div class="field">
+        <label class="inline-check">
+          <input type="checkbox" id="f-survey-enabled" />
+          <span>开启满意度调研</span>
+        </label>
+      </div>
+
+      <div class="field narrow">
+        <label for="f-survey-min">最少客户消息数</label>
+        <input id="f-survey-min" type="number" min="1" step="1" />
+        <div class="hint">客户至少发过这么多条消息才值得邀请评分。一来一回的对话没有服务质量可评。</div>
+      </div>
+
+      <div class="field narrow">
+        <label for="f-survey-timeout">等待回复时长（小时）</label>
+        <input id="f-survey-timeout" type="number" min="1" step="1" />
+        <div class="hint">超过这个时长仍未回复，本次调研作废。</div>
+      </div>
+
+      <div class="actions-row">
+        <button class="primary" id="survey-save-btn">保存</button>
+        <span class="spacer"></span>
+        <span class="hint" id="survey-state"></span>
+      </div>
+    </div>
+
+    <!-- Model in force (read-only) -->
+    <div class="card">
+      <div class="card-head">
+        <h2>生效模型</h2>
+        <span class="pill" id="model-pill" hidden></span>
+      </div>
+      <p class="card-sub">
+        模型与推理参数由平台统一指定，全部产线共用一个，租户不可更改。
+        统一是为了让各产线的评测结果可比；这里列出来，是因为看不见比改不了更容易出事。
+      </p>
+      <div class="result-box mono" id="model-info">读取中…</div>
     </div>
 
     <!-- Test message -->
@@ -355,8 +412,18 @@
     fThreshold: document.getElementById("f-threshold"),
     fHandoff: document.getElementById("f-handoff"),
     fBlocked: document.getElementById("f-blocked"),
+    fHolding: document.getElementById("f-holding"),
     guardrailSaveBtn: document.getElementById("guardrail-save-btn"),
     guardrailState: document.getElementById("guardrail-state"),
+
+    fSurveyEnabled: document.getElementById("f-survey-enabled"),
+    fSurveyMin: document.getElementById("f-survey-min"),
+    fSurveyTimeout: document.getElementById("f-survey-timeout"),
+    surveySaveBtn: document.getElementById("survey-save-btn"),
+    surveyState: document.getElementById("survey-state"),
+
+    modelPill: document.getElementById("model-pill"),
+    modelInfo: document.getElementById("model-info"),
 
     datasetPill: document.getElementById("dataset-pill"),
     datasetBindBtn: document.getElementById("dataset-bind-btn"),
@@ -568,18 +635,34 @@
     var keywords = Array.isArray(cfg.handoff_keywords) ? cfg.handoff_keywords : [];
     var topics = Array.isArray(cfg.blocked_topics) ? cfg.blocked_topics : [];
     var threshold = typeof cfg.confidence_threshold === "number" ? cfg.confidence_threshold : 0.7;
+    var holding = typeof cfg.holding_message === "string" ? cfg.holding_message : "";
+    var survey = cfg.survey || {};
 
     state.baseline = {
       prompt: prompt,
       threshold: threshold,
       keywords: keywords.slice(),
-      topics: topics.slice()
+      topics: topics.slice(),
+      holding: holding,
+      survey: {
+        enabled: survey.enabled === true,
+        min: typeof survey.min_customer_messages === "number" ? survey.min_customer_messages : 2,
+        timeout: typeof survey.timeout_hours === "number" ? survey.timeout_hours : 24
+      }
     };
 
     els.fPrompt.value = prompt;
     els.fThreshold.value = threshold;
     els.fHandoff.value = keywords.join(",");
     els.fBlocked.value = topics.join(",");
+    els.fHolding.value = holding;
+
+    els.fSurveyEnabled.checked = state.baseline.survey.enabled;
+    els.fSurveyMin.value = state.baseline.survey.min;
+    els.fSurveyTimeout.value = state.baseline.survey.timeout;
+    els.surveyState.textContent = "";
+
+    renderModel(cfg.model);
 
     els.promptConflict.hidden = true;
     els.promptState.textContent = "";
@@ -590,6 +673,34 @@
     // Prompt reset and dataset binding reach into the AI application on the
     // platform's behalf, and the server allows them to an administrator only.
     els.promptResetBtn.hidden = !isAdmin();
+  }
+
+  // The model card reports what the tenant's application actually answers with.
+  // A line that has drifted off the platform model is called out rather than
+  // shown as ordinary: its answers are not comparable with the other lines',
+  // and until this card existed nothing anywhere said which model was in use.
+  function renderModel(model) {
+    if (!model) {
+      els.modelPill.hidden = true;
+      els.modelInfo.textContent = "无法读取当前模型（AI 应用未开通，或 Dify 暂不可达）。";
+      return;
+    }
+    els.modelInfo.textContent = [
+      "供应商        " + (model.provider || "-"),
+      "模型          " + (model.name || "-"),
+      "temperature   " + model.temperature,
+      "max_tokens    " + model.max_tokens
+    ].join("\n");
+    els.modelPill.hidden = false;
+    if (model.pinned) {
+      els.modelPill.textContent = "与平台一致";
+      els.modelPill.className = "pill";
+    } else {
+      els.modelPill.textContent = "已偏离平台设定";
+      els.modelPill.className = "pill warn";
+      els.modelInfo.textContent +=
+        "\n\n此应用未使用平台指定的模型，其回答与其他产线不可比。请联系平台管理员。";
+    }
   }
 
   // Whether the prompt in hand is a prompt at all. When the settings endpoint
@@ -751,9 +862,12 @@
     var keywords = splitCsv(els.fHandoff.value);
     var topics = splitCsv(els.fBlocked.value);
 
+    var holding = els.fHolding.value;
+
     var thresholdChanged = threshold !== state.baseline.threshold;
     var rulesChanged = !sameList(keywords, state.baseline.keywords) ||
-      !sameList(topics, state.baseline.topics);
+      !sameList(topics, state.baseline.topics) ||
+      holding !== state.baseline.holding;
 
     if (!thresholdChanged && !rulesChanged) {
       toast("没有需要保存的改动", "warn");
@@ -761,6 +875,12 @@
     }
     if (thresholdChanged && (isNaN(threshold) || threshold <= 0 || threshold > 1)) {
       toast("置信度阈值须大于 0 且不超过 1", "error");
+      return;
+    }
+    // Caught here as well as server-side, so the operator learns before the
+    // round trip that whitespace reaches the customer as an empty message.
+    if (holding.trim() === "") {
+      toast("转接等待语不能为空或只有空格——它会原样发给客户", "error");
       return;
     }
 
@@ -773,13 +893,15 @@
         var liveThreshold = typeof current.confidence_threshold === "number" ? current.confidence_threshold : null;
         var liveKeywords = Array.isArray(current.handoff_keywords) ? current.handoff_keywords : [];
         var liveTopics = Array.isArray(current.blocked_topics) ? current.blocked_topics : [];
+        var liveHolding = typeof current.holding_message === "string" ? current.holding_message : "";
 
         if (thresholdChanged && liveThreshold !== state.baseline.threshold) {
           throw conflictError("置信度阈值");
         }
         if (rulesChanged && (!sameList(liveKeywords, state.baseline.keywords) ||
-            !sameList(liveTopics, state.baseline.topics))) {
-          throw conflictError("转人工关键词或屏蔽话题");
+            !sameList(liveTopics, state.baseline.topics) ||
+            liveHolding !== state.baseline.holding)) {
+          throw conflictError("转人工关键词、屏蔽话题或转接等待语");
         }
 
         var writes = Promise.resolve();
@@ -787,7 +909,11 @@
           writes = writes.then(function () {
             return api(tenantPath("/ai-settings/handoff-rules"), {
               method: "PUT",
-              body: JSON.stringify({ handoff_keywords: keywords, blocked_topics: topics })
+              body: JSON.stringify({
+                handoff_keywords: keywords,
+                blocked_topics: topics,
+                holding_message: holding
+              })
             });
           });
         }
@@ -821,6 +947,66 @@
   function conflictError(what) {
     return new Error(what + "已被他人修改，本次未保存。请点「重新加载」查看当前设置后再改。");
   }
+
+  // ---------- Satisfaction survey ----------
+  // Written on its own endpoint rather than folded into the guardrail save: the
+  // two blocks live under different keys of the same config and the runtime
+  // reads them by different routes — the guardrail block through a cached
+  // channel route, this one straight from the row on conversation close.
+  els.surveySaveBtn.addEventListener("click", function () {
+    if (state.busy) return;
+
+    var enabled = els.fSurveyEnabled.checked;
+    var min = parseInt(els.fSurveyMin.value, 10);
+    var timeout = parseInt(els.fSurveyTimeout.value, 10);
+    var base = state.baseline.survey;
+
+    if (enabled === base.enabled && min === base.min && timeout === base.timeout) {
+      toast("没有需要保存的改动", "warn");
+      return;
+    }
+    // Zero reads as "unset" to the runtime, which then substitutes its default —
+    // so accepting it here would save a number the operator did not choose.
+    if (isNaN(min) || min <= 0) {
+      toast("最少客户消息数须大于 0", "error");
+      return;
+    }
+    if (isNaN(timeout) || timeout <= 0) {
+      toast("等待回复时长须大于 0 小时", "error");
+      return;
+    }
+
+    setBusy(true, els.surveySaveBtn, "保存中…");
+    api(tenantPath("/ai-settings"))
+      .then(function (current) {
+        var live = (current && current.survey) || {};
+        if ((live.enabled === true) !== base.enabled ||
+            live.min_customer_messages !== base.min ||
+            live.timeout_hours !== base.timeout) {
+          throw conflictError("满意度调研设置");
+        }
+        return api(tenantPath("/ai-settings/survey"), {
+          method: "PUT",
+          body: JSON.stringify({
+            enabled: enabled,
+            min_customer_messages: min,
+            timeout_hours: timeout
+          })
+        });
+      })
+      .then(function () {
+        toast("满意度调研设置已保存", "success");
+        var stamp = nowText();
+        return loadSettings().then(function () {
+          els.surveyState.textContent = "已保存 " + stamp;
+        });
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        reportError("保存失败", err);
+      })
+      .finally(function () { setBusy(false, els.surveySaveBtn, "保存"); });
+  });
 
   // ---------- Dataset binding ----------
   els.datasetBindBtn.addEventListener("click", function () {
