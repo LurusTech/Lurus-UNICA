@@ -166,7 +166,7 @@ POSTGRES_URL=... go run ./cmd/ontology publish -dir ../../deploy/config/ontology
 
 ```bash
 # 1. 基础设施（PostgreSQL + Redis），或使用 deploy/ 下的清单
-# 2. 迁移（16 个，幂等）
+# 2. 迁移（20 个，幂等）
 for f in unica/router/migrations/*.sql; do psql $POSTGRES_URL -v ON_ERROR_STOP=1 -f $f; done
 
 # 3. 各服务（每个模块独立 go.mod）

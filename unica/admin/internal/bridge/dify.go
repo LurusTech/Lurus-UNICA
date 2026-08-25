@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kefu/unica/pkg/difyapp"
 )
@@ -760,6 +761,31 @@ func (b *DifyBridge) updateSystemPromptWithToken(ctx context.Context, appID, pro
 	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPost, "/apps/"+appID+"/model-config", cfg, token); err != nil {
 		return fmt.Errorf("update system prompt: %w", err)
 	}
+
+	// Verified rather than trusted, for the reason AttachDataset states about
+	// this same endpoint: a model-config write that changed nothing comes back
+	// with the same 200 as one that took effect. The prompt went unverified
+	// while the dataset binding beside it did not, which left the one claim
+	// this store exists to make — "this revision is in effect" — resting on an
+	// answer that does not carry it.
+	//
+	// A byte comparison is safe because the round trip was measured, not
+	// assumed: trailing spaces, tabs, blank lines, zero-width characters, ZWJ
+	// emoji and a 400-character line all came back identical. Had Dify
+	// normalised anything, every push would report a failure that did not
+	// happen.
+	verify, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/apps/"+appID, nil, token)
+	if err != nil {
+		return fmt.Errorf("update system prompt: verify: %w", err)
+	}
+	if err := json.Unmarshal(verify, &envelope); err != nil {
+		return fmt.Errorf("update system prompt: unmarshal verified config: %w", err)
+	}
+	if live, _ := envelope.ModelConfig["pre_prompt"].(string); live != prompt {
+		return fmt.Errorf("update system prompt: app %s still answers with different text after the write (%d runes stored, %d in effect)",
+			appID, utf8.RuneCountInString(prompt), utf8.RuneCountInString(live))
+	}
+
 	log.Printf("[dify-bridge] updated system prompt for app_id=%s (len=%d)", appID, len(prompt))
 	return nil
 }

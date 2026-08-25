@@ -426,6 +426,50 @@
       <p class="pf-note">加载中…</p>
     </div>
 
+    <!-- Who is behind the template. The state above says what the template is
+         now; this says which lines are actually standing on it. -->
+    <div class="panel-head" style="margin-top:32px">
+      <h2>提示词落后清单</h2>
+      <p>
+        平台模板改过之后，存量租户不会自动跟上——他们的提示词停在写入当时的那一版，
+        而落后是平台改动造成的，租户无从得知。下面逐条列出：现在站在哪一版、
+        是否还等于今天的模板、AI 应用里是不是真的就是这一版。
+        后两列是两件事：一条线可以既等于今天的模板，又没能真的写进去。
+        <b>默认一条都不选</b>：已自定义的租户写的是自己的文本，不属于落后，回推会把它覆盖掉。
+      </p>
+    </div>
+    <div class="toolbar">
+      <span class="hint" id="prompts-counts"></span>
+      <div class="spacer"></div>
+      <button class="primary" id="prompts-push-btn" disabled>回推所选</button>
+      <button id="prompts-refresh-btn">刷新</button>
+    </div>
+    <div id="prompts-refusal" hidden></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px"></th>
+            <th>产线</th>
+            <th>与平台模板</th>
+            <th>活跃版本</th>
+            <th>来源</th>
+            <th>AI 应用现状</th>
+            <th>最后推送</th>
+            <th>契约</th>
+          </tr>
+        </thead>
+        <tbody id="prompts-tbody">
+          <tr><td colspan="8" class="loading-text">尚未加载</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="prompts-push-result" hidden></div>
+
+    <div class="panel-head" style="margin-top:32px">
+      <h2>审计轨迹</h2>
+      <p>全平台的写入动作逐条在此，含上面的每一次回推。</p>
+    </div>
     <div class="toolbar">
       <div class="filter">
         <label for="audit-tenant">租户</label>
@@ -603,7 +647,13 @@
     auditOffset: 0,
     auditTotal: 0,
     auditLoaded: false,
-    platformLoaded: false
+    platformLoaded: false,
+    // The roster and the ids ticked on it. Selection is held here rather than
+    // read off the boxes so a refresh cannot silently carry a stale tick into
+    // the next push.
+    prompts: null,
+    promptsSelected: {},
+    promptsLoaded: false
   };
 
   var els = {
@@ -621,6 +671,13 @@
     userTenantFilter: document.getElementById("user-tenant-filter"),
 
     difyLink: document.getElementById("dify-link"),
+
+    promptsCounts: document.getElementById("prompts-counts"),
+    promptsTbody: document.getElementById("prompts-tbody"),
+    promptsPushBtn: document.getElementById("prompts-push-btn"),
+    promptsRefreshBtn: document.getElementById("prompts-refresh-btn"),
+    promptsRefusal: document.getElementById("prompts-refusal"),
+    promptsPushResult: document.getElementById("prompts-push-result"),
     auditTbody: document.getElementById("audit-tbody"),
     auditTenant: document.getElementById("audit-tenant"),
     auditAction: document.getElementById("audit-action"),
@@ -677,6 +734,7 @@
     ["channel_configs", "渠道配置"],
     ["knowledge_docs", "知识库文档"],
     ["ontology_versions", "事实版本"],
+    ["prompt_versions", "提示词版本"],
     ["claim_violations", "违规记录"],
     ["users", "门户账号"]
   ];
@@ -749,6 +807,10 @@
             var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
             var err = new Error(msg);
             err.status = res.status;
+            // A refusal can carry more than a sentence — the prompt push names
+            // which requirements the template is missing — and rebuilding that
+            // from the message is not possible.
+            err.data = data;
             throw err;
           }
           return data;
@@ -771,6 +833,10 @@
       if (btn.dataset.panel === "panel-ops" && !state.platformLoaded) {
         state.platformLoaded = true;
         loadPlatformSettings();
+      }
+      if (btn.dataset.panel === "panel-ops" && !state.promptsLoaded) {
+        state.promptsLoaded = true;
+        loadPromptRoster();
       }
     });
   });
@@ -954,6 +1020,306 @@
       "都不在本页显示，也不显示掩码——掩码同样会出现在每一张截图里。" +
       "需要改动请到上面的 Dify 控制台。");
   }
+
+  // ---------- Prompt roster (who is behind the template) ----------
+  //
+  // Falling behind is caused by the platform template moving, and the
+  // consequence is platform-wide — a tenant cannot see it happen and has no
+  // reason to look. This is the only surface where the whole estate is visible
+  // at once, and the only place the correction can be applied deliberately
+  // rather than tenant by tenant.
+  //
+  // Nothing is selected by default. A tenant whose prompt is their own text is
+  // not behind anything, and a select-all button would treat those two states
+  // as one.
+
+  var PROMPT_STATE_PILLS = {
+    current:    ["ok",    "与当前模板一致"],
+    outdated:   ["warn",  "落后于模板"],
+    custom:     ["muted", "已自定义"],
+    unrecorded: ["muted", "无版本记录"]
+  };
+
+  // What Dify actually holds, which is a different axis from the one above: a
+  // line can stand on today's template and still not have it in effect.
+  var PROMPT_PROJECTION_PILLS = {
+    in_effect:         ["ok",    "已生效"],
+    not_pushed:        ["warn",  "已定版未生效"],
+    changed_elsewhere: ["warn",  "控制台之外被改过"],
+    unknown:           ["muted", "读不到"]
+  };
+
+  var PROMPT_SOURCE_LABELS = {
+    console: "控制台保存",
+    provision: "开户创建",
+    seed: "搬迁自 AI 应用",
+    template: "平台回推"
+  };
+
+  var PUSH_STAGE_LABELS = {
+    lookup: "没有找到这条产线",
+    binding: "这条线没有 AI 应用",
+    version: "读版本表失败",
+    publish: "定版失败（本地权威源没写成，未推送）",
+    push: "已定版，但写入 AI 应用失败"
+  };
+
+  function pill(kind, text) {
+    var el = document.createElement("span");
+    el.className = "pill" + (kind ? " " + kind : "");
+    el.textContent = text;
+    return el;
+  }
+
+  function loadPromptRoster() {
+    var tbody = els.promptsTbody;
+    tbody.innerHTML = '<tr><td colspan="8" class="loading-text">加载中…（每条线都要读一次 AI 应用，可能要等几秒）</td></tr>';
+    // The push report is deliberately left standing: this reload is what proves
+    // the roster moved, and the per-line outcomes are the only record of which
+    // lines did not.
+    return api("/api/v1/platform/prompts")
+      .then(function (data) {
+        state.prompts = data || {};
+        state.promptsSelected = {};
+        renderPromptRoster();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        state.prompts = null;
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">加载失败: ' +
+          escapeHtml(err.message) + "</td></tr>";
+        els.promptsCounts.textContent = "";
+        updatePushButton();
+      });
+  }
+
+  function renderPromptRoster() {
+    var data = state.prompts || {};
+    var lines = Array.isArray(data.lines) ? data.lines : [];
+    var tbody = els.promptsTbody;
+    tbody.innerHTML = "";
+
+    var counts = data.counts || {};
+    els.promptsCounts.textContent =
+      "一致 " + (counts.current || 0) + " · 落后 " + (counts.outdated || 0) +
+      " · 已自定义 " + (counts.custom || 0) + " · 无记录 " + (counts.unrecorded || 0) +
+      (data.generated_at ? "　（读于 " + formatDate(data.generated_at) + "）" : "");
+
+    if (!lines.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">暂无产线</td></tr>';
+      updatePushButton();
+      return;
+    }
+    lines.forEach(function (line) { tbody.appendChild(promptRosterRow(line)); });
+    updatePushButton();
+  }
+
+  function promptRosterRow(line) {
+    var tr = document.createElement("tr");
+
+    // A line with no AI app has nowhere to push to. The box is disabled rather
+    // than absent so the row still reads as a line that exists.
+    var tdBox = document.createElement("td");
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.disabled = !line.has_dify_app;
+    box.checked = !!state.promptsSelected[line.product_line_id];
+    box.setAttribute("aria-label", "选择 " + (line.display_name || line.name));
+    box.addEventListener("change", function () {
+      if (box.checked) state.promptsSelected[line.product_line_id] = true;
+      else delete state.promptsSelected[line.product_line_id];
+      updatePushButton();
+    });
+    tdBox.appendChild(box);
+
+    var tdName = document.createElement("td");
+    tdName.textContent = line.display_name || line.name || line.product_line_id;
+    if (!line.has_dify_app) {
+      tdName.appendChild(document.createTextNode(" "));
+      tdName.appendChild(pill("bad", "无 AI 应用"));
+    }
+
+    var tdState = document.createElement("td");
+    var sp = PROMPT_STATE_PILLS[line.state] || ["muted", line.state || "未知"];
+    tdState.appendChild(pill(sp[0], sp[1]));
+
+    var tdVersion = document.createElement("td");
+    tdVersion.className = "mono";
+    tdVersion.textContent = line.active_version ? "v" + line.active_version : "—";
+
+    var tdSource = document.createElement("td");
+    tdSource.textContent = line.active_version
+      ? (PROMPT_SOURCE_LABELS[line.active_source] || line.active_source || "—")
+      : "—";
+
+    var tdProjection = document.createElement("td");
+    var proj = line.projection || {};
+    var pp = PROMPT_PROJECTION_PILLS[proj.state] || ["muted", proj.state || "未知"];
+    tdProjection.appendChild(pill(pp[0], pp[1]));
+    if (!proj.available && proj.reason) tdProjection.title = proj.reason;
+
+    var tdPushed = document.createElement("td");
+    tdPushed.textContent = line.pushed_at ? formatDate(line.pushed_at) : "从未推送";
+
+    // A line whose prompt has lost part of the contract is answering with a
+    // stage silently disconnected. Pushing the template is one way out of it,
+    // which is why it is on this row rather than only on the tenant's page.
+    var tdContract = document.createElement("td");
+    var contract = line.contract || {};
+    if (!contract.known) {
+      tdContract.appendChild(pill("muted", "读不到"));
+      if (contract.reason) tdContract.title = contract.reason;
+    } else if (contract.complete) {
+      tdContract.appendChild(pill("ok", "齐全"));
+    } else {
+      var miss = contract.missing || [];
+      tdContract.appendChild(pill("bad", "缺 " + miss.length + " 项"));
+      tdContract.title = miss.map(function (m) { return m.label + "（" + m.token + "）"; }).join("、");
+    }
+
+    tr.appendChild(tdBox);
+    tr.appendChild(tdName);
+    tr.appendChild(tdState);
+    tr.appendChild(tdVersion);
+    tr.appendChild(tdSource);
+    tr.appendChild(tdProjection);
+    tr.appendChild(tdPushed);
+    tr.appendChild(tdContract);
+    return tr;
+  }
+
+  function selectedPromptIds() {
+    return Object.keys(state.promptsSelected || {});
+  }
+
+  function updatePushButton() {
+    var n = selectedPromptIds().length;
+    els.promptsPushBtn.disabled = n === 0;
+    els.promptsPushBtn.textContent = n ? "回推所选（" + n + " 条）" : "回推所选";
+  }
+
+  function pushSelectedPrompts() {
+    var ids = selectedPromptIds();
+    if (!ids.length) return;
+    if (!confirm("确认把当前平台模板回推到选中的 " + ids.length + " 条产线吗？\n" +
+      "每条线会新增一版并立即写入它的 AI 应用，租户现在的提示词会被覆盖。\n" +
+      "被覆盖的那一版仍留在该租户的版本历史里，可以由租户自己回滚。")) return;
+
+    els.promptsRefusal.hidden = true;
+    els.promptsPushResult.hidden = true;
+    var label = els.promptsPushBtn.textContent;
+    els.promptsPushBtn.disabled = true;
+    els.promptsPushBtn.textContent = "回推中…";
+
+    api("/api/v1/platform/prompts/push", {
+      method: "POST",
+      body: JSON.stringify({ product_line_ids: ids, note: "平台回推当前模板" })
+    })
+      .then(function (data) {
+        renderPushResult(data);
+        toast("回推完成：成功 " + (data.pushed || 0) + " 条，失败 " + (data.failed || 0) + " 条",
+          (data.failed ? "warn" : "success"));
+        return loadPromptRoster();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        // A refusal over the template's own contract stops every line, so it is
+        // shown as itself rather than as one more failed request: the reason is
+        // the platform template, and no tenant was touched.
+        if (err.status === 409 && err.data) renderPushRefusal(err.data);
+        else toast("回推失败: " + err.message, "error");
+      })
+      .finally(function () {
+        els.promptsPushBtn.textContent = label;
+        updatePushButton();
+      });
+  }
+
+  function renderPushRefusal(data) {
+    var host = els.promptsRefusal;
+    host.textContent = "";
+    var boxEl = document.createElement("div");
+    boxEl.className = "danger-box";
+    var h = document.createElement("h4");
+    h.textContent = "⚠ 未推送任何产线：平台模板自己缺少必需内容";
+    boxEl.appendChild(h);
+    var p = document.createElement("p");
+    p.style.margin = "0 0 8px";
+    p.style.fontSize = "0.83rem";
+    p.textContent = data.error || "";
+    boxEl.appendChild(p);
+    var missing = data.missing_requirements || [];
+    if (missing.length) {
+      var ul = document.createElement("ul");
+      missing.forEach(function (m) {
+        var li = document.createElement("li");
+        li.textContent = m.label + "（" + m.token + "）——缺失后果：" + m.breaks;
+        ul.appendChild(li);
+      });
+      boxEl.appendChild(ul);
+    }
+    host.appendChild(boxEl);
+    host.hidden = false;
+  }
+
+  // One line per product line, success and failure alike. A batch that reports
+  // only a total leaves the operator guessing which tenants to look at.
+  function renderPushResult(data) {
+    var host = els.promptsPushResult;
+    host.textContent = "";
+
+    var head = document.createElement("div");
+    head.className = "pf-note";
+    head.textContent = "回推 " + (data.requested || 0) + " 条：成功 " + (data.pushed || 0) +
+      " 条，失败 " + (data.failed || 0) + " 条。";
+    host.appendChild(head);
+
+    var steps = document.createElement("div");
+    steps.className = "report-steps";
+    (data.results || []).forEach(function (r) {
+      var step = document.createElement("div");
+      step.className = "report-step";
+
+      var mark = document.createElement("span");
+      mark.className = "report-mark " + (r.ok ? "ok" : "warn");
+      mark.textContent = r.ok ? "✓" : "✗";
+
+      var body = document.createElement("div");
+      body.className = "report-body";
+      var title = document.createElement("div");
+      title.className = "report-title";
+      title.textContent = (r.display_name || r.name || r.product_line_id) +
+        (r.version ? "　v" + r.version : "");
+      var msg = document.createElement("div");
+      msg.className = "report-msg";
+      if (r.ok) {
+        msg.textContent = r.version_created
+          ? "已定版 v" + r.version + " 并写入 AI 应用。"
+          : "本来就站在当前模板上，未新增版本，已确认写入 AI 应用。";
+      } else {
+        msg.textContent = (PUSH_STAGE_LABELS[r.stage] || r.stage || "失败") +
+          (r.error ? "：" + r.error : "") +
+          (r.stage === "push" && r.version
+            ? "　v" + r.version + " 已存下，重试只会重推它，不会再切一版。"
+            : "");
+      }
+      body.appendChild(title);
+      body.appendChild(msg);
+      step.appendChild(mark);
+      step.appendChild(body);
+      steps.appendChild(step);
+    });
+    host.appendChild(steps);
+    host.hidden = false;
+  }
+
+  els.promptsPushBtn.addEventListener("click", pushSelectedPrompts);
+  els.promptsRefreshBtn.addEventListener("click", function () {
+    els.promptsPushResult.hidden = true;
+    els.promptsRefusal.hidden = true;
+    loadPromptRoster();
+  });
+
 
   // ---------- Tenants ----------
   function loadTenants() {

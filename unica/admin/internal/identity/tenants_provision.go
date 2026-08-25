@@ -6,7 +6,21 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
+
+	"github.com/kefu/unica/admin/internal/repository"
+	"github.com/kefu/unica/pkg/difyapp"
 )
+
+// promptVersions is the prompt version store, narrowed to the one thing tenant
+// provisioning does with it: give a newly created line its first version. It
+// cannot roll back or list, because reading a line's prompt history is the
+// settings page's job and a capability this layer does not need is a capability
+// it should not be able to misuse.
+type promptVersions interface {
+	Publish(ctx context.Context, in repository.PublishPrompt) (*repository.PromptVersion, error)
+}
 
 // difyAdminUnconfiguredMessage is what every surface that needs the Dify
 // console says when its credentials are missing; they must not drift into
@@ -152,10 +166,84 @@ func (h *TenantHandler) provisionDifyLine(ctx context.Context, id string) (*prov
 		return nil, &difyProvisionError{http.StatusNotFound, "product line not found"}
 	}
 
+	// Record the prompt this line starts life with, so it has a local authority
+	// from its first day. Without this a freshly provisioned line is
+	// indistinguishable from one that predates the version table — the state
+	// every interface has to describe as "no record", and the state this whole
+	// increment exists to empty out. A line born into it would keep refilling
+	// the bucket faster than the migration drains it.
+	if h.promptVersions != nil {
+		if warning := h.recordProvisionedPrompt(ctx, pl.ID, pl.Name, app.ID); warning != "" {
+			warnings = append(warnings, warning)
+		}
+	}
+
 	return &provisionDifyResponse{
 		Provisioned:   true,
 		DifyAgentID:   app.ID,
 		DifyDatasetID: dataset.ID,
 		Warnings:      warnings,
 	}, nil
+}
+
+// recordProvisionedPrompt stores the prompt a freshly provisioned app carries
+// as that line's version 1, and reports in the tenant's words whatever could
+// not be recorded.
+//
+// The body is the app's live prompt read back from Dify, not the template this
+// deployment intended to write. The two differ exactly when the prompt write
+// failed — CreateChatApp applies the template through a call a workspace with
+// no model provider rejects, and reports the rejection to the log alone — and a
+// version row asserting text the app never received is worse than no row: every
+// later comparison would be made against a prompt that exists nowhere.
+//
+// pushed_at follows the same evidence. It is set only when the stored text was
+// observed in Dify, which at this instant it was; otherwise it stays NULL and
+// the line reads as "published, not yet in effect", which is precisely what it
+// is until someone saves the prompt again.
+//
+// Never fatal. Onboarding has already created an app, a dataset and an API key
+// by this point; refusing the whole tenant over a bookkeeping row would trade a
+// working tenant for a tidy table. It is reported rather than silent for the
+// same reason the model and dataset warnings above are — silence is how the
+// missing binding survived for months.
+func (h *TenantHandler) recordProvisionedPrompt(ctx context.Context, productLineID, productLineName, appID string) string {
+	template := difyapp.DefaultSystemPrompt(productLineName)
+	body := template
+	var pushedAt *time.Time
+
+	info, err := h.difyBridge.GetAppConfig(ctx, appID)
+	switch {
+	case err != nil:
+		log.Printf("[tenants] WARN: prompt of app %s could not be read back; recording the platform template as version 1, not in effect: %v", appID, err)
+	case strings.TrimSpace(info.SystemPrompt) == "":
+		log.Printf("[tenants] WARN: app %s carries no system prompt; recording the platform template as version 1, not in effect", appID)
+	default:
+		body = info.SystemPrompt
+		at := time.Now()
+		pushedAt = &at
+	}
+
+	in := repository.PublishPrompt{
+		ProductLineID: productLineID,
+		Body:          body,
+		Source:        repository.PromptSourceProvision,
+		PushedAt:      pushedAt,
+	}
+	// Aligned to the template only when it is the template, byte for byte. This
+	// is what later tells "left behind by a template improvement" apart from
+	// "the tenant wrote this", and a hopeful guess here would put a line on the
+	// push list that must never be on it.
+	if body == template {
+		in.TemplateSHA256 = difyapp.PromptHash(template)
+	}
+
+	if _, err := h.promptVersions.Publish(ctx, in); err != nil {
+		log.Printf("[tenants] WARN: prompt version 1 not recorded for product line %s: %v", productLineID, err)
+		return "提示词首版未能入库，该产线暂时没有本地提示词记录，在设置页保存一次提示词即可补上: " + err.Error()
+	}
+	if pushedAt == nil {
+		return "提示词首版已入库，但未能确认它已写入 Dify（该应用当前读不到提示词正文），请在设置页保存一次提示词以完成下发"
+	}
+	return ""
 }

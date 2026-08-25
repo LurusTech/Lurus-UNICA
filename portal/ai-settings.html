@@ -229,6 +229,29 @@
     grid-column: 2; font-size: 12px; color: var(--text-muted); margin-top: 2px;
   }
 
+  /* ---- Prompt revisions ---------------------------------------------------
+     One row per stored revision, and the last thing on each row is whether the
+     AI app actually holds it. That question could not be asked before: a save
+     that never reached Dify looked exactly like one that did, because there
+     was nowhere else the text could be. */
+  .vh { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .vh-list { list-style: none; margin: 8px 0 0; padding: 0; }
+  .vh-item {
+    display: grid; grid-template-columns: 44px 118px minmax(0, 1fr) auto;
+    gap: 4px 12px; align-items: baseline; padding: 8px 0; font-size: 13px;
+    border-top: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
+  }
+  .vh-item:first-child { border-top: 0; }
+  .vh-item.is-active { background: color-mix(in srgb, var(--primary) 7%, transparent); }
+  .vh-num { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .vh-item.is-active .vh-num { color: var(--primary); }
+  .vh-time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .vh-facts { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+  .vh-facts .pill { font-size: 11px; padding: 2px 8px; }
+  .vh-note { grid-column: 3 / span 2; color: var(--text-muted); font-size: 12px; }
+  .vh-act button { font-size: 12px; padding: 4px 10px; }
+  .vh-empty { color: var(--text-muted); font-size: 13px; padding: 8px 0; line-height: 1.7; }
+
   /* A diff shown in place rather than in a modal: the thing being changed is
      right above it, and an overwrite with no version history deserves to be
      read next to its source. */
@@ -383,6 +406,7 @@
 
       <div class="notice warn" id="prompt-conflict" hidden></div>
       <div class="notice info" id="prompt-drift" hidden></div>
+      <div class="notice warn" id="prompt-pending" hidden></div>
 
       <div class="field">
         <label for="f-prompt">提示词内容</label>
@@ -407,6 +431,22 @@
         <button id="prompt-reset-btn">恢复平台模板</button>
         <span class="spacer"></span>
         <span class="hint" id="prompt-state"></span>
+      </div>
+
+      <!-- Revision history. An overwrite used to be final: the previous text
+           was gone the moment it was written. Every row here is a text that
+           can be put back. -->
+      <div class="vh" id="prompt-history" hidden>
+        <div class="contract-head">
+          <strong>版本历史</strong>
+          <span id="vh-summary"></span>
+        </div>
+        <p class="hint" style="margin-top:4px">
+          保存、恢复模板与回滚都会在这里留下一版<b>正文</b>，不只是摘要，所以每一行都能回去。
+          「已定版未生效」指正文已存进本地权威源，但没能写进 AI 应用——
+          客户此刻收到的仍是上一版。
+        </p>
+        <ul class="vh-list" id="vh-list"></ul>
       </div>
     </div>
 
@@ -641,6 +681,10 @@
     contractSummary: document.getElementById("contract-summary"),
     promptDiff: document.getElementById("prompt-diff"),
     promptState: document.getElementById("prompt-state"),
+    promptPending: document.getElementById("prompt-pending"),
+    promptHistory: document.getElementById("prompt-history"),
+    vhSummary: document.getElementById("vh-summary"),
+    vhList: document.getElementById("vh-list"),
 
     fThreshold: document.getElementById("f-threshold"),
     fHandoff: document.getElementById("f-handoff"),
@@ -877,6 +921,10 @@
         state.factsConfig = results[1];
         fillForm(state.settings);
         renderDiagnostics(buildDiagnostics(state.settings, state.factsConfig));
+        // Loaded beside the settings rather than with them: a deployment
+        // without the version store answers 503 here, and that must leave the
+        // rest of the page working rather than fail it.
+        loadPromptVersions();
         els.loading.hidden = true;
         els.panels.hidden = false;
       })
@@ -940,11 +988,13 @@
     renderModel(cfg.model);
     renderTopK(cfg.knowledge);
     renderPromptContract();
+    renderPromptVersion(cfg);
     renderThresholdTiers(cfg, state.factsConfig);
     applyKeywordAvailability(cfg);
 
     els.promptConflict.hidden = true;
     els.promptState.textContent = "";
+    els.promptState.style.color = "";
     els.guardrailState.textContent = "";
 
     applyPromptAvailability(prompt);
@@ -1196,10 +1246,11 @@
 
   // ---------- Line diff ----------
   //
-  // A prompt overwrite has no version history behind it: the previous text is
-  // gone the moment it is written, and only the audit row's hash survives it.
-  // That is why the change is shown before it happens rather than announced
-  // afterwards.
+  // Shown before the write rather than announced after it. A revision that is
+  // actually in effect can now be rolled back to, but the text living in the AI
+  // app is not always one of them — an edit made outside this console has no
+  // revision behind it and is gone the moment it is overwritten. The notice
+  // below says which of the two this is instead of assuming the safer one.
   function diffLines(before, after) {
     var a = before.split("\n"), b = after.split("\n");
     // Longest common subsequence over lines. A prompt is tens of lines, so the
@@ -1241,12 +1292,17 @@
     var title = document.createElement("span");
     title.className = "title";
     title.textContent = "确认覆盖提示词";
+    // Whether the text being replaced is itself a stored revision decides
+    // whether this is reversible, and that is the only thing worth saying here.
+    var pv = (state.settings && state.settings.prompt_version) || null;
     var detail = document.createElement("span");
     detail.className = "detail";
-    detail.textContent = "删除 " + removed + " 行，新增 " + added +
-      " 行。提示词没有版本历史，" +
-      "覆盖后旧文本无法找回——" +
-      "审计里只留下它的摘要。";
+    detail.textContent = "删除 " + removed + " 行，新增 " + added + " 行。" +
+      (pv && pv.in_effect
+        ? "现在这一份已存为 v" + pv.version +
+          "，覆盖后可以在下方版本历史里回滚回来。"
+        : "AI 应用里现在这份正文没有对应的版本记录，" +
+          "覆盖后无法找回——审计里只留下它的摘要。");
     els.promptDiff.appendChild(title);
     els.promptDiff.appendChild(detail);
 
@@ -1349,14 +1405,15 @@
       method: "PUT",
       body: JSON.stringify({ prompt: next })
     })
-      .then(function () {
+      .then(function (resp) {
         state.baseline.prompt = next;
         els.promptConflict.hidden = true;
-        els.promptState.textContent = "已保存 " + nowText();
-        toast("提示词已保存", "success");
-        // The stored contract status is now the one just written, and the
-        // connectivity card reads it.
-        return loadSettings();
+        // The reload rewrites the whole card, so the outcome is reported after
+        // it rather than before — otherwise the sentence is wiped by the very
+        // read that proves it.
+        return loadSettings().then(function () {
+          reportWriteOutcome(resp, "已保存并生效", "已保存，未生效");
+        });
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
@@ -1405,15 +1462,279 @@
 
     setBusy(true, els.promptResetBtn, "恢复中…");
     api(tenantPath("/ai-settings/prompt/reset"), { method: "POST" })
-      .then(function () {
-        toast("已恢复为平台模板", "success");
+      .then(function (resp) {
         // The reset wrote a prompt this page has never seen, so the baseline
         // comes from a fresh read rather than from anything held here.
-        return loadSettings();
+        return loadSettings().then(function () {
+          reportWriteOutcome(resp, "已恢复平台模板并生效", "已恢复平台模板，未生效");
+        });
       })
       .catch(function (err) { reportError("恢复平台模板失败", err); })
       .finally(function () { setBusy(false, els.promptResetBtn, "恢复平台模板"); });
   });
+
+
+  // ---------- Prompt revisions ----------
+  //
+  // The prompt now lives here first and is projected into the AI app second, so
+  // a write has two outcomes where it used to have one. Everything in this
+  // section exists to keep those two apart: what the tenant's authority holds,
+  // and what the customer is actually being answered with.
+
+  var SOURCE_LABELS = {
+    console: "控制台保存",
+    provision: "开户创建",
+    seed: "搬迁自 AI 应用",
+    template: "平台回推"
+  };
+
+  function makePill(kind, text) {
+    var el = document.createElement("span");
+    el.className = "pill" + (kind ? " " + kind : "");
+    el.textContent = text;
+    return el;
+  }
+
+  // What a write actually did. There used to be one possible sentence — 已保存 —
+  // and it was said whether or not the text ever reached the AI app. The server
+  // now answers with `pushed`, so the card stops guessing.
+  // namesVersion: the caller's own wording already says which revision this
+  // was, so the number is not repeated after it.
+  function reportWriteOutcome(resp, okText, failText, namesVersion) {
+    resp = resp || {};
+    var version = (resp.version && !namesVersion) ? "（v" + resp.version + "）" : "";
+    if (resp.pushed) {
+      els.promptState.style.color = "";
+      els.promptState.textContent = okText + version + " " + nowText();
+      toast(okText + version, "success");
+      return;
+    }
+    els.promptState.style.color = "var(--warn)";
+    els.promptState.textContent = failText + version + " " + nowText();
+    toast(failText + version + "：正文已存进版本库，但没能写进 AI 应用" +
+      (resp.push_error ? "（" + resp.push_error + "）" : "") +
+      "。客户此刻收到的仍是上一版，可在上方重新推送。", "warn");
+  }
+
+  // The active revision against what the AI app actually holds. Three states,
+  // and they are not repaired the same way, so they are not worded the same
+  // way either. The one thing never done here is asserting a mismatch when the
+  // live text could not be read: "not in effect" would then be a guess, and it
+  // would send someone looking for an edit nobody made.
+  function renderPromptVersion(cfg) {
+    var pv = cfg.prompt_version || null;
+    els.promptPending.hidden = true;
+    if (!pv) return;
+
+    var live = typeof cfg.system_prompt === "string" ? cfg.system_prompt : "";
+    var liveKnown = promptIsEditable(live);
+
+    var title = document.createElement("span");
+    title.className = "title";
+    var detail = document.createElement("span");
+    detail.className = "detail";
+
+    if (pv.pending && pv.in_effect) {
+      // The texts agree; only the record of the push is missing. Harmless to
+      // the customer, and calling it "not in effect" would send someone after
+      // a problem that is not there.
+      els.promptPending.className = "notice info";
+      title.textContent = "v" + pv.version + " 的推送时间没有记上";
+      detail.textContent =
+        "AI 应用里的正文与 v" + pv.version + " 逐字相同，只是那一次投影没有落下时间戳。对客户没有影响。";
+    } else if (pv.pending) {
+      els.promptPending.className = "notice warn";
+      title.textContent = "v" + pv.version + " 已保存，未生效";
+      detail.textContent =
+        "本地已存下 v" + pv.version + "，但它没能写进 AI 应用——客户收到的仍是上一版。" +
+        (liveKnown
+          ? "下面编辑框里显示的是 AI 应用现行的正文，不是 v" + pv.version + "。"
+          : "此刻读不到 AI 应用里的正文，因此无法在这里比对两者。");
+    } else if (liveKnown && !pv.in_effect) {
+      els.promptPending.className = "notice warn";
+      title.textContent = "AI 应用里的正文与 v" + pv.version + " 不一致";
+      detail.textContent =
+        "v" + pv.version + " 推送过" +
+        (pv.pushed_at ? "（" + shortTime(pv.pushed_at) + "）" : "") +
+        "，此后 AI 应用里的正文被改过。下面编辑框里是现行正文，不是 v" + pv.version + "。";
+    } else {
+      // In effect, or the live text is unknown and nothing can be claimed.
+      return;
+    }
+
+    els.promptPending.textContent = "";
+    els.promptPending.appendChild(title);
+    els.promptPending.appendChild(detail);
+
+    // pending_body arrives only when the server could read the live text and
+    // it differs, so the button exists exactly when there is something to
+    // re-project and the page knows what it is.
+    if (typeof pv.pending_body === "string" && pv.pending_body) {
+      var row = document.createElement("div");
+      row.className = "actions-row";
+      var label = "把 v" + pv.version + " 重新推送到 AI 应用";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = label;
+      btn.addEventListener("click", function () { repushRevision(pv, btn, label); });
+      row.appendChild(btn);
+      els.promptPending.appendChild(row);
+    }
+    els.promptPending.hidden = false;
+  }
+
+  // Re-projecting a stored revision is an ordinary save of that revision's own
+  // text: the server reuses the row instead of cutting a second revision with
+  // identical text, and records the push once it lands.
+  function repushRevision(pv, btn, label) {
+    if (state.busy) return;
+    if (!confirm("确认把 v" + pv.version + " 重新写入 AI 应用吗？AI 应用里现在的正文会被它覆盖。")) return;
+
+    setBusy(true, btn, "推送中…");
+    api(tenantPath("/ai-settings/prompt"), {
+      method: "PUT",
+      body: JSON.stringify({ prompt: pv.pending_body })
+    })
+      .then(function (resp) {
+        return loadSettings().then(function () {
+          reportWriteOutcome(resp,
+            "v" + pv.version + " 已推送并生效",
+            "v" + pv.version + " 仍未生效", true);
+        });
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        reportError("重新推送失败", err);
+      })
+      .finally(function () { setBusy(false, btn, label); });
+  }
+
+  function loadPromptVersions() {
+    return api(tenantPath("/ai-settings/prompt/versions"))
+      .then(function (data) { renderPromptVersions(data); })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        renderPromptVersionsUnavailable(err);
+      });
+  }
+
+  // A history that cannot be read says so in place of the list. Hiding the
+  // block would read as "this line has no history", which is a different fact.
+  function renderPromptVersionsUnavailable(err) {
+    els.vhSummary.textContent = "";
+    els.vhList.textContent = "";
+    var li = document.createElement("li");
+    li.className = "vh-empty";
+    li.textContent = err.status === 503
+      ? "本部署没有启用提示词版本库，历史与回滚不可用。保存仍然照常写入 AI 应用。"
+      : "读取版本历史失败：" + err.message;
+    els.vhList.appendChild(li);
+    els.promptHistory.hidden = false;
+  }
+
+  function renderPromptVersions(data) {
+    var rows = (data && Array.isArray(data.versions)) ? data.versions : [];
+    els.vhList.textContent = "";
+    els.promptHistory.hidden = false;
+
+    if (!rows.length) {
+      els.vhSummary.textContent = "";
+      var empty = document.createElement("li");
+      empty.className = "vh-empty";
+      empty.textContent =
+        "本产线还没有版本记录。下一次保存或恢复平台模板会成为 v1，从那一刻起才有得可回滚。";
+      els.vhList.appendChild(empty);
+      return;
+    }
+
+    els.vhSummary.textContent = rows.length + " 版" +
+      (data.active_version ? "，当前 v" + data.active_version : "");
+    rows.forEach(function (row) { els.vhList.appendChild(versionRow(row)); });
+  }
+
+  function versionRow(row) {
+    var li = document.createElement("li");
+    li.className = "vh-item" + (row.active ? " is-active" : "");
+
+    var num = document.createElement("span");
+    num.className = "vh-num";
+    num.textContent = "v" + row.version;
+
+    var time = document.createElement("span");
+    time.className = "vh-time";
+    time.textContent = shortTime(row.created_at);
+
+    var facts = document.createElement("span");
+    facts.className = "vh-facts";
+    if (row.active) facts.appendChild(makePill("ok", "当前版本"));
+    facts.appendChild(makePill("", SOURCE_LABELS[row.source] || row.source || "来源未知"));
+    // Equal to the template is only meaningful with a date attached: a revision
+    // can match the template it was written against and still be behind the one
+    // that exists today.
+    if (row.on_template) {
+      facts.appendChild(row.template_current
+        ? makePill("ok", "等于当前平台模板")
+        : makePill("warn", "等于当时的平台模板"));
+    } else {
+      facts.appendChild(makePill("", "自己写的文本"));
+    }
+    facts.appendChild(row.pushed_at
+      ? makePill("ok", "已投影 " + shortTime(row.pushed_at))
+      : makePill("warn", "已定版未生效"));
+
+    var act = document.createElement("span");
+    act.className = "vh-act";
+    if (!row.active) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "回滚到此版";
+      btn.addEventListener("click", function () { rollbackToVersion(row.version, btn); });
+      act.appendChild(btn);
+    }
+
+    li.appendChild(num);
+    li.appendChild(time);
+    li.appendChild(facts);
+    li.appendChild(act);
+
+    if (row.note) {
+      var note = document.createElement("span");
+      note.className = "vh-note";
+      note.textContent = row.note;
+      li.appendChild(note);
+    }
+    return li;
+  }
+
+  // A rollback overwrites the live prompt, so it is confirmed the way the
+  // template restore beside it is. What it does not do is lose anything: the
+  // revision being left stays in the list and can be returned to.
+  function rollbackToVersion(version, btn) {
+    if (state.busy) return;
+    if (!confirm("确认回滚到 v" + version + " 吗？\n" +
+      "v" + version + " 的正文会立即写入 AI 应用，对新会话生效。\n" +
+      "当前这一版仍留在历史里，随时可以再回滚回来。")) return;
+
+    setBusy(true, btn, "回滚中…");
+    api(tenantPath("/ai-settings/prompt/rollback"), {
+      method: "POST",
+      body: JSON.stringify({ version: version })
+    })
+      .then(function (resp) {
+        return loadSettings().then(function () {
+          reportWriteOutcome(resp,
+            "已回滚到 v" + version + " 并生效",
+            "已回滚到 v" + version + "，未生效", true);
+        });
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        // A revision written before the contract check existed can be missing a
+        // placeholder; the server refuses it and names which. Nothing moved.
+        reportError("回滚失败", err);
+      })
+      .finally(function () { setBusy(false, btn, "回滚到此版"); });
+  }
 
 
   // ---------- Connectivity diagnostic ----------

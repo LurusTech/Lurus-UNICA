@@ -10,12 +10,12 @@ package aisettings
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -56,6 +56,28 @@ type channelIDs interface {
 	ListIDs(ctx context.Context, productLineID string) ([]string, error)
 }
 
+// promptVersions is the prompt authority: the store the text now lives in, of
+// which the Dify app holds a projection.
+//
+// Narrow on purpose, like productLines above. The cross-tenant reads
+// (ActiveAll) belong to the platform-side listing, not to a page that answers
+// for one tenant, and naming them here would make them reachable from it.
+type promptVersions interface {
+	Publish(ctx context.Context, in repository.PublishPrompt) (*repository.PromptVersion, error)
+	Rollback(ctx context.Context, productLineID string, version int) (*repository.PromptVersion, error)
+	Active(ctx context.Context, productLineID string) (*repository.PromptVersion, error)
+	// Get reads one revision's text without making it active, which is what
+	// lets a rollback check the contract before it moves anything.
+	Get(ctx context.Context, productLineID string, version int) (*repository.PromptVersion, error)
+	List(ctx context.Context, productLineID string) ([]repository.PromptVersionSummary, error)
+	MarkPushed(ctx context.Context, id int64, at time.Time) error
+}
+
+// The store the service wires in has to satisfy the interface here. Asserted at
+// compile time because the wiring happens in main.go: without this, a signature
+// that drifts apart fails there, one package away from the change that broke it.
+var _ promptVersions = (*repository.PromptVersionRepository)(nil)
+
 // Config is what the handler needs from the service around it.
 type Config struct {
 	ProductLines productLines
@@ -66,23 +88,32 @@ type Config struct {
 	// tolerated: the page then reports the runtime as unknown, which is the
 	// truth, rather than assuming defaults it cannot verify.
 	Router *bridge.RouterBridge
+	// PromptVersions is where a prompt is stored before it is projected into
+	// Dify. Nil is tolerated for the same reason Router is — a deployment that
+	// has not run migration 019 keeps the older behaviour, in which Dify is the
+	// only store — but the two behaviours differ where it matters: without this
+	// store a failed projection has nowhere to leave the text, so it stays an
+	// error rather than becoming a saved-but-not-in-effect revision.
+	PromptVersions promptVersions
 }
 
 // Handler serves the ai-settings sub-resource of a tenant.
 type Handler struct {
-	pls        productLines
-	dify       *bridge.DifyBridge
-	routeCache *routecache.Invalidator
-	router     *bridge.RouterBridge
+	pls            productLines
+	dify           *bridge.DifyBridge
+	routeCache     *routecache.Invalidator
+	router         *bridge.RouterBridge
+	promptVersions promptVersions
 }
 
 // NewHandler creates an AI settings handler.
 func NewHandler(cfg Config) *Handler {
 	return &Handler{
-		pls:        cfg.ProductLines,
-		dify:       cfg.Dify,
-		routeCache: routecache.New(cfg.Redis, cfg.Channels),
-		router:     cfg.Router,
+		pls:            cfg.ProductLines,
+		dify:           cfg.Dify,
+		routeCache:     routecache.New(cfg.Redis, cfg.Channels),
+		router:         cfg.Router,
+		promptVersions: cfg.PromptVersions,
 	}
 }
 
@@ -132,6 +163,61 @@ type settingsResponse struct {
 	// PromptOrigin is what the console last wrote, so an interface can say when
 	// the line was aligned rather than only that it no longer is.
 	PromptOrigin *difyapp.PromptOrigin `json:"prompt_origin,omitempty"`
+	// PromptVersion is the revision the local authority holds. Nil means this
+	// line has none — either the deployment stores prompts in Dify only, or the
+	// line predates the move and has not been migrated. Nil is why PromptOrigin
+	// stays: it is the only record such a line has.
+	PromptVersion *promptVersionState `json:"prompt_version,omitempty"`
+	// PromptTemplate is today's platform template for this line. It travels
+	// with the alignment because "left behind by the template" is not actionable
+	// without the text it was left behind by: the alignment names a state, this
+	// is the thing the state is about.
+	PromptTemplate *promptTemplateInfo `json:"prompt_template,omitempty"`
+}
+
+// promptVersionState is the active revision as a page needs it: which revision
+// the authority holds, whether Dify has received it, and — when it has not —
+// the text that is waiting.
+type promptVersionState struct {
+	Version        int       `json:"version"`
+	SHA256         string    `json:"sha256"`
+	TemplateSHA256 string    `json:"template_sha256,omitempty"`
+	Source         string    `json:"source"`
+	Note           string    `json:"note,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	// PushedAt is when this revision reached Dify, nil when it never has.
+	PushedAt *time.Time `json:"pushed_at,omitempty"`
+	// InEffect is whether the text Dify answers with is this revision's text.
+	// It is computed from the live prompt rather than read from PushedAt: a
+	// recorded push says the write was accepted once, not that nobody has
+	// changed it in the Dify console since.
+	InEffect bool `json:"in_effect"`
+	// Pending is the state the version table exists to make sayable: the
+	// revision is stored and is not what customers are being answered with.
+	// The console used to report every save as done, because before there was
+	// somewhere else to keep the text, a save that did not reach Dify was not
+	// a save at all.
+	Pending bool `json:"pending"`
+	// PendingBody is the stored text when it is not the live text, so a page
+	// can show what would take effect. Empty when the two agree — there is
+	// nothing to compare against then, and the live text is already in
+	// SystemPrompt.
+	PendingBody string `json:"pending_body,omitempty"`
+	// NextVersion is the number a save would allocate. It is here so an
+	// interface can name the revision it is about to create rather than
+	// describing it after the fact.
+	NextVersion int `json:"next_version"`
+}
+
+// promptTemplateInfo is the platform template as it stands now.
+type promptTemplateInfo struct {
+	SHA256 string `json:"sha256"`
+	Body   string `json:"body"`
+	// MatchesLive is whether the live prompt is this text. It duplicates what
+	// PromptAlignment says in the "current" case and is kept because the other
+	// four alignments all mean "no", and a page showing a diff needs the plain
+	// answer rather than the classification.
+	MatchesLive bool `json:"matches_live"`
 }
 
 // promptContractStatus lists what a prompt is missing, with the consequence of
@@ -193,6 +279,75 @@ type guardrailResponse struct {
 
 type updatePromptRequest struct {
 	Prompt string `json:"prompt"`
+}
+
+// rollbackPromptRequest names the revision to return to. The number is required
+// rather than defaulting to "the one before": a history page always knows which
+// row was clicked, and a default would let a stale page roll back to something
+// other than what its reader was looking at.
+//
+// The version is the whole request. A rollback reactivates a revision that
+// already exists rather than writing a new one, so there is no row for a note
+// to land on: accepting one would mean either discarding it silently or
+// rewriting the note a past revision was stored with. The reason a line went
+// back is carried by the audit row instead, which is where the actor is too.
+type rollbackPromptRequest struct {
+	Version int `json:"version"`
+}
+
+// promptWriteResponse is what every prompt write answers with — a save, a reset
+// and a rollback alike, because a caller has the same two questions after each
+// of them: which revision is this, and is it what customers are being answered
+// with.
+//
+// Pushed is the honest half. It is false when the revision is stored and the
+// projection failed, which is a state the interface has to be able to show:
+// reporting a save as done when the running app still holds the previous text
+// is the failure this whole increment exists to remove.
+type promptWriteResponse struct {
+	Message       string `json:"message"`
+	ProductLineID string `json:"product_line_id"`
+	// PromptLength is in characters, not bytes: every prompt here is Chinese,
+	// and a byte count reads as roughly three times the text anyone can see.
+	PromptLength int `json:"prompt_length"`
+	// Version is the revision this write created, omitted where no version
+	// store is configured and the text therefore has no local revision at all.
+	Version int  `json:"version,omitempty"`
+	Pushed  bool `json:"pushed"`
+	// PushError carries the projection failure verbatim. The tenant cannot act
+	// on it, but the person they will ask can, and a generic "not in effect"
+	// turns every one of these into a support conversation that starts from
+	// nothing.
+	PushError string `json:"push_error,omitempty"`
+	// RolledBackFrom is set by a rollback: the revision that was active before
+	// it, so the answer says what was left rather than only what was restored.
+	RolledBackFrom int `json:"rolled_back_from,omitempty"`
+}
+
+// promptVersionEntry is one row of the history.
+type promptVersionEntry struct {
+	repository.PromptVersionSummary
+	// OnTemplate is whether this revision was the platform template when it was
+	// written. It is derived here rather than left to the reader because the
+	// underlying fact is an empty string, and "template_sha256 is absent"
+	// reads as missing data rather than as "this was the tenant's own text".
+	OnTemplate bool `json:"on_template"`
+	// TemplateCurrent is whether that template is still today's. Together with
+	// OnTemplate this is the per-row form of the alignment: on the template and
+	// still current, on a template since improved, or the tenant's own.
+	TemplateCurrent bool `json:"template_current"`
+}
+
+// promptVersionsResponse is the history of one line's prompt. It carries no
+// prompt text — the list is a navigation aid, and one revision's text is
+// fetched by rolling back to it or by reading the active one.
+type promptVersionsResponse struct {
+	ProductLineID string `json:"product_line_id"`
+	ActiveVersion int    `json:"active_version,omitempty"`
+	// TemplateSHA256 is today's platform template, so a reader can tell which
+	// rows are still on it without hashing anything itself.
+	TemplateSHA256 string               `json:"template_sha256"`
+	Versions       []promptVersionEntry `json:"versions"`
 }
 
 type updateThresholdRequest struct {
@@ -283,9 +438,11 @@ const thresholdRangeMessage = "threshold must be greater than 0 and at most 1 (t
 
 // Handle routes the ai-settings sub-resource of a tenant:
 //
-//	GET    ai-settings                prompt + guardrail settings
-//	PUT    ai-settings/prompt         write the system prompt
-//	POST   ai-settings/prompt/reset   restore the platform's template
+//	GET    ai-settings                  prompt + guardrail settings
+//	PUT    ai-settings/prompt           write the system prompt
+//	POST   ai-settings/prompt/reset     restore the platform's template
+//	POST   ai-settings/prompt/rollback  return to a stored revision
+//	GET    ai-settings/prompt/versions  the revision history of the prompt
 //	PUT    ai-settings/threshold      confidence threshold
 //	PUT    ai-settings/handoff-rules  handoff keywords and blocked topics
 //	PUT    ai-settings/survey         satisfaction survey switch and thresholds
@@ -332,14 +489,31 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	switch rest[0] {
 	case "prompt":
-		// POST .../prompt/reset restores the platform's default template;
-		// PUT .../prompt writes caller-supplied text.
-		if len(rest) > 1 && rest[1] == "reset" {
-			if r.Method != http.MethodPost {
-				errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
-				return
+		// PUT .../prompt writes caller-supplied text; the named sub-paths are
+		// the three things one can do to a prompt without supplying one.
+		if len(rest) > 1 {
+			switch rest[1] {
+			case "reset":
+				if r.Method != http.MethodPost {
+					errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+					return
+				}
+				h.resetPrompt(w, r, pl)
+			case "rollback":
+				if r.Method != http.MethodPost {
+					errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+					return
+				}
+				h.rollbackPrompt(w, r, pl)
+			case "versions":
+				if r.Method != http.MethodGet {
+					errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+					return
+				}
+				h.listPromptVersions(w, r, pl)
+			default:
+				errorJSON(w, http.StatusNotFound, "unknown prompt action: "+rest[1])
 			}
-			h.resetPrompt(w, r, pl)
 			return
 		}
 		if r.Method != http.MethodPut {
@@ -426,7 +600,9 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		return
 	}
 
-	origin := loadPromptOrigin(raw)
+	origin := difyapp.LoadPromptOrigin(raw)
+	template := difyapp.DefaultSystemPrompt(pl.Name)
+	active := h.activeVersion(r.Context(), pl.ID)
 
 	var systemPrompt string
 	var model *bridge.AppModelInfo
@@ -436,6 +612,9 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 	// reassuring possible answer to the least certain question.
 	var contract *promptContractStatus
 	var alignment difyapp.PromptAlignment
+	// promptRead separates "Dify says the prompt is X" from "nobody could ask
+	// Dify". Only the first supports a claim about what is in effect.
+	promptRead := false
 	switch {
 	case pl.DifyAgentID == nil || *pl.DifyAgentID == "":
 		systemPrompt = "(no Dify app configured for this product line)"
@@ -446,6 +625,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 			// Non-fatal: the guardrail settings are still worth answering with.
 			systemPrompt = "(unable to fetch from Dify: " + err.Error() + ")"
 		} else {
+			promptRead = true
 			systemPrompt = appInfo.SystemPrompt
 			model = appInfo.Model
 			variables = appInfo.Variables
@@ -455,13 +635,19 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 				Missing:      missing,
 				Requirements: difyapp.PromptRequirements(),
 			}
-			alignment = difyapp.ClassifyPrompt(systemPrompt, difyapp.DefaultSystemPrompt(pl.Name), origin)
+			alignment = difyapp.ClassifyPrompt(systemPrompt, template, projectionRecord(active, origin))
 		}
 	}
 
 	writeJSON(w, http.StatusOK, settingsResponse{
 		PromptAlignment: string(alignment),
 		PromptOrigin:    origin,
+		PromptVersion:   promptVersionStateOf(active, systemPrompt, promptRead),
+		PromptTemplate: &promptTemplateInfo{
+			SHA256:      difyapp.PromptHash(template),
+			Body:        template,
+			MatchesLive: promptRead && systemPrompt == template,
+		},
 		ProductLineID:   pl.ID,
 		ProductLineName: pl.DisplayName,
 		SystemPrompt:    systemPrompt,
@@ -473,6 +659,76 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		Runtime:         h.runtimeStatus(r.Context()),
 		PromptContract:  contract,
 	})
+}
+
+// activeVersion reads the revision the local authority holds, or nil when there
+// is none — no version store configured, no rows for this line, or a read that
+// failed. All three degrade to nil on purpose: the classification below falls
+// back to the config_json record, which is what every line had before this
+// table existed, and a settings page that refused to load because the history
+// was unavailable would be a worse answer than one without a history.
+func (h *Handler) activeVersion(ctx context.Context, tenantID string) *repository.PromptVersion {
+	if h.promptVersions == nil {
+		return nil
+	}
+	v, err := h.promptVersions.Active(ctx, tenantID)
+	if err != nil {
+		log.Printf("[ai-settings] WARN: active prompt version unavailable for %s: %v; "+
+			"falling back to the config_json record", tenantID, err)
+		return nil
+	}
+	return v
+}
+
+// projectionRecord decides which record describes the text Dify is holding, and
+// is the whole of "version table first, prompt_origin as the fallback".
+//
+// The version table is preferred only when it says something about the
+// projection. An active revision that was never pushed describes the text that
+// is *waiting*, not the text that is live: classifying the live prompt against
+// it would report every saved-but-not-in-effect line as edited behind the
+// console's back — the one conclusion that would send someone looking in Dify
+// for a change nobody made. In that case the config_json record still describes
+// the last thing the console did push, so it is the better witness. With
+// neither, the classification is "unknown", exactly as before.
+func projectionRecord(active *repository.PromptVersion, origin *difyapp.PromptOrigin) *difyapp.PromptOrigin {
+	if active == nil || active.PushedAt == nil {
+		return origin
+	}
+	return &difyapp.PromptOrigin{
+		SHA256:         active.SHA256,
+		TemplateSHA256: active.TemplateSHA256,
+		AppliedAt:      active.PushedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// promptVersionStateOf renders the active revision for the page, saying whether
+// the live prompt is that revision's text and, when it is not, carrying the
+// text that would take effect.
+func promptVersionStateOf(active *repository.PromptVersion, live string, liveKnown bool) *promptVersionState {
+	if active == nil {
+		return nil
+	}
+	inEffect := liveKnown && live == active.Body
+	state := &promptVersionState{
+		Version:        active.Version,
+		SHA256:         active.SHA256,
+		TemplateSHA256: active.TemplateSHA256,
+		Source:         active.Source,
+		Note:           active.Note,
+		CreatedAt:      active.CreatedAt,
+		PushedAt:       active.PushedAt,
+		InEffect:       inEffect,
+		Pending:        active.PushedAt == nil,
+		NextVersion:    active.Version + 1,
+	}
+	// The body travels only when it is not already in SystemPrompt, and only
+	// when the live text is actually known: sending it after a failed read
+	// would let a page show a difference that may not exist.
+	if liveKnown && !inEffect {
+		state.PendingBody = active.Body
+	}
+	return state
 }
 
 // updatePrompt writes the system prompt through to the Dify app.
@@ -502,32 +758,251 @@ func (h *Handler) updatePrompt(w http.ResponseWriter, r *http.Request, pl *repos
 		return
 	}
 
-	if err := h.dify.UpdateSystemPrompt(r.Context(), *pl.DifyAgentID, req.Prompt); err != nil {
-		log.Printf("[ai-settings] update prompt error: %v", err)
-		errorJSON(w, http.StatusBadGateway, "failed to update prompt in Dify: "+err.Error())
+	// TemplateSHA256 is set only when the text happens to be the template — a
+	// tenant who pastes the template back is, for every purpose that matters
+	// here, on it. It is recorded at write time rather than recomputed later
+	// because the template it refers to is the one that exists now, which is
+	// exactly what a future binary can no longer produce.
+	templateSHA := ""
+	if req.Prompt == difyapp.DefaultSystemPrompt(pl.Name) {
+		templateSHA = difyapp.PromptHash(req.Prompt)
+	}
+
+	v, err := h.storeRevision(r.Context(), repository.PublishPrompt{
+		ProductLineID:  pl.ID,
+		Body:           req.Prompt,
+		TemplateSHA256: templateSHA,
+		Source:         repository.PromptSourceConsole,
+	})
+	if err != nil {
+		log.Printf("[ai-settings] publish prompt version error for %s: %v", pl.ID, err)
+		// Nothing has been projected. Pushing to Dify now would produce the one
+		// state this store exists to remove: text in effect that no record
+		// here accounts for.
+		errorJSON(w, http.StatusInternalServerError, "failed to store the prompt revision")
 		return
 	}
 
-	// Record what was written, so a prompt that later differs from the platform
-	// template can be told apart from one left behind by it. TemplateSHA256 is
-	// set only when the text happens to be the template — a tenant who pastes
-	// the template back is, for every purpose that matters here, on it.
-	template := difyapp.DefaultSystemPrompt(pl.Name)
-	origin := &difyapp.PromptOrigin{
-		SHA256:    difyapp.PromptHash(req.Prompt),
-		AppliedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	if req.Prompt == template {
-		origin.TemplateSHA256 = origin.SHA256
-	}
-	h.storePromptOrigin(r.Context(), pl.ID, origin)
+	h.projectPrompt(r.Context(), w, pl, v, req.Prompt, templateSHA, promptWriteResponse{
+		Message:       "system prompt updated",
+		ProductLineID: pl.ID,
+		PromptLength:  utf8.RuneCountInString(req.Prompt),
+	})
+}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":         "system prompt updated",
-		"product_line_id": pl.ID,
-		// Characters, not bytes: every prompt here is Chinese, and a byte count
-		// reads as roughly three times the text anyone can see.
-		"prompt_length": utf8.RuneCountInString(req.Prompt),
+// storeRevision publishes a revision, reusing the active one when the text is
+// byte for byte what that revision already holds.
+//
+// The reuse is what makes a retry a retry. A save that was stored but could not
+// be projected leaves a revision waiting; the obvious next act is to save the
+// same text again once Dify is back, and without this that would mint an
+// identical revision beside it and leave the first one permanently pending. It
+// also keeps a history readable: a row means the text changed.
+//
+// Returns (nil, nil) when no version store is configured, which every caller
+// treats as "there is no local revision", not as a failure.
+func (h *Handler) storeRevision(ctx context.Context, in repository.PublishPrompt) (*repository.PromptVersion, error) {
+	if h.promptVersions == nil {
+		return nil, nil
+	}
+	// The text alone decides. A revision's template alignment is a fact about
+	// the day it was written, and a caller comparing against today's template
+	// computes no alignment for the very text that *was* the template a release
+	// ago. Publishing on that difference would cut a second revision holding
+	// identical bytes and record it as the tenant's own — rewriting "left
+	// behind by an improvement" as "deliberately different", which is the one
+	// state the platform roster must never confuse and the reason a line would
+	// silently stop appearing on the push list. Unchanged text, unchanged
+	// provenance.
+	if active := h.activeVersion(ctx, in.ProductLineID); active != nil && active.Body == in.Body {
+		return active, nil
+	}
+	return h.promptVersions.Publish(ctx, in)
+}
+
+// projectPrompt performs the second half of every prompt write: send the stored
+// text to Dify, record whether it arrived, and answer.
+//
+// The order is the point of this increment. The revision is already stored when
+// this runs, so a projection failure is a state — stored, not in effect — and
+// the answer says so with 200 and pushed:false rather than reporting a failure
+// that lost the text. Where there is no version store (v is nil) nothing held
+// the text, so a failed projection stays an error: answering 200 there would be
+// the same lie in the other direction.
+func (h *Handler) projectPrompt(ctx context.Context, w http.ResponseWriter, pl *repository.ProductLine,
+	v *repository.PromptVersion, body, templateSHA string, resp promptWriteResponse) {
+
+	if v != nil {
+		resp.Version = v.Version
+	}
+
+	if err := h.dify.UpdateSystemPrompt(ctx, *pl.DifyAgentID, body); err != nil {
+		log.Printf("[ai-settings] project prompt to Dify error for %s: %v", pl.ID, err)
+		if v == nil {
+			errorJSON(w, http.StatusBadGateway, "failed to update prompt in Dify: "+err.Error())
+			return
+		}
+		resp.Pushed = false
+		resp.PushError = err.Error()
+		resp.Message = resp.Message + " (stored as v" +
+			strconv.Itoa(v.Version) + ", not yet in effect)"
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	if v != nil {
+		if err := h.promptVersions.MarkPushed(ctx, v.ID, time.Now()); err != nil {
+			// The text is in effect. Failing the request over an unrecorded
+			// timestamp would report a write that happened as one that did not.
+			log.Printf("[ai-settings] WARN: prompt v%d reached Dify for %s but the push was not recorded: %v; "+
+				"the page will call it 'not yet in effect' until the next save", v.Version, pl.ID, err)
+		}
+	}
+
+	// The alignment recorded is the stored revision's whenever it has one. A
+	// write that reused an existing revision carries the template that revision
+	// was written to match, and recomputing it against today's template would
+	// answer "none" for text an older template left behind — downgrading the
+	// fallback record to "the tenant's own" for exactly the lines a push is
+	// meant to find. The caller's value is used only when the revision holds
+	// nothing, which is where it is the better witness.
+	if v != nil && v.TemplateSHA256 != "" {
+		templateSHA = v.TemplateSHA256
+	}
+
+	// The origin record describes what the console put into Dify, so it is
+	// written only once something arrived there. Writing it after a failed
+	// projection would claim the running app holds text it does not, and that
+	// record is the fallback the classification falls back to.
+	h.storePromptOrigin(ctx, pl.ID, &difyapp.PromptOrigin{
+		SHA256:         difyapp.PromptHash(body),
+		TemplateSHA256: templateSHA,
+		AppliedAt:      time.Now().UTC().Format(time.RFC3339),
+	})
+
+	resp.Pushed = true
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// rollbackPrompt returns the line to a stored revision and projects it.
+//
+// Tenant self-service, like the reset beside it: the revisions are the tenant's
+// own text, and the operation this undoes needed no privilege either. It is the
+// answer to the irreversibility the version table was built for — before it, a
+// single overwrite lost the previous text for good and the only way back was
+// the platform template, which is not what the tenant had.
+func (h *Handler) rollbackPrompt(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	if h.promptVersions == nil {
+		errorJSON(w, http.StatusServiceUnavailable,
+			"prompt history is not available in this deployment, so there is nothing to roll back to")
+		return
+	}
+	if pl.DifyAgentID == nil || *pl.DifyAgentID == "" {
+		errorJSON(w, http.StatusBadRequest, "no Dify app configured for this product line")
+		return
+	}
+
+	var req rollbackPromptRequest
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Version <= 0 {
+		errorJSON(w, http.StatusBadRequest, "version must name a stored revision")
+		return
+	}
+
+	// Read the text before moving anything, so a revision that would break the
+	// contract is refused with the active one still active. Rollback itself
+	// changes which row is active, and undoing that after the fact would be a
+	// second write covering for the first.
+	target, err := h.promptVersions.Get(r.Context(), pl.ID, req.Version)
+	if err != nil {
+		if errors.Is(err, repository.ErrPromptVersionNotFound) {
+			errorJSON(w, http.StatusNotFound, "no such prompt revision: v"+strconv.Itoa(req.Version))
+			return
+		}
+		log.Printf("[ai-settings] read prompt version error for %s v%d: %v", pl.ID, req.Version, err)
+		errorJSON(w, http.StatusInternalServerError, "failed to read the prompt revision")
+		return
+	}
+	// A revision can predate the contract — anything migrated out of Dify was
+	// written before this check existed — and restoring one would silently
+	// disconnect whichever stage it dropped. Refused rather than pushed, for
+	// the same reason a save is: these failures are invisible afterwards.
+	if missing := difyapp.MissingPromptRequirements(target.Body); len(missing) > 0 {
+		promptContractErrorLead(w,
+			"v"+strconv.Itoa(req.Version)+" 缺少必需内容，未回滚：", missing)
+		return
+	}
+
+	from := 0
+	if active := h.activeVersion(r.Context(), pl.ID); active != nil {
+		from = active.Version
+	}
+
+	// Rollback clears the restored revision's pushed_at: at this instant Dify
+	// still holds the text being left. The projection below is what earns it
+	// back, and until it succeeds "stored, not in effect" is the truth.
+	v, err := h.promptVersions.Rollback(r.Context(), pl.ID, req.Version)
+	if err != nil {
+		if errors.Is(err, repository.ErrPromptVersionNotFound) {
+			errorJSON(w, http.StatusNotFound, "no such prompt revision: v"+strconv.Itoa(req.Version))
+			return
+		}
+		log.Printf("[ai-settings] rollback prompt error for %s v%d: %v", pl.ID, req.Version, err)
+		errorJSON(w, http.StatusInternalServerError, "failed to roll back the prompt")
+		return
+	}
+
+	h.projectPrompt(r.Context(), w, pl, v, v.Body, v.TemplateSHA256, promptWriteResponse{
+		Message:        "system prompt rolled back to v" + strconv.Itoa(v.Version),
+		ProductLineID:  pl.ID,
+		PromptLength:   utf8.RuneCountInString(v.Body),
+		RolledBackFrom: from,
+	})
+}
+
+// listPromptVersions answers with the line's revision history, newest first.
+//
+// No prompt text: a history is for choosing a revision, and the choice is made
+// on when, from where, and how it stood against the template. The text follows
+// from rolling back to it, which is the only place it is needed.
+func (h *Handler) listPromptVersions(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	if h.promptVersions == nil {
+		errorJSON(w, http.StatusServiceUnavailable,
+			"prompt history is not available in this deployment")
+		return
+	}
+	rows, err := h.promptVersions.List(r.Context(), pl.ID)
+	if err != nil {
+		log.Printf("[ai-settings] list prompt versions error for %s: %v", pl.ID, err)
+		errorJSON(w, http.StatusInternalServerError, "failed to load the prompt history")
+		return
+	}
+
+	templateSHA := difyapp.PromptHash(difyapp.DefaultSystemPrompt(pl.Name))
+	// Zero rows is a list, not an absence: a line nobody has saved since the
+	// authority moved here has an empty history, and an interface that had to
+	// tell null from [] would render the two differently for no reason.
+	entries := make([]promptVersionEntry, 0, len(rows))
+	activeVersion := 0
+	for _, row := range rows {
+		if row.Active {
+			activeVersion = row.Version
+		}
+		entries = append(entries, promptVersionEntry{
+			PromptVersionSummary: row,
+			OnTemplate:           row.TemplateSHA256 != "",
+			TemplateCurrent:      row.TemplateSHA256 != "" && row.TemplateSHA256 == templateSHA,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, promptVersionsResponse{
+		ProductLineID:  pl.ID,
+		ActiveVersion:  activeVersion,
+		TemplateSHA256: templateSHA,
+		Versions:       entries,
 	})
 }
 
@@ -554,28 +1029,43 @@ func (h *Handler) resetPrompt(w http.ResponseWriter, r *http.Request, pl *reposi
 	}
 
 	prompt := difyapp.DefaultSystemPrompt(pl.Name)
-	if err := h.dify.UpdateSystemPrompt(r.Context(), *pl.DifyAgentID, prompt); err != nil {
-		log.Printf("[ai-settings] reset prompt error: %v", err)
-		errorJSON(w, http.StatusBadGateway, "failed to reset prompt in Dify: "+err.Error())
+	templateSHA := difyapp.PromptHash(prompt)
+
+	// No contract check on the template here, unlike the platform push: this
+	// text is the one difyapp's own test pins against the contract, so a check
+	// would be a branch no run can reach. The push checks because it holds a
+	// seam for a template that is not this one and because its blast radius is
+	// every selected line at once.
+	//
+	// A reset is a write like any other, so it takes a revision like any other.
+	// Leaving it out would put the local authority behind the running app the
+	// moment anyone pressed this button, and the classification — which now
+	// reads the version table first — would report the line as edited outside
+	// the console. The source stays "console" because that is who wrote it; the
+	// template digest records what it equals.
+	v, err := h.storeRevision(r.Context(), repository.PublishPrompt{
+		ProductLineID:  pl.ID,
+		Body:           prompt,
+		TemplateSHA256: templateSHA,
+		Source:         repository.PromptSourceConsole,
+		Note:           "restored the platform template",
+	})
+	if err != nil {
+		log.Printf("[ai-settings] publish reset prompt version error for %s: %v", pl.ID, err)
+		errorJSON(w, http.StatusInternalServerError, "failed to store the prompt revision")
 		return
 	}
 
-	// No separate variable repair here, though the template it just wrote refers
+	// No separate variable repair here, though the template it writes refers
 	// to inputs by placeholder and Dify substitutes only what an app declares:
 	// UpdateSystemPrompt declares them in the same model-config write. Adding a
 	// second read-modify-write over the same object would give two full writes
 	// racing on one document, and the loser would silently take the prompt with
 	// it.
-	h.storePromptOrigin(r.Context(), pl.ID, &difyapp.PromptOrigin{
-		SHA256:         difyapp.PromptHash(prompt),
-		TemplateSHA256: difyapp.PromptHash(prompt),
-		AppliedAt:      time.Now().UTC().Format(time.RFC3339),
-	})
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":         "system prompt reset to platform default",
-		"product_line_id": pl.ID,
-		"prompt_length":   utf8.RuneCountInString(prompt),
+	h.projectPrompt(r.Context(), w, pl, v, prompt, templateSHA, promptWriteResponse{
+		Message:       "system prompt reset to platform default",
+		ProductLineID: pl.ID,
+		PromptLength:  utf8.RuneCountInString(prompt),
 	})
 }
 
@@ -588,25 +1078,6 @@ func truncateRunes(s string, max int) string {
 		return s
 	}
 	return string(runes[:max]) + "…"
-}
-
-// loadPromptOrigin reads the record of what the console last wrote. A blob that
-// has none, or one that cannot be parsed, yields nil — which classifies as
-// "unknown" rather than as anything more definite.
-func loadPromptOrigin(raw json.RawMessage) *difyapp.PromptOrigin {
-	if len(raw) == 0 {
-		return nil
-	}
-	var wrapper struct {
-		Origin *difyapp.PromptOrigin `json:"prompt_origin"`
-	}
-	if err := json.Unmarshal(raw, &wrapper); err != nil {
-		return nil
-	}
-	if wrapper.Origin == nil || wrapper.Origin.SHA256 == "" {
-		return nil
-	}
-	return wrapper.Origin
 }
 
 // storePromptOrigin records a prompt write. A failure here is logged and not
@@ -624,15 +1095,19 @@ func (h *Handler) storePromptOrigin(ctx context.Context, tenantID string, origin
 // than a sentence about it. The caller has to act on each item, and a person
 // reading "缺少必需占位符" has to guess which and why.
 func promptContractError(w http.ResponseWriter, missing []difyapp.PromptRequirement) {
-	labels := make([]string, 0, len(missing))
-	for _, req := range missing {
-		labels = append(labels, req.Label+"（"+req.Token+"）")
-	}
+	promptContractErrorLead(w, "提示词缺少必需内容，未保存：", missing)
+}
+
+// promptContractErrorLead is the same refusal with the caller's own opening
+// clause, so a rollback can name the revision it refused instead of saying
+// "not saved" about a text nobody just typed. Everything after the lead is
+// shared, because the list and the way out are the same in both cases.
+func promptContractErrorLead(w http.ResponseWriter, lead string, missing []difyapp.PromptRequirement) {
 	// The requirements travel as themselves rather than as a rebuilt map: the
 	// same shape is returned by GET /ai-settings, and a caller that had to read
 	// two shapes for one list would eventually handle only one of them.
 	writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-		"error": "提示词缺少必需内容，未保存：" + strings.Join(labels, "、") +
+		"error": lead + difyapp.FormatRequirements(missing) +
 			"。缺了它们不会报错，只会让对应功能静默失效。若不确定如何补回，可点「恢复平台模板」。",
 		"missing_requirements": missing,
 	})
@@ -1165,7 +1640,7 @@ func (h *Handler) AuditState(ctx context.Context, tenantID string) (json.RawMess
 		// Every block this module writes to config_json belongs in the snapshot,
 		// or a write that only moves this one leaves an audit row whose before
 		// and after are the same.
-		Origin: loadPromptOrigin(raw),
+		Origin: difyapp.LoadPromptOrigin(raw),
 		// And top_k is not in config_json at all — the dataset is its only
 		// store — so without this a top_k change would leave exactly that kind
 		// of empty row.
@@ -1189,8 +1664,21 @@ type promptDigest struct {
 	SHA256 string `json:"sha256,omitempty"`
 	Runes  int    `json:"runes,omitempty"`
 	// ContractComplete is nil when the prompt could not be read.
-	ContractComplete *bool  `json:"contract_complete,omitempty"`
-	Unavailable      string `json:"unavailable,omitempty"`
+	ContractComplete *bool `json:"contract_complete,omitempty"`
+	// ActiveVersion is the revision the local authority held at this moment. It
+	// is what lets an audit row say "v3 became v4" instead of showing two
+	// hashes and leaving the reader to work out which came first — the hashes
+	// identify the texts but say nothing about their order.
+	//
+	// The number only, never the text: the version table is where prompts are
+	// stored, and copying them here would make the audit log a second store of
+	// every prompt anyone has written.
+	ActiveVersion int `json:"active_version,omitempty"`
+	// ActiveVersionPushed is whether that revision had reached Dify. A write
+	// whose projection failed still produces an audit row, and without this the
+	// row would look exactly like one that took effect.
+	ActiveVersionPushed *bool  `json:"active_version_pushed,omitempty"`
+	Unavailable         string `json:"unavailable,omitempty"`
 }
 
 // retrievalDigest reports the dataset's retrieval settings for the audit
@@ -1210,20 +1698,33 @@ func (h *Handler) promptDigest(ctx context.Context, tenantID string) *promptDige
 	if err != nil || pl == nil {
 		return &promptDigest{Unavailable: "product line not found"}
 	}
+
+	// The revision number is read first and attached to every answer below,
+	// including the ones that could not reach Dify. It is the half of this
+	// digest that comes from the authority rather than from the projection, so
+	// an unreachable Dify must not be able to take it out of the record — that
+	// is exactly when knowing which revision was current matters most.
+	digest := &promptDigest{}
+	if active := h.activeVersion(ctx, tenantID); active != nil {
+		pushed := active.PushedAt != nil
+		digest.ActiveVersion = active.Version
+		digest.ActiveVersionPushed = &pushed
+	}
+
 	if pl.DifyAgentID == nil || *pl.DifyAgentID == "" {
-		return &promptDigest{Unavailable: "no Dify app"}
+		digest.Unavailable = "no Dify app"
+		return digest
 	}
 	info, err := h.dify.GetAppConfig(ctx, *pl.DifyAgentID)
 	if err != nil {
-		return &promptDigest{Unavailable: err.Error()}
+		digest.Unavailable = err.Error()
+		return digest
 	}
-	sum := sha256.Sum256([]byte(info.SystemPrompt))
 	complete := len(difyapp.MissingPromptRequirements(info.SystemPrompt)) == 0
-	return &promptDigest{
-		SHA256:           hex.EncodeToString(sum[:]),
-		Runes:            utf8.RuneCountInString(info.SystemPrompt),
-		ContractComplete: &complete,
-	}
+	digest.SHA256 = difyapp.PromptHash(info.SystemPrompt)
+	digest.Runes = utf8.RuneCountInString(info.SystemPrompt)
+	digest.ContractComplete = &complete
+	return digest
 }
 
 // writeJSON writes a JSON response with the given status code.

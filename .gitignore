@@ -43,3 +43,6 @@ doc/eval-report-*.json
 
 # Ad-hoc screenshots dropped at the repo root
 ScreenShot_*.png
+
+# promptaudit writes a verbatim backup of every live prompt next to wherever it runs
+prompt-backup-*.json

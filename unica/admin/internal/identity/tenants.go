@@ -68,6 +68,12 @@ type TenantHandler struct {
 	// so it goes into the audit row, not just the one-shot HTTP response.
 	// Nil disables the trail (tests); the live wiring always sets it.
 	audit auditTrail
+
+	// promptVersions stores a newly provisioned line's first prompt version.
+	// Nil is tolerated — a deployment that has not run migration 019 provisions
+	// exactly as it did before — and the difference is confined to whether the
+	// new line starts with a local prompt authority or without one.
+	promptVersions promptVersions
 }
 
 // auditTrail is the one audit capability this package uses.
@@ -90,6 +96,9 @@ type TenantHandlerConfig struct {
 	BcryptCost         int
 	// Audit receives the removal trail; see TenantHandler.audit.
 	Audit auditTrail
+	// PromptVersions gives a newly provisioned line its version 1; see
+	// TenantHandler.promptVersions. Nil is tolerated.
+	PromptVersions promptVersions
 }
 
 // NewTenantHandler creates the tenant lifecycle handler.
@@ -104,6 +113,7 @@ func NewTenantHandler(cfg TenantHandlerConfig) *TenantHandler {
 		chatwootWebhookURL: cfg.ChatwootWebhookURL,
 		bcryptCost:         cfg.BcryptCost,
 		audit:              cfg.Audit,
+		promptVersions:     cfg.PromptVersions,
 	}
 }
 

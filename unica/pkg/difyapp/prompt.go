@@ -119,6 +119,22 @@ func MissingPromptRequirements(prompt string) []PromptRequirement {
 	return missing
 }
 
+// FormatRequirements names requirements for a person, as "标签（token）" joined
+// by a Chinese enumeration comma.
+//
+// One formatter because the two refusals that use it must read alike: the
+// tenant page refusing a save and the platform refusing a push are the same
+// list of the same things, and a reader who has seen one has to recognise the
+// other. The label alone is not enough — it says which stage breaks, not what
+// to type back into the prompt — so the token travels with it.
+func FormatRequirements(reqs []PromptRequirement) string {
+	labels := make([]string, 0, len(reqs))
+	for _, req := range reqs {
+		labels = append(labels, req.Label+"（"+req.Token+"）")
+	}
+	return strings.Join(labels, "、")
+}
+
 // DefaultSystemPrompt returns the system prompt for a product line's chat app.
 //
 // It contains no policy numbers on purpose. Everything specific to the business

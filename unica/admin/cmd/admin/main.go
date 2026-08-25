@@ -92,6 +92,10 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	plRepo := repository.NewProductLineRepository(db)
 	channelRepo := repository.NewChannelRepository(db)
+	// The prompt's authority. Dify holds a projection of what is in this table,
+	// which is why both the tenant's settings page and the platform's push read
+	// and write it rather than treating the Dify app as the store.
+	promptVersionRepo := repository.NewPromptVersionRepository(db)
 
 	// Parse AES encryption key for channel credential storage
 	var aesKey []byte
@@ -156,6 +160,7 @@ func main() {
 		ChatwootWebhookURL: cfg.ChatwootWebhookURL,
 		BcryptCost:         cfg.BcryptCost,
 		Audit:              auditLogger,
+		PromptVersions:     promptVersionRepo,
 	})
 	channelHandler := channels.NewHandler(channelRepo, aesKey, cfg.GatewayHost, rdb)
 	knowledgeHandler := knowledge.NewHandler(plRepo,
@@ -171,11 +176,12 @@ func main() {
 	routerBridge := bridge.NewRouterBridge(cfg.RouterInternalURL)
 
 	aiSettingsHandler := aisettings.NewHandler(aisettings.Config{
-		ProductLines: plRepo,
-		Channels:     channelRepo,
-		Dify:         difyBridge,
-		Redis:        rdb,
-		Router:       routerBridge,
+		ProductLines:   plRepo,
+		Channels:       channelRepo,
+		Dify:           difyBridge,
+		Redis:          rdb,
+		Router:         routerBridge,
+		PromptVersions: promptVersionRepo,
 	})
 
 	auditLogHandler := handler.NewAuditLogHandler(auditRepo)
@@ -393,6 +399,24 @@ func main() {
 	// The previous path kept, since it is what the runbook names.
 	mux.Handle("/api/v1/platform/runtime", authMW(http.HandlerFunc(platformHandler.Handle)))
 
+	// Which tenants are still on an older platform template, and the one
+	// control that acts on the answer. Both are platform-scoped: falling behind
+	// is caused by the template moving, so the roster is cross-tenant and the
+	// push names its targets explicitly. Administrator-only, checked inside the
+	// handler the way the settings endpoint checks it.
+	//
+	// The push writes each line's revision through the same repository the
+	// tenant page writes, so a platform push and a tenant's own save land in one
+	// history rather than two.
+	promptsHandler := platform.NewPromptsHandler(platform.PromptsConfig{
+		ProductLines: plRepo,
+		Versions:     promptVersionRepo,
+		Dify:         difyBridge,
+		Audit:        auditLogger,
+	})
+	mux.Handle("/api/v1/platform/prompts", authMW(http.HandlerFunc(promptsHandler.HandleList)))
+	mux.Handle("/api/v1/platform/prompts/push", authMW(http.HandlerFunc(promptsHandler.HandlePush)))
+
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      mux,
@@ -453,6 +477,8 @@ var aiSettingsPaths = map[string]bool{
 	"":                  true,
 	"prompt":            true,
 	"prompt/reset":      true,
+	"prompt/rollback":   true,
+	"prompt/versions":   true,
 	"threshold":         true,
 	"handoff-rules":     true,
 	"dataset/bind":      true,

@@ -111,6 +111,13 @@ type fakeDify struct {
 	server *httptest.Server
 
 	promptType string
+	// prePrompt is what the app answers with today, which is what the settings
+	// page classifies against the stored revision and the platform template.
+	prePrompt string
+	// dropWrites makes the app accept a write with 200 and keep the old text —
+	// what a real Dify does for a model-config write that changed nothing, and
+	// the case the bridge's readback exists to catch.
+	dropWrites bool
 
 	mu      sync.Mutex
 	written map[string]interface{}
@@ -118,7 +125,7 @@ type fakeDify struct {
 
 func newFakeDify(t *testing.T) *fakeDify {
 	t.Helper()
-	f := &fakeDify{promptType: "simple"}
+	f := &fakeDify{promptType: "simple", prePrompt: "stale operator text"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/apps/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -130,17 +137,28 @@ func newFakeDify(t *testing.T) *fakeDify {
 			}
 			f.mu.Lock()
 			f.written = cfg
+			// The app answers with what it was given, because the bridge reads
+			// the write back. A fake that keeps answering with the old text
+			// cannot tell a prompt that took effect from one Dify accepted and
+			// dropped, and every prompt write here would fail as if it had not
+			// taken.
+			if p, ok := cfg["pre_prompt"].(string); ok && !f.dropWrites {
+				f.prePrompt = p
+			}
 			f.mu.Unlock()
 			w.Write([]byte(`{"result":"success"}`))
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		f.mu.Lock()
+		body := map[string]interface{}{
 			"model_config": map[string]interface{}{
 				"prompt_type": f.promptType,
-				"pre_prompt":  "stale operator text",
+				"pre_prompt":  f.prePrompt,
 				"model":       map[string]interface{}{"name": "kept-model"},
 			},
-		})
+		}
+		f.mu.Unlock()
+		json.NewEncoder(w).Encode(body)
 	})
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)

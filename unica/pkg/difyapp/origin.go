@@ -3,6 +3,7 @@ package difyapp
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 )
 
 // PromptHash identifies a prompt for comparison. Prompts are compared by hash
@@ -46,6 +47,36 @@ type PromptOrigin struct {
 
 // PromptOriginKey is the config_json key this block lives under.
 const PromptOriginKey = "prompt_origin"
+
+// LoadPromptOrigin reads the block out of a product line's raw config_json.
+//
+// It lives beside the type and the key rather than in each reader, because both
+// readers — the settings handler and the migration report — have to agree on
+// what "there is no record" means. A config with no block, one this binary
+// cannot parse, and one whose digest is empty all yield nil: each of them is a
+// line nothing can be asserted about, and a reader that told them apart would
+// be drawing a distinction the classification does not have.
+func LoadPromptOrigin(configJSON json.RawMessage) *PromptOrigin {
+	if len(configJSON) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(configJSON, &envelope); err != nil {
+		return nil
+	}
+	blob, ok := envelope[PromptOriginKey]
+	if !ok {
+		return nil
+	}
+	var origin PromptOrigin
+	if err := json.Unmarshal(blob, &origin); err != nil {
+		return nil
+	}
+	if origin.SHA256 == "" {
+		return nil
+	}
+	return &origin
+}
 
 // PromptAlignment is what can be said about a line's prompt relative to the
 // platform template.

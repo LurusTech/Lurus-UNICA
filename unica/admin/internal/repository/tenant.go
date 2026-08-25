@@ -17,6 +17,7 @@ type TenantDataDeletion struct {
 	Channels         int64 `json:"channels"`
 	KnowledgeDocs    int64 `json:"knowledge_docs"`
 	OntologyVersions int64 `json:"ontology_versions"`
+	PromptVersions   int64 `json:"prompt_versions"`
 	ClaimViolations  int64 `json:"claim_violations"`
 	HandoffEvents    int64 `json:"handoff_events"`
 	Users            int64 `json:"users"`
@@ -101,6 +102,14 @@ func (r *ProductLineRepository) DeleteTenantData(ctx context.Context, id string)
 			[]interface{}{id}},
 		{"ontology_versions", &counts.OntologyVersions,
 			`DELETE FROM ontology_versions WHERE product_line_id = $1`,
+			[]interface{}{id}},
+		// prompt_versions carries the prompt text itself, so a removal that did
+		// not name it would leave the operator's receipt silent about the one
+		// table holding what the assistant said. The cascade on product_lines
+		// would erase these rows anyway; counting them here is what makes the
+		// receipt able to say so.
+		{"prompt_versions", &counts.PromptVersions,
+			`DELETE FROM prompt_versions WHERE product_line_id = $1`,
 			[]interface{}{id}},
 		{"claim_violations", &counts.ClaimViolations,
 			`DELETE FROM claim_violations WHERE product_line_id = $1`,

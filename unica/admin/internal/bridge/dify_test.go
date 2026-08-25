@@ -79,14 +79,24 @@ func TestDifyBridge_GetAppConfig_EmptyAppID(t *testing.T) {
 func TestDifyBridge_UpdateSystemPrompt(t *testing.T) {
 	var written map[string]interface{}
 
+	// The stub keeps what it was given, because the write is now read back.
+	// A stub that answers "old" forever cannot tell a prompt that took effect
+	// from one Dify accepted and dropped, which is the distinction the readback
+	// exists to make.
+	stored := map[string]interface{}{
+		"pre_prompt":      "old",
+		"prompt_type":     "simple",
+		"user_input_form": []interface{}{},
+		"model":           map[string]interface{}{"provider": "deepseek", "name": "deepseek-chat"},
+	}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/apps/app-123":
-			w.Write([]byte(`{"id":"app-123","model_config":{
-				"pre_prompt":"old","prompt_type":"simple","user_input_form":[],
-				"model":{"provider":"deepseek","name":"deepseek-chat"}}}`))
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": "app-123", "model_config": stored})
 		case r.Method == http.MethodPost && r.URL.Path == "/apps/app-123/model-config":
 			json.NewDecoder(r.Body).Decode(&written)
+			stored = written
 			w.Write([]byte(`{"result":"success"}`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -113,6 +123,40 @@ func TestDifyBridge_UpdateSystemPrompt(t *testing.T) {
 	if len(form) != len(contextVariables) {
 		t.Errorf("expected the %d router context variables to be declared, got %d",
 			len(contextVariables), len(form))
+	}
+}
+
+// TestDifyBridge_UpdateSystemPrompt_RejectsAWriteThatDidNotTake covers the
+// answer this endpoint gives for a write that changed nothing: the same 200 as
+// one that took effect. Without the readback the caller records the revision as
+// in effect and the console tells the tenant so, while customers keep getting
+// the previous text — the exact "200 but not in force" this store exists to
+// make impossible.
+func TestDifyBridge_UpdateSystemPrompt_RejectsAWriteThatDidNotTake(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apps/app-123":
+			w.Write([]byte(`{"id":"app-123","model_config":{
+				"pre_prompt":"old","prompt_type":"simple","user_input_form":[],
+				"model":{"provider":"deepseek","name":"deepseek-chat"}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/apps/app-123/model-config":
+			// Accepted and dropped.
+			w.Write([]byte(`{"result":"success"}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, AdminToken: "test-token"})
+
+	err := b.UpdateSystemPrompt(context.Background(), "app-123", "New system prompt")
+	if err == nil {
+		t.Fatal("a write the app did not keep was reported as success")
+	}
+	if !strings.Contains(err.Error(), "still answers with different text") {
+		t.Errorf("error should say the text is not in effect, got: %v", err)
 	}
 }
 
