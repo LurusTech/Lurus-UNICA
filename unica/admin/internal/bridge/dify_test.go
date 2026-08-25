@@ -518,8 +518,17 @@ func TestDifyBridge_SetDatasetRetrieval_AppliesWhenIndexMatches(t *testing.T) {
 
 // The read-back used to check the method alone, so a Dify that applied the
 // method and ignored the rest reported success.
-func TestDifyBridge_SetDatasetRetrieval_CatchesPartiallyIgnoredWrite(t *testing.T) {
-	stored := map[string]interface{}{"search_method": "keyword_search", "top_k": 99, "reranking_enable": false}
+// TestDifyBridge_SetDatasetRetrieval_CatchesAnIgnoredOverride covers what the
+// read-back is for now that top_k is a per-dataset decision.
+//
+// This test used to prove that a PATCH applying only search_method was caught,
+// using a stored top_k the platform default disagreed with. That scenario no
+// longer exists: a repair deliberately carries the dataset's own top_k forward,
+// so it never asks to change it and there is nothing left to be dropped. What
+// can still be ignored in silence is an explicit override — an administrator
+// raising top_k and Dify accepting the request without applying it.
+func TestDifyBridge_SetDatasetRetrieval_CatchesAnIgnoredOverride(t *testing.T) {
+	stored := map[string]interface{}{"search_method": "keyword_search", "top_k": 3, "reranking_enable": false}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch {
 			// Applies the method, drops everything else — exactly the shape the
@@ -541,11 +550,52 @@ func TestDifyBridge_SetDatasetRetrieval_CatchesPartiallyIgnoredWrite(t *testing.
 	defer server.Close()
 
 	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
-	err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token")
+	err := b.SetDatasetRetrievalWith(context.Background(), "ds-001", "console-token",
+		RetrievalOverrides{TopK: 8})
 	if err == nil {
-		t.Fatal("a write that applied only the search method must be reported, not accepted")
+		t.Fatal("a write that dropped the requested top_k must be reported, not accepted")
 	}
 	if !strings.Contains(err.Error(), "top_k") {
 		t.Errorf("the error must name the field that did not take: %v", err)
+	}
+}
+
+// A repair must not roll back a top_k an administrator set. The PATCH replaces
+// the whole retrieval_model object, so a repair rebuilding it from platform
+// defaults would undo the other writer every time it ran — and the two controls
+// on that card would take turns cancelling each other, with no error either way.
+func TestDifyBridge_SetDatasetRetrieval_KeepsAnAdministratorsTopK(t *testing.T) {
+	stored := map[string]interface{}{"search_method": "keyword_search", "top_k": 9, "reranking_enable": false}
+	var patched map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			var body struct {
+				RetrievalModel map[string]interface{} `json:"retrieval_model"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			patched = body.RetrievalModel
+			for k, v := range patched {
+				stored[k] = v
+			}
+			w.Write([]byte(`{}`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                   "ds-001",
+			"indexing_technique":   "economy",
+			"retrieval_model_dict": stored,
+		})
+	}))
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err != nil {
+		t.Fatalf("repair failed: %v", err)
+	}
+	if got, _ := asInt(patched["top_k"]); got != 9 {
+		t.Errorf("the repair sent top_k=%v, want the dataset's own 9 — it would have undone the setting", patched["top_k"])
+	}
+	if got, _ := patched["search_method"].(string); got != "keyword_search" {
+		t.Errorf("search method = %q, want the one matching the economy index", got)
 	}
 }

@@ -158,6 +158,26 @@ func newPromptHandler(dify *fakeDify) *Handler {
 	return h
 }
 
+// newPromptHandlerWithDataset is a handler whose product line also has a
+// knowledge base, for the endpoints that need one.
+func newPromptHandlerWithDataset(dify *fakeDify) *Handler {
+	appID, datasetID := "app-1", "ds-1"
+	return NewHandler(Config{
+		ProductLines: &fakeProductLines{pl: &repository.ProductLine{
+			ID:            "pl-1",
+			Name:          "Acme",
+			DisplayName:   "Acme",
+			DifyAgentID:   &appID,
+			DifyDatasetID: &datasetID,
+		}},
+		Dify: bridge.NewDifyBridge(bridge.DifyBridgeConfig{
+			AdminURL:   dify.server.URL,
+			AdminToken: "test-console-token",
+			APIBaseURL: dify.server.URL,
+		}),
+	})
+}
+
 // newPromptHandlerWithStore also hands back the config store, for tests about
 // what a prompt write records rather than what it sends to Dify.
 func newPromptHandlerWithStore(dify *fakeDify) (*Handler, *fakeProductLines) {

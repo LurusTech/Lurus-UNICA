@@ -246,6 +246,24 @@
   .diff-line.add .sign { color: var(--ok); }
   .diff-more { padding: 6px 10px; font-size: 12px; color: var(--text-muted); }
 
+
+  /* Recalled segments under a test answer. Each row is one thing the model was
+     allowed to draw on; the count above them is the question this whole card
+     exists to answer, because an answer written without the knowledge base
+     reads exactly like one written from it. */
+  .recall { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .recall-head { font-size: 13px; margin-bottom: 8px; }
+  .recall-head .none { color: var(--warn); }
+  .recall-item {
+    display: grid; grid-template-columns: 46px 1fr; gap: 10px;
+    padding: 6px 0; font-size: 12px; line-height: 1.6;
+    border-top: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
+  }
+  .recall-item:first-of-type { border-top: 0; }
+  .recall-score { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+  .recall-doc { font-weight: 600; }
+  .recall-preview { color: var(--text-muted); }
+
   .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
   .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.85rem; }
 
@@ -452,6 +470,22 @@
         <span class="spacer"></span>
         <span class="hint" id="dataset-hint"></span>
       </div>
+
+      <div class="field narrow" id="topk-field" hidden>
+        <label for="f-topk">单次检索召回条数（top_k）</label>
+        <input id="f-topk" type="number" min="1" max="10" step="1" />
+        <div class="hint">
+          每次回答最多可以引用知识库里的几段内容。调高更不容易漏掉正确的一段，
+          也更容易把正确答案埋在几段相近内容里；调低则相反。
+          <b>改动会影响本产线所有回答，也会影响回归测试的基准</b>，所以只对管理员开放。
+          改完可以用下面的「测试消息」直接看召回了哪几段。
+        </div>
+        <div class="actions-row">
+          <button id="topk-save-btn">保存召回条数</button>
+          <span class="spacer"></span>
+          <span class="hint" id="topk-state"></span>
+        </div>
+      </div>
     </div>
 
     <!-- Satisfaction survey -->
@@ -640,6 +674,10 @@
     datasetPill: document.getElementById("dataset-pill"),
     datasetBindBtn: document.getElementById("dataset-bind-btn"),
     datasetHint: document.getElementById("dataset-hint"),
+    topkField: document.getElementById("topk-field"),
+    fTopk: document.getElementById("f-topk"),
+    topkSaveBtn: document.getElementById("topk-save-btn"),
+    topkState: document.getElementById("topk-state"),
 
     testForm: document.getElementById("test-form"),
     fTest: document.getElementById("f-test"),
@@ -900,6 +938,7 @@
     renderSurveyRuntime(cfg);
 
     renderModel(cfg.model);
+    renderTopK(cfg.knowledge);
     renderPromptContract();
     renderThresholdTiers(cfg, state.factsConfig);
     applyKeywordAvailability(cfg);
@@ -1956,6 +1995,59 @@
       .finally(function () { setBusy(false, els.datasetBindBtn, "修复知识库绑定"); });
   });
 
+
+  // ---------- Recall size ----------
+  //
+  // Administrator only, and hidden rather than disabled for everyone else: a
+  // tenant cannot see either side of the trade this makes, so showing them a
+  // greyed-out box would only raise a question they cannot act on.
+  //
+  // The control exists because the effect was measured first. With the app's
+  // retrieval strategy on router/single, a dataset top_k of 2, 8 and 6 produced
+  // answers drawing on exactly 2, 8 and 6 segments — visible through the test
+  // message below, which is why that had to be built before this.
+  function renderTopK(knowledge) {
+    var usable = isAdmin() && knowledge && knowledge.dataset_bound;
+    els.topkField.hidden = !usable;
+    if (!usable) return;
+    state.baselineTopK = typeof knowledge.top_k === "number" ? knowledge.top_k : null;
+    els.fTopk.value = state.baselineTopK === null ? "" : state.baselineTopK;
+    els.topkState.textContent = "";
+  }
+
+  els.topkSaveBtn.addEventListener("click", function () {
+    if (state.busy) return;
+    var value = parseInt(els.fTopk.value, 10);
+    if (isNaN(value) || value < 1 || value > 10) {
+      toast("召回条数须在 1 到 10 之间", "error");
+      return;
+    }
+    if (value === state.baselineTopK) {
+      toast("召回条数没有改动", "warn");
+      return;
+    }
+
+    setBusy(true, els.topkSaveBtn, "保存中…");
+    api(tenantPath("/ai-settings/dataset/top-k"), {
+      method: "PUT",
+      body: JSON.stringify({ top_k: value })
+    })
+      .then(function (res) {
+        // The server answers with the dataset as it now reads, so what is shown
+        // is what was verified rather than what was asked for — this write goes
+        // to Dify, which has answered an ignored write with 200 before.
+        var applied = res && res.knowledge && res.knowledge.top_k;
+        toast("召回条数已改为 " + applied, "success");
+        els.topkState.textContent = "已保存 " + nowText();
+        return loadSettings();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        reportError("保存召回条数失败", err);
+      })
+      .finally(function () { setBusy(false, els.topkSaveBtn, "保存召回条数"); });
+  });
+
   // ---------- Test message ----------
   els.testForm.addEventListener("submit", function (e) {
     e.preventDefault();
@@ -1998,7 +2090,56 @@
 
     els.testResult.appendChild(answer);
     if (parts.length) els.testResult.appendChild(meta);
+    renderRecall(data.retrieval);
     els.testResult.hidden = false;
+  }
+
+  // What the knowledge base contributed, reported even when it contributed
+  // nothing. Zero is the case that matters: an answer composed without the
+  // knowledge base reads exactly like one composed from it, and until this
+  // existed nothing on the page could tell them apart — which is also why
+  // "调高 top_k" was an assumption nobody could check.
+  function renderRecall(retrieval) {
+    if (!retrieval) return;
+    var box = document.createElement("div");
+    box.className = "recall";
+
+    var head = document.createElement("div");
+    head.className = "recall-head";
+    if (!retrieval.count) {
+      var none = document.createElement("span");
+      none.className = "none";
+      none.textContent = "本次回答没有用到知识库（召回 0 段）";
+      head.appendChild(none);
+      var why = document.createElement("span");
+      why.textContent = "　—— 可能是知识库里确实没有相关内容，也可能是检索这一环没接通，见页首体检。";
+      head.appendChild(why);
+    } else {
+      head.textContent = "本次回答可以引用的知识库内容：" + retrieval.count + " 段";
+    }
+    box.appendChild(head);
+
+    (retrieval.segments || []).forEach(function (seg) {
+      var item = document.createElement("div");
+      item.className = "recall-item";
+      var score = document.createElement("span");
+      score.className = "recall-score";
+      score.textContent = (typeof seg.score === "number" ? seg.score.toFixed(3) : "");
+      var body = document.createElement("div");
+      var doc = document.createElement("div");
+      doc.className = "recall-doc";
+      doc.textContent = seg.document || "(未命名文档)";
+      var preview = document.createElement("div");
+      preview.className = "recall-preview";
+      preview.textContent = seg.preview || "";
+      body.appendChild(doc);
+      if (seg.preview) body.appendChild(preview);
+      item.appendChild(score);
+      item.appendChild(body);
+      box.appendChild(item);
+    });
+
+    els.testResult.appendChild(box);
   }
 
   // ---------- Page-level messages ----------

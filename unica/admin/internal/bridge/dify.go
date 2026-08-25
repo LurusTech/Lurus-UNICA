@@ -44,6 +44,9 @@ type DifyBridgeConfig struct {
 // DifyBridge communicates with the Dify platform for AI config management.
 type DifyBridge struct {
 	httpClient *http.Client
+	// chatClient is for calls that wait on a language model, where the bound
+	// belongs to the caller's context rather than to a client-wide timeout.
+	chatClient *http.Client
 	config     DifyBridgeConfig
 
 	// Cached console token minted via Login when no static AdminToken is
@@ -60,10 +63,24 @@ type DifyBridge struct {
 const consoleTokenTTL = 30 * time.Minute
 
 // NewDifyBridge creates a new Dify bridge client.
+//
+// Two clients, because the calls have nothing in common but a host. Console
+// calls read and write configuration and should never take thirty seconds; a
+// chat call waits on a language model and routinely takes longer. One client
+// with one timeout meant the shorter requirement silently governed the longer
+// call, and a test question that took 31 seconds came back as a transport
+// error — from the page whose whole job is to say whether the settings work.
 func NewDifyBridge(cfg DifyBridgeConfig) *DifyBridge {
 	return &DifyBridge{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+		},
+		// No Timeout of its own: the caller's context is the bound, because
+		// only the caller knows how long this particular question may take.
+		// The backstop is there for a caller that passes a context with no
+		// deadline at all, which would otherwise hang until the process ends.
+		chatClient: &http.Client{
+			Timeout: 5 * time.Minute,
 		},
 		config: cfg,
 	}
@@ -109,19 +126,49 @@ type AppModelInfo struct {
 	Pinned bool `json:"pinned"`
 }
 
+// RetrievedSegment is one piece of the knowledge base that an answer was
+// allowed to draw on.
+//
+// The names are kept, not just the score. "How many segments came back" is
+// answerable from a count, but "why did it answer like that" needs to know
+// which documents they came from — and a recall of the wrong three documents
+// looks exactly like a recall of the right three until you can read them.
+type RetrievedSegment struct {
+	DatasetID    string  `json:"dataset_id,omitempty"`
+	DatasetName  string  `json:"dataset_name,omitempty"`
+	DocumentID   string  `json:"document_id,omitempty"`
+	DocumentName string  `json:"document_name,omitempty"`
+	Score        float64 `json:"score"`
+	Content      string  `json:"content,omitempty"`
+}
+
 // TestMessageResponse represents the response from a Dify test chat message.
+//
+// Dify has returned retriever_resources in two places across versions: at the
+// top level and under metadata. Both are read, because a console that reported
+// "0 segments" for the other shape would be describing a broken knowledge base
+// that is in fact working — the most expensive kind of wrong answer this page
+// can give.
 type TestMessageResponse struct {
-	Answer         string  `json:"answer"`
-	ConversationID string  `json:"conversation_id"`
-	Confidence     float64 `json:"confidence,omitempty"`
-	Metadata       struct {
+	Answer             string             `json:"answer"`
+	ConversationID     string             `json:"conversation_id"`
+	Confidence         float64            `json:"confidence,omitempty"`
+	RetrieverResources []RetrievedSegment `json:"retriever_resources,omitempty"`
+	Metadata           struct {
 		Usage struct {
 			TotalTokens int `json:"total_tokens"`
 		} `json:"usage"`
-		RetrieverResources []struct {
-			Score float64 `json:"score"`
-		} `json:"retriever_resources,omitempty"`
+		RetrieverResources []RetrievedSegment `json:"retriever_resources,omitempty"`
 	} `json:"metadata"`
+}
+
+// Retrieved returns the segments the answer drew on, from whichever place this
+// Dify version put them.
+func (r *TestMessageResponse) Retrieved() []RetrievedSegment {
+	if len(r.RetrieverResources) > 0 {
+		return r.RetrieverResources
+	}
+	return r.Metadata.RetrieverResources
 }
 
 // DifyAppCreated holds the identifiers returned after provisioning a Dify chat app.
@@ -298,6 +345,24 @@ func (b *DifyBridge) CreateDataset(ctx context.Context, token, name string) (*Di
 // and verifies they took. Idempotent, so it doubles as the repair path for
 // datasets provisioned before this existed.
 func (b *DifyBridge) SetDatasetRetrieval(ctx context.Context, datasetID, token string) error {
+	return b.SetDatasetRetrievalWith(ctx, datasetID, token, RetrievalOverrides{})
+}
+
+// RetrievalOverrides are the parts of retrieval that are a per-dataset decision
+// rather than a platform one.
+//
+// Only top_k is here, and deliberately: score_threshold fails by returning
+// nothing at all, and reranking needs a model this workspace may not have — the
+// two settings whose failure mode is silence are the two nobody can set.
+type RetrievalOverrides struct {
+	// TopK is how many segments an answer may draw on. Zero means "leave what
+	// the dataset already has", which is what every caller but the editor wants.
+	TopK int
+}
+
+// SetDatasetRetrievalWith aligns a dataset's retrieval settings with the
+// platform's, applying the caller's overrides on top.
+func (b *DifyBridge) SetDatasetRetrievalWith(ctx context.Context, datasetID, token string, ov RetrievalOverrides) error {
 	if datasetID == "" {
 		return fmt.Errorf("dataset ID is empty")
 	}
@@ -333,6 +398,9 @@ func (b *DifyBridge) SetDatasetRetrieval(ctx context.Context, datasetID, token s
 	want := difyapp.RetrievalModel(b.config.IndexingTechnique)
 	for k, v := range current.Overrides {
 		want[k] = v
+	}
+	if ov.TopK > 0 {
+		want["top_k"] = ov.TopK
 	}
 
 	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPatch, "/datasets/"+datasetID,
@@ -400,12 +468,21 @@ func (b *DifyBridge) GetDatasetConfig(ctx context.Context, datasetID, token stri
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal dataset %s: %w", datasetID, err)
 	}
+	// The dataset is the store for top_k — there is no second copy of it — so
+	// what it currently holds is carried into Overrides and survives a repair.
+	// Without this, "repair retrieval" would rebuild the object from platform
+	// defaults and quietly undo whatever an administrator had set, and the two
+	// buttons on that card would take turns cancelling each other.
+	overrides := map[string]interface{}{}
+	if raw.RetrievalModel.TopK > 0 {
+		overrides["top_k"] = raw.RetrievalModel.TopK
+	}
 	return &DatasetConfig{
 		IndexingTechnique: raw.IndexingTechnique,
 		SearchMethod:      raw.RetrievalModel.SearchMethod,
 		TopK:              raw.RetrievalModel.TopK,
 		RerankingEnable:   raw.RetrievalModel.RerankingEnable,
-		Overrides:         map[string]interface{}{},
+		Overrides:         overrides,
 	}, nil
 }
 
@@ -780,7 +857,7 @@ func (b *DifyBridge) SendTestMessage(ctx context.Context, apiKey string, message
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	start := time.Now()
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.chatClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("send test message: %w", err)
 	}
@@ -804,9 +881,9 @@ func (b *DifyBridge) SendTestMessage(ctx context.Context, apiKey string, message
 	}
 
 	// Derive confidence from retriever resources if available
-	if len(result.Metadata.RetrieverResources) > 0 {
+	if retrieved := result.Retrieved(); len(retrieved) > 0 {
 		maxScore := 0.0
-		for _, rr := range result.Metadata.RetrieverResources {
+		for _, rr := range retrieved {
 			if rr.Score > maxScore {
 				maxScore = rr.Score
 			}

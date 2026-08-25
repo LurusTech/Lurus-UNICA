@@ -237,7 +237,41 @@ type testMessageResponse struct {
 	Answer     string  `json:"answer"`
 	Confidence float64 `json:"confidence"`
 	Tokens     int     `json:"tokens_used"`
+	// Retrieval is what the knowledge base contributed. Reported even when it
+	// contributed nothing, because zero is the answer that matters: an answer
+	// composed without the knowledge base reads exactly like one composed from
+	// it, and until now nothing on this page could tell them apart.
+	Retrieval retrievalReport `json:"retrieval"`
 }
+
+// retrievalReport is the count first and the sources second, in that order,
+// because the count is the question ("did the knowledge base take part?") and
+// the sources are the follow-up ("was it the right part of it?").
+type retrievalReport struct {
+	Count    int                       `json:"count"`
+	Segments []retrievedSegmentSummary `json:"segments,omitempty"`
+}
+
+// retrievedSegmentSummary carries a preview rather than the whole segment. A
+// segment can be a thousand tokens, and this page is a diagnostic, not a
+// document viewer — but a name alone does not say whether the right passage
+// came back.
+type retrievedSegmentSummary struct {
+	Dataset  string  `json:"dataset,omitempty"`
+	Document string  `json:"document,omitempty"`
+	Score    float64 `json:"score"`
+	Preview  string  `json:"preview,omitempty"`
+}
+
+// segmentPreviewRunes is enough to recognise a passage and not enough to read
+// the knowledge base through this endpoint.
+const segmentPreviewRunes = 120
+
+// testMessageWindow is how long a test question may take end to end. It is
+// generous because the point of the test message is to see what a real customer
+// would get, and a real customer's message is not abandoned at ten seconds
+// either — the router waits on the same model.
+const testMessageWindow = 3 * time.Minute
 
 // thresholdRangeMessage explains the one value the runtime cannot express. It
 // reads a zero threshold as "never configured" and falls back to its default,
@@ -333,6 +367,15 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.bindDataset(w, r, pl)
+			return
+		}
+		// PUT .../dataset/top-k sets how many segments an answer may draw on.
+		if len(rest) > 1 && rest[1] == "top-k" {
+			if r.Method != http.MethodPut {
+				errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			h.updateTopK(w, r, pl)
 			return
 		}
 		// POST .../dataset/retrieval realigns the search method with the index.
@@ -534,6 +577,17 @@ func (h *Handler) resetPrompt(w http.ResponseWriter, r *http.Request, pl *reposi
 		"product_line_id": pl.ID,
 		"prompt_length":   utf8.RuneCountInString(prompt),
 	})
+}
+
+// truncateRunes cuts to a rune count, not a byte count: every segment here is
+// Chinese, and a byte cut lands in the middle of a character.
+func truncateRunes(s string, max int) string {
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…"
 }
 
 // loadPromptOrigin reads the record of what the console last wrote. A blob that
@@ -798,6 +852,73 @@ func (h *Handler) repairVariables(w http.ResponseWriter, r *http.Request, pl *re
 	})
 }
 
+// updateTopKRequest carries how many knowledge-base segments an answer may draw
+// on.
+type updateTopKRequest struct {
+	TopK int `json:"top_k"`
+}
+
+// topKMin and topKMax bound the control.
+//
+// Zero is refused rather than accepted: the runtime reads a zero as "never
+// set" and substitutes its own default, so accepting it would report a setting
+// the running system does not have — the same trap as the confidence threshold.
+// The ceiling is a judgement: past ten segments the model is being handed more
+// context than it can keep straight, and the effect of raising it further is to
+// bury the right passage among near-misses rather than to find more of them.
+const (
+	topKMin = 1
+	topKMax = 10
+)
+
+// updateTopK sets the dataset's top_k.
+//
+// Administrator only, like the repairs beside it. This is not a preference: it
+// trades recall against precision for every answer the line gives, it is the
+// input the golden sets are measured under, and a tenant has no way to see
+// either effect. It reaches Dify through the same merged construction the
+// repair uses, so the two cannot roll each other back.
+//
+// The control exists at all only because it was measured first: with the app's
+// retrieval strategy set to router/single, a dataset top_k of 2, 8 and 6
+// produced answers drawing on exactly 2, 8 and 6 segments. Before that it was
+// an assumption, and the console's own test message is what proved it.
+func (h *Handler) updateTopK(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
+	claims := auth.GetClaims(r.Context())
+	if claims != nil && !rbac.IsAdmin(claims.Role) {
+		errorJSON(w, http.StatusForbidden, "changing top_k requires the administrator role")
+		return
+	}
+	if pl.DifyDatasetID == nil || *pl.DifyDatasetID == "" {
+		errorJSON(w, http.StatusBadRequest, "no Dify dataset configured for this product line")
+		return
+	}
+
+	var req updateTopKRequest
+	if err := decodeJSON(r, &req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.TopK < topKMin || req.TopK > topKMax {
+		errorJSON(w, http.StatusBadRequest, fmt.Sprintf(
+			"top_k must be between %d and %d (the runtime reads 0 as unset and falls back to its default)",
+			topKMin, topKMax))
+		return
+	}
+
+	if err := h.dify.SetDatasetRetrievalWith(r.Context(), *pl.DifyDatasetID, "",
+		bridge.RetrievalOverrides{TopK: req.TopK}); err != nil {
+		log.Printf("[ai-settings] set top_k error: %v", err)
+		errorJSON(w, http.StatusBadGateway, "failed to set top_k: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"product_line_id": pl.ID,
+		"knowledge":       h.knowledgeStatus(r.Context(), pl),
+	})
+}
+
 // updateSurvey writes the satisfaction-survey block.
 //
 // Unlike a guardrail write this does not invalidate the route cache: the
@@ -957,13 +1078,32 @@ func (h *Handler) sendTestMessage(w http.ResponseWriter, r *http.Request, pl *re
 		return
 	}
 
+	// This is the one endpoint here that deliberately waits on a language
+	// model, and the server's write deadline is ten seconds. A question that
+	// takes longer had its connection closed mid-answer, which reaches the
+	// operator as a network error rather than as a slow reply — and the
+	// instrument this page uses to judge everything else was the thing that
+	// looked broken. Failure to stretch is ignored for the same reason the
+	// upload path ignores it: a writer that cannot (a test recorder) simply
+	// keeps the server's defaults.
+	rc := http.NewResponseController(w)
+	deadline := time.Now().Add(testMessageWindow)
+	_ = rc.SetReadDeadline(deadline)
+	_ = rc.SetWriteDeadline(deadline)
+
+	// The same window on the request context, which is what actually stops the
+	// call to Dify. The write deadline only decides when the connection dies;
+	// without this the work would carry on behind a closed connection.
+	ctx, cancel := context.WithTimeout(r.Context(), testMessageWindow)
+	defer cancel()
+
 	claims := auth.GetClaims(r.Context())
 	userID := "admin-test"
 	if claims != nil {
 		userID = "admin-test-" + claims.UserID
 	}
 
-	apiKey, err := h.pls.GetDifyAppKey(r.Context(), pl.ID)
+	apiKey, err := h.pls.GetDifyAppKey(ctx, pl.ID)
 	if err != nil {
 		log.Printf("[ai-settings] failed to load dify app key: %v", err)
 		errorJSON(w, http.StatusInternalServerError, "internal error")
@@ -974,17 +1114,29 @@ func (h *Handler) sendTestMessage(w http.ResponseWriter, r *http.Request, pl *re
 		return
 	}
 
-	result, err := h.dify.SendTestMessage(r.Context(), apiKey, req.Message, userID)
+	result, err := h.dify.SendTestMessage(ctx, apiKey, req.Message, userID)
 	if err != nil {
 		log.Printf("[ai-settings] test message error: %v", err)
 		errorJSON(w, http.StatusBadGateway, "failed to send test message: "+err.Error())
 		return
 	}
 
+	retrieved := result.Retrieved()
+	report := retrievalReport{Count: len(retrieved)}
+	for _, seg := range retrieved {
+		report.Segments = append(report.Segments, retrievedSegmentSummary{
+			Dataset:  seg.DatasetName,
+			Document: seg.DocumentName,
+			Score:    seg.Score,
+			Preview:  truncateRunes(seg.Content, segmentPreviewRunes),
+		})
+	}
+
 	writeJSON(w, http.StatusOK, testMessageResponse{
 		Answer:     result.Answer,
 		Confidence: result.Confidence,
 		Tokens:     result.Metadata.Usage.TotalTokens,
+		Retrieval:  report,
 	})
 }
 
@@ -1002,9 +1154,10 @@ func (h *Handler) AuditState(ctx context.Context, tenantID string) (json.RawMess
 	}
 	return json.Marshal(struct {
 		guardrailConfig
-		Survey *survey.Config        `json:"survey"`
-		Prompt *promptDigest         `json:"prompt"`
-		Origin *difyapp.PromptOrigin `json:"prompt_origin"`
+		Survey    *survey.Config        `json:"survey"`
+		Prompt    *promptDigest         `json:"prompt"`
+		Origin    *difyapp.PromptOrigin `json:"prompt_origin"`
+		Retrieval *knowledgeStatus      `json:"retrieval"`
 	}{
 		guardrailConfig: loadGuardrail(raw),
 		Survey:          survey.Load(raw),
@@ -1013,6 +1166,10 @@ func (h *Handler) AuditState(ctx context.Context, tenantID string) (json.RawMess
 		// or a write that only moves this one leaves an audit row whose before
 		// and after are the same.
 		Origin: loadPromptOrigin(raw),
+		// And top_k is not in config_json at all — the dataset is its only
+		// store — so without this a top_k change would leave exactly that kind
+		// of empty row.
+		Retrieval: h.retrievalDigest(ctx, tenantID),
 	})
 }
 
@@ -1034,6 +1191,18 @@ type promptDigest struct {
 	// ContractComplete is nil when the prompt could not be read.
 	ContractComplete *bool  `json:"contract_complete,omitempty"`
 	Unavailable      string `json:"unavailable,omitempty"`
+}
+
+// retrievalDigest reports the dataset's retrieval settings for the audit
+// snapshot. Nil when there is no dataset or Dify cannot be reached, for the same
+// reason the prompt digest degrades rather than failing: an audit failure must
+// never be why a write went unrecorded.
+func (h *Handler) retrievalDigest(ctx context.Context, tenantID string) *knowledgeStatus {
+	pl, err := h.pls.GetByID(ctx, tenantID)
+	if err != nil || pl == nil {
+		return nil
+	}
+	return h.knowledgeStatus(ctx, pl)
 }
 
 func (h *Handler) promptDigest(ctx context.Context, tenantID string) *promptDigest {

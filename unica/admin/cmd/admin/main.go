@@ -457,6 +457,7 @@ var aiSettingsPaths = map[string]bool{
 	"handoff-rules":     true,
 	"dataset/bind":      true,
 	"dataset/retrieval": true,
+	"dataset/top-k":     true,
 	"survey":            true,
 	"variables/repair":  true,
 	"test":              true,

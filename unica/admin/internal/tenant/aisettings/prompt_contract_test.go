@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/kefu/unica/admin/internal/auth"
+	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/pkg/difyapp"
 )
 
@@ -187,5 +190,40 @@ func TestAuditState_CoversThePromptOrigin(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "abc123") {
 		t.Errorf("the origin record is missing from the snapshot: %s", raw)
+	}
+}
+
+// top_k trades recall against precision for every answer the line gives, and it
+// is the input the golden sets are measured under. It is bounded rather than
+// free: zero reads as "never set" to the runtime, which substitutes its own
+// default, so accepting it would report a setting the running system does not
+// have.
+func TestUpdateTopK_RejectsValuesOutsideTheBand(t *testing.T) {
+	for _, body := range []string{`{"top_k":0}`, `{"top_k":-1}`, `{"top_k":11}`, `{}`} {
+		dify := newFakeDify(t)
+		h := newPromptHandlerWithDataset(dify)
+		w := do(t, h, http.MethodPut, "/api/v1/tenants/pl-1/ai-settings/dataset/top-k", body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %s: status = %d, want 400", body, w.Code)
+		}
+	}
+}
+
+// Administrator only, like the repairs beside it: this is not a preference a
+// tenant expresses, and a tenant has no way to see either side of the trade.
+func TestUpdateTopK_RequiresAdmin(t *testing.T) {
+	dify := newFakeDify(t)
+	h := newPromptHandlerWithDataset(dify)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/pl-1/ai-settings/dataset/top-k",
+		strings.NewReader(`{"top_k":8}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
+		&auth.Claims{Role: rbac.RoleUser, TenantID: "pl-1"}))
+	w := httptest.NewRecorder()
+	h.Handle(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", w.Code, w.Body.String())
 	}
 }
