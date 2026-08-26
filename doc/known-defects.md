@@ -112,9 +112,19 @@ merge 进会话 metadata，`metrics.MarketingIntentDetectedTotal` 计数。
 
 两者判据不同，混用会对同一产品线产生两套互不一致的绑定。
 
-**已定案（2026-08-13）**：`admin/internal/bridge/dify.go` 是**唯一的
+**判据修订（2026-08-25）**：下面 2026-08-13 那条定案的**前一半继续有效**
+（唯一实现、固定拓扑），**后一半已被推翻**——"『已配置』判据只认 `dify_agent_id`"
+正是 D8 的根因：一条有 app 缺 dataset 的线，重跑开户也走不出去。
+现在没有"已配置"这个整体判据了，取而代之的是**逐项自查**：app / dataset /
+挂载 / 检索 / 写回各自检查自己的前提，都就位才算齐。挂载与检索是真的去 Dify 查，
+不是从库里的字段推断——假定它们没事，正是这条线坏了几个月还处处显示"已配置"的机制。
+补建端点与开户走的仍是同一段代码（`admin/internal/identity/dify_line.go` 的
+`EnsureDifyLine`），唯一实现这一条没有被削弱。
+
+**原定案（2026-08-13）**：`admin/internal/bridge/dify.go` 是**唯一的
 provisioning 实现**——开户走 `POST /api/v1/tenants`，拓扑固定为"默认工作区内
-一线一 app + 一 dataset"，"已配置"判据只认 `dify_agent_id`。
+一线一 app + 一 dataset"，"已配置"判据只认 `dify_agent_id`（**这一句已于
+2026-08-25 修订，见上**）。
 `router/cmd/setup_dify_workspaces` 降级为**一次性运维脚本**：它只用于给早于
 本次重构、按 workspace 划分的存量环境做迁移引导，不参与任何生产路径，
 也不再被视为一种可选拓扑。新环境不要跑它。
@@ -125,7 +135,36 @@ provisioning 实现**——开户走 `POST /api/v1/tenants`，拓扑固定为"�
 
 ---
 
-## D8 存量产品线的知识库仍未接线、仍是关键词索引
+## D8 存量产品线的知识库仍未接线、仍是关键词索引（已解，2026-08-25）
+
+**2026-08-25 解掉**：根因是 `provisionDifyLine` 的幂等早退只看 `dify_agent_id`，
+"有 app 无 dataset"因此是一个重跑开户也走不出去的死状态，而 `CreateDataset`
+全仓只在开户流程里被调用一次，没有任何入口能补。
+
+修法不是换一个早退条件——换成"两个都在才早退"会让缺 dataset 的线重新走完整个流程、
+**再建一个 app**。整体早退被取消，改为逐项自查（见 D7 的判据修订），
+开户从"全建或全不建"变成"把这条线补齐到规范"，补建入口与开户是同一段代码。
+
+新增：`POST .../ai-settings/knowledge/provision`（仅 admin，幂等）、
+诊断卡上的按钮、以及平台侧 `GET /api/v1/platform/knowledge` 就绪度清单。
+
+实机（本地 WSL，10 条产线）：三条零售线逐条补建，`app=already`（**没有再建第二个应用**）、
+dataset/binding/attach/retrieval 全部 done；再跑一次全部 `already`、`provisioned=false`。
+**证明它真的被用上**：给 FreshMart 传一篇只有它答得出的文档，测试消息召回 6 段、
+来源指向那篇、答案正确；**卸掉挂载后同一问题召回归零**、诊断卡如实报"未挂载"、
+模型转人工；用补建端点修回来（只做 `attach: done` 一步），召回恢复 6 段。
+
+清单顺带照出了此前没人看得见的事：**10 条线只有 2 条就绪**，5 条演练线
+"有数据集但没挂载"（D8 的原始形态），其中 DrillCo2/3/5 还是 economy 索引配语义检索
+——每次检索恒空且不报错。这些是登记，不是本轮处理范围。
+
+**过程中修掉一个自己造出来的缺陷**：新建的数据集带着 Dify 自己的 `top_k=2` 出生，
+而 `GetDatasetConfig` 会把数据集当前的 top_k 读进 `Overrides`（S11 为了不冲掉管理员的值），
+于是那个 2 被当成"管理员的选择"永久保护住——写 2、回读 2、校验通过、报"已设好检索"。
+建库与修复不是一回事：一个刚出生的数据集没有任何选择需要保护。
+建库路径现在显式写平台默认（`difyapp.DefaultTopK()`），已补回归测试。
+
+**下面是修复前的原文，保留以说明当时的状态**：
 
 原 D8「上传的知识库对回答无任何效果」已修复并验证（2026-08-12，见
 `doc/test-ajyj-kb-import.md`），代码侧三处：开户时把 dataset 挂到 app
@@ -172,6 +211,15 @@ AJYJ 与 XDYX 有，上传正常。而 `POST .../ai-settings/dataset/bind` 只�
 ---
 
 ## D9 没有嵌入模型时，知识库静默降级为一个查不准的关键词库
+
+**2026-08-25 现状更新**（缺陷未解，但两种失败模式要分清）：当前部署的嵌入模型
+`BAAI/bge-base-zh-v1.5` 已可用，`DIFY_INDEXING_TECHNIQUE=high_quality`，
+XDYX / AJYJ 与本轮新建的三条零售线都是 high_quality + 语义检索。
+但**代码从不探测嵌入模型是否真的可用**，纯靠这个 env 手工声明，于是有两种相反的失败：
+声明 `high_quality` 而工作区没有嵌入模型 → Dify 直接拒绝上传（`provider_not_initialize`），
+是**显性**失败；为规避该报错把它改成 `economy` → 上传与索引全部"成功"，
+关键词检索大量零命中，体检全绿无报错，才是本条说的**静默降级**。
+换句话说：这条缺陷的触发条件不是"没有嵌入模型"，而是"没有嵌入模型**且有人去改了那个 env**"。
 
 `DIFY_INDEXING_TECHNIQUE=economy` 是工作区没有嵌入模型时的唯一选择
 （`high_quality` 会被 Dify 直接拒绝）。但 economy **不是** high_quality 的

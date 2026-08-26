@@ -171,10 +171,11 @@ func TestProvisionRecordsAnUnpushedVersionWhenThePromptNeverLanded(t *testing.T)
 // one of their own.
 func credentialedBridge(url string) *bridge.DifyBridge {
 	return bridge.NewDifyBridge(bridge.DifyBridgeConfig{
-		AdminURL:      url,
-		APIBaseURL:    url,
-		AdminEmail:    "admin@example.com",
-		AdminPassword: "secret",
+		AdminURL:          url,
+		APIBaseURL:        url,
+		AdminEmail:        "admin@example.com",
+		AdminPassword:     "secret",
+		IndexingTechnique: "high_quality",
 	})
 }
 

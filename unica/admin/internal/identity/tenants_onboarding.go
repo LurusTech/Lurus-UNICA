@@ -50,16 +50,23 @@ type customerProductLineResult struct {
 // customerDifyResult reports the Dify step. Provisioned is false both when the
 // binding already existed and when the step could not run; Message says which.
 //
-// Warnings are the pieces of provisioning that failed without stopping it. They
-// belong in the response rather than the log alone: the dataset binding is the
-// one that silently did not happen for months, and this response is the only
-// thing an operator reads after onboarding a tenant.
+// Ready and Steps are what an operator acts on. Provisioned answers "did this
+// run add anything", which a resumed onboarding says false to whether the line
+// is complete or missing its knowledge base entirely; Ready answers whether the
+// line is actually up to standard, and Steps says which part is not.
+//
+// Warnings are the same failures as sentences. They belong in the response
+// rather than the log alone: the dataset binding is the one that silently did
+// not happen for months, and this response is the only thing an operator reads
+// after onboarding a tenant.
 type customerDifyResult struct {
-	Provisioned bool     `json:"provisioned"`
-	DifyAgentID string   `json:"dify_agent_id"`
-	DatasetID   string   `json:"dataset_id"`
-	Message     string   `json:"message,omitempty"`
-	Warnings    []string `json:"warnings,omitempty"`
+	Provisioned bool           `json:"provisioned"`
+	DifyAgentID string         `json:"dify_agent_id"`
+	DatasetID   string         `json:"dataset_id"`
+	Ready       bool           `json:"ready"`
+	Message     string         `json:"message,omitempty"`
+	Steps       []DifyLineStep `json:"steps,omitempty"`
+	Warnings    []string       `json:"warnings,omitempty"`
 }
 
 // customerPortalResult reports the portal account step. GeneratedPassword is
@@ -209,12 +216,25 @@ func (h *TenantHandler) ensureDify(ctx context.Context, productLineID string) cu
 	resp, perr := h.provisionDifyLine(ctx, productLineID)
 	if perr != nil {
 		log.Printf("[tenants] dify step degraded for product line %s: %v", productLineID, perr)
-		return customerDifyResult{Message: perr.message}
+		degraded := customerDifyResult{Message: perr.message}
+		if resp != nil {
+			// What the run did manage to create still has to reach the operator.
+			// Those resources are in Dify and this database does not refer to
+			// them, so a re-POST would create second ones — and a response that
+			// says only "it failed" is the silence that lets that happen.
+			degraded.DifyAgentID = resp.DifyAgentID
+			degraded.DatasetID = resp.DifyDatasetID
+			degraded.Steps = resp.Steps
+			degraded.Warnings = resp.Warnings
+		}
+		return degraded
 	}
 	return customerDifyResult{
 		Provisioned: resp.Provisioned,
 		DifyAgentID: resp.DifyAgentID,
 		DatasetID:   resp.DifyDatasetID,
+		Ready:       resp.Ready,
+		Steps:       resp.Steps,
 		Warnings:    resp.Warnings,
 	}
 }

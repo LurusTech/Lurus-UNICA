@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/kefu/unica/pkg/difyapp"
 )
 
 func TestNewDifyBridge(t *testing.T) {
@@ -352,6 +354,50 @@ func TestDifyBridge_CreateChatApp_Success(t *testing.T) {
 // ID, PATCH records the retrieval settings, GET reports whatever PATCH last
 // stored. Modelling the read-back is the point — the real endpoint answers a
 // write it ignored with the same 200 as one it applied.
+// TestDifyBridge_CreateDataset_AppliesThePlatformTopK covers what a real newly
+// created dataset looks like and the existing fake did not: Dify gives it a
+// retrieval model of its own, with top_k 2. A repair reads the current value
+// back as an override so it cannot roll back an administrator's choice, and on
+// a dataset created a moment ago that rule preserved Dify's default as though
+// someone had picked it — so every new line retrieved two passages where the
+// platform asks for six, and every interface reported it as configured.
+func TestDifyBridge_CreateDataset_AppliesThePlatformTopK(t *testing.T) {
+	// Born with Dify's own defaults, which is the state this has to survive.
+	stored := map[string]interface{}{
+		"search_method": "semantic_search",
+		"top_k":         float64(2),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/datasets":
+			json.NewEncoder(w).Encode(DifyDatasetCreated{ID: "ds-001", Name: "UNICA-Acme"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/datasets/ds-001":
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if rm, ok := body["retrieval_model"].(map[string]interface{}); ok {
+				stored = rm
+			}
+			w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/datasets/ds-001":
+			json.NewEncoder(w).Encode(map[string]interface{}{"retrieval_model_dict": stored})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: srv.URL, IndexingTechnique: "high_quality"})
+	if _, rErr, err := b.CreateDataset(context.Background(), "tok", "UNICA-Acme"); err != nil || rErr != nil {
+		t.Fatalf("create: err=%v retrieval=%v", err, rErr)
+	}
+
+	got, _ := asInt(stored["top_k"])
+	if got != difyapp.DefaultTopK() {
+		t.Errorf("top_k = %d, want the platform's %d — the new dataset kept Dify's default",
+			got, difyapp.DefaultTopK())
+	}
+}
+
 func fakeDatasetServer(t *testing.T, applyPatch bool) (*httptest.Server, *map[string]interface{}) {
 	t.Helper()
 	stored := map[string]interface{}{}
@@ -391,9 +437,12 @@ func TestDifyBridge_CreateDataset_Success(t *testing.T) {
 
 	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
 
-	ds, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme")
+	ds, retrievalErr, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if retrievalErr != nil {
+		t.Fatalf("a dataset created and configured reports no retrieval failure: %v", retrievalErr)
 	}
 	if ds.ID != "ds-001" {
 		t.Errorf("expected ID 'ds-001', got %q", ds.ID)
@@ -415,7 +464,7 @@ func TestDifyBridge_CreateDataset_EconomyGetsKeywordSearch(t *testing.T) {
 
 	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
 
-	if _, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme"); err != nil {
+	if _, _, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := (*stored)["search_method"]; got != "keyword_search" {
@@ -423,20 +472,26 @@ func TestDifyBridge_CreateDataset_EconomyGetsKeywordSearch(t *testing.T) {
 	}
 }
 
-// Losing the retrieval settings must not lose the dataset — but it must be
-// noticed, which is what reading the value back is for.
-func TestDifyBridge_CreateDataset_SurvivesIgnoredRetrievalWrite(t *testing.T) {
+// Losing the retrieval settings must not lose the dataset — but it must not be
+// swallowed either. Both halves are asserted here: the caller still gets the ID
+// it has to persist, and it is told, in the same call, that what it now holds is
+// a knowledge base that will retrieve nothing. A dataset created this way and
+// reported as a plain success is the exact shape of the original defect.
+func TestDifyBridge_CreateDataset_ReportsAnIgnoredRetrievalWrite(t *testing.T) {
 	server, _ := fakeDatasetServer(t, false) // PATCH answers 200 and stores nothing
 	defer server.Close()
 
 	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
 
-	ds, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme")
+	ds, retrievalErr, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme")
 	if err != nil {
 		t.Fatalf("dataset creation must survive a failed retrieval write: %v", err)
 	}
-	if ds.ID != "ds-001" {
-		t.Errorf("expected ID 'ds-001', got %q", ds.ID)
+	if ds == nil || ds.ID != "ds-001" {
+		t.Fatalf("the dataset that was created must still reach the caller: %+v", ds)
+	}
+	if retrievalErr == nil {
+		t.Fatal("an ignored retrieval write must be returned to the caller, not left in the log")
 	}
 	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err == nil {
 		t.Error("an ignored write must be reported as an error, not accepted")
@@ -543,6 +598,49 @@ func TestDifyBridge_SetDatasetRetrieval_RefusesIndexMismatch(t *testing.T) {
 	}
 	if (*stored)["search_method"] != "semantic_search" {
 		t.Errorf("a refused write must not have been sent; stored = %v", (*stored)["search_method"])
+	}
+}
+
+// The third state, and the one that is easy to get wrong: Dify assigns a
+// dataset its indexing technique when the first document is indexed, so a
+// dataset that was just created reports none. Treating that absence as a
+// mismatch would refuse every new knowledge base the settings it needs at the
+// only moment it can get them — the guard would block the thing it exists to
+// protect.
+func TestDifyBridge_SetDatasetRetrieval_AppliesToAnUndecidedIndex(t *testing.T) {
+	server, stored := datasetServerWithIndex(t, "", true)
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
+
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err != nil {
+		t.Fatalf("a dataset with nothing indexed into it has no index to contradict: %v", err)
+	}
+	if got := (*stored)["search_method"]; got != "semantic_search" {
+		t.Errorf("search_method = %v, want the platform default semantic_search", got)
+	}
+	// The fake starts out already reporting semantic_search, so the method alone
+	// cannot tell an applied write from a refused one. A field only the platform
+	// defaults carry proves the settings were actually written.
+	if _, written := (*stored)["score_threshold_enabled"]; !written {
+		t.Errorf("the platform retrieval settings were never written: stored = %v", *stored)
+	}
+}
+
+// The same absence on a keyword deployment takes the platform default with it,
+// rather than leaving Dify's semantic default in place — which is what would
+// make the dataset retrieve nothing once documents arrive.
+func TestDifyBridge_SetDatasetRetrieval_UndecidedIndexTakesTheDeploymentDefault(t *testing.T) {
+	server, stored := datasetServerWithIndex(t, "", true)
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := (*stored)["search_method"]; got != "keyword_search" {
+		t.Errorf("search_method = %v, want keyword_search for an economy deployment", got)
 	}
 }
 

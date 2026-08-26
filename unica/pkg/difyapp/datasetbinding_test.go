@@ -106,3 +106,21 @@ func TestBoundDatasetIDs_ToleratesMalformedShapes(t *testing.T) {
 		}
 	}
 }
+
+// The bridge verifying its own write, the provisioning walk, the tenant card
+// and the platform roster all ask this one question, so it answers in one place.
+func TestDatasetBound_AnswersTheOneMembershipQuestion(t *testing.T) {
+	ids := []string{"ds-1", "ds-2"}
+	if !DatasetBound(ids, "ds-2") {
+		t.Error("a listed dataset is bound")
+	}
+	if DatasetBound(ids, "ds-3") {
+		t.Error("an unlisted dataset is not bound")
+	}
+	if DatasetBound(nil, "ds-1") {
+		t.Error("an app that lists nothing is bound to nothing")
+	}
+	if DatasetBound(ids, "") {
+		t.Error("an empty id must never match; a line with no dataset would read as attached")
+	}
+}

@@ -316,30 +316,47 @@ func (b *DifyBridge) CreateChatApp(ctx context.Context, token, appName, productL
 // Two calls, not one: the create endpoint ignores a retrieval_model in its body
 // without complaint, so settings sent there are simply lost. They have to be
 // PATCHed onto the dataset afterwards.
-func (b *DifyBridge) CreateDataset(ctx context.Context, token, name string) (*DifyDatasetCreated, error) {
+//
+// Three results, not two, because those two calls fail separately and the
+// second failure is the silent one. A dataset that exists but kept Dify's
+// defaults accepts documents, indexes them, reports itself healthy, and answers
+// every question with nothing — so the caller has to be told, and it has to be
+// told while still holding the dataset ID it must persist. retrievalErr is that
+// second outcome; err means no dataset was created at all. The bridge does not
+// decide whether retrievalErr is worth aborting for — onboarding continues past
+// it, a repair does not — but it no longer decides not to mention it.
+func (b *DifyBridge) CreateDataset(ctx context.Context, token, name string) (dataset *DifyDatasetCreated, retrievalErr error, err error) {
 	reqBody := map[string]interface{}{
 		"name":        name,
 		"description": fmt.Sprintf("Knowledge base for %s", name),
 	}
 	body, err := b.doAdminRequestWithToken(ctx, http.MethodPost, "/datasets", reqBody, token)
 	if err != nil {
-		return nil, fmt.Errorf("create dataset %q: %w", name, err)
+		return nil, nil, fmt.Errorf("create dataset %q: %w", name, err)
 	}
 
 	var resp DifyDatasetCreated
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal create dataset response: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal create dataset response: %w", err)
 	}
 	log.Printf("[dify-bridge] created dataset %q (id=%s)", resp.Name, resp.ID)
 
-	// Non-fatal: a dataset on Dify's defaults still accepts documents, and a
-	// failure here must not lose the dataset that was just created. It is
-	// reported rather than swallowed, and SetDatasetRetrieval can repair it.
-	if err := b.SetDatasetRetrieval(ctx, resp.ID, token); err != nil {
+	// Logged as well as returned: the log names the dataset for whoever is
+	// reading the deployment's output, and the return is what lets an interface
+	// tell the person who pressed the button.
+	// The platform's top_k is passed explicitly, and only here. A repair reads
+	// the dataset's current top_k back as an override so it cannot roll back a
+	// value an administrator chose — but a dataset created a moment ago has no
+	// such choice, only Dify's own default of 2, and preserving that as though
+	// someone had picked it is how every new line was born retrieving a third
+	// of what the platform asks for while every interface called it configured.
+	if err := b.SetDatasetRetrievalWith(ctx, resp.ID, token,
+		RetrievalOverrides{TopK: difyapp.DefaultTopK()}); err != nil {
 		log.Printf("[dify-bridge] WARN: dataset %s kept Dify's default retrieval settings; "+
-			"knowledge answers will be weaker until repaired: %v", resp.ID, err)
+			"it will accept documents and retrieve nothing from them until repaired: %v", resp.ID, err)
+		return &resp, err, nil
 	}
-	return &resp, nil
+	return &resp, nil, nil
 }
 
 // SetDatasetRetrieval applies this deployment's retrieval settings to a dataset
@@ -381,7 +398,20 @@ func (b *DifyBridge) SetDatasetRetrievalWith(ctx context.Context, datasetID, tok
 	if err != nil {
 		return fmt.Errorf("set dataset retrieval: %w", err)
 	}
-	if current.IndexingTechnique != "" && current.IndexingTechnique != b.config.IndexingTechnique {
+	// What the dataset reports has three states, and each gets its own answer:
+	//
+	//   undecided — Dify assigns the technique when the first document is
+	//     indexed, so a dataset nobody has uploaded to reports nothing. There is
+	//     no index to contradict, so the platform default is applied and the
+	//     write proceeds. Refusing here would refuse every dataset at the one
+	//     moment it has to be configured: the moment it is created.
+	//   decided and different — refused below. This is the only refusal.
+	//   decided and the same — written, which is the repair path.
+	switch {
+	case difyapp.IndexingUndecided(current.IndexingTechnique):
+		log.Printf("[dify-bridge] dataset %s has no indexing technique yet (nothing indexed into it); "+
+			"applying this deployment's %s retrieval settings", datasetID, b.config.IndexingTechnique)
+	case current.IndexingTechnique != b.config.IndexingTechnique:
 		return fmt.Errorf(
 			"set dataset retrieval: dataset %s was indexed as %q but this deployment is configured for %q; "+
 				"applying %q retrieval to a %q index makes every query return nothing. "+
@@ -790,6 +820,31 @@ func (b *DifyBridge) updateSystemPromptWithToken(ctx context.Context, appID, pro
 	return nil
 }
 
+// AppDatasetIDs lists the datasets an app currently retrieves from.
+//
+// Read-only, and deliberately separate from AttachDatasetWithToken: bringing a
+// product line up to standard has to tell "already attached" from "attached by
+// this run", and an attach that writes in order to find out cannot. Dify
+// answers a model-config write that changed nothing with the same 200 as one
+// that took effect, so asking by writing would report every re-run as a repair
+// and would keep rewriting the configuration of lines that need nothing.
+func (b *DifyBridge) AppDatasetIDs(ctx context.Context, appID, token string) ([]string, error) {
+	if appID == "" {
+		return nil, fmt.Errorf("app ID is empty")
+	}
+	body, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/apps/"+appID, nil, token)
+	if err != nil {
+		return nil, fmt.Errorf("read app %s: %w", appID, err)
+	}
+	var envelope struct {
+		ModelConfig map[string]interface{} `json:"model_config"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("unmarshal app %s config: %w", appID, err)
+	}
+	return difyapp.BoundDatasetIDs(envelope.ModelConfig["dataset_configs"]), nil
+}
+
 // AttachDataset binds a dataset to an app so the app actually retrieves from
 // it. Creating the dataset and creating the app leave them unconnected.
 func (b *DifyBridge) AttachDataset(ctx context.Context, appID, datasetID string) error {
@@ -842,11 +897,9 @@ func (b *DifyBridge) AttachDatasetWithToken(ctx context.Context, appID, datasetI
 	if err := json.Unmarshal(verify, &envelope); err != nil {
 		return fmt.Errorf("attach dataset: unmarshal verified config: %w", err)
 	}
-	for _, id := range difyapp.BoundDatasetIDs(envelope.ModelConfig["dataset_configs"]) {
-		if id == datasetID {
-			log.Printf("[dify-bridge] attached dataset_id=%s to app_id=%s", datasetID, appID)
-			return nil
-		}
+	if difyapp.DatasetBound(difyapp.BoundDatasetIDs(envelope.ModelConfig["dataset_configs"]), datasetID) {
+		log.Printf("[dify-bridge] attached dataset_id=%s to app_id=%s", datasetID, appID)
+		return nil
 	}
 	return fmt.Errorf("attach dataset: app %s still does not list dataset %s after write", appID, datasetID)
 }

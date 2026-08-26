@@ -59,6 +59,12 @@ type PromptRequirement struct {
 	Breaks string `json:"breaks"`
 }
 
+// KnowledgeContextToken is the placeholder retrieved passages are substituted
+// into. Named here, next to the contract that requires it, because the surfaces
+// that check for it are in three other packages and a literal copied into each
+// of them is a literal that can be mistyped in one.
+const KnowledgeContextToken = "{{knowledge_context}}"
+
 // promptRequirements is the contract between a product line's prompt and the
 // rest of the pipeline. It is deliberately short: every entry here is enforced
 // on write, so an entry that is merely a good idea would become an obstruction.
@@ -73,7 +79,7 @@ var promptRequirements = []PromptRequirement{
 		Breaks: "本产线发布的确定性事实不会送进模型，AI 会按通用常识作答，而本体页仍显示已发布",
 	},
 	{
-		Token:  "{{knowledge_context}}",
+		Token:  KnowledgeContextToken,
 		Label:  "参考知识占位符",
 		Breaks: "知识库检索照常进行、也照常记命中数，但检索到的内容不会送进模型",
 	},
@@ -105,6 +111,18 @@ func PromptRequirements() []PromptRequirement {
 	out := make([]PromptRequirement, len(promptRequirements))
 	copy(out, promptRequirements)
 	return out
+}
+
+// PromptRequirementFor returns the contract entry for a token, so a surface
+// that reports one requirement on its own states the same consequence the
+// contract states rather than a sentence of its own that drifts from it.
+func PromptRequirementFor(token string) (PromptRequirement, bool) {
+	for _, req := range promptRequirements {
+		if req.Token == token {
+			return req, true
+		}
+	}
+	return PromptRequirement{}, false
 }
 
 // MissingPromptRequirements returns the parts of the contract a prompt does not

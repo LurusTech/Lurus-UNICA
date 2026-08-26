@@ -149,3 +149,20 @@ func TestPromptRequirements_ReturnsACopy(t *testing.T) {
 		t.Error("PromptRequirements handed out the package's own slice")
 	}
 }
+
+// Two surfaces report this one requirement on its own and take its wording from
+// the contract. If the token ever left the contract they would quietly print a
+// sentence with the consequence missing rather than fail, so the link is pinned
+// here instead.
+func TestKnowledgeContextTokenIsInTheContract(t *testing.T) {
+	req, ok := PromptRequirementFor(KnowledgeContextToken)
+	if !ok {
+		t.Fatalf("%s is not in the prompt contract", KnowledgeContextToken)
+	}
+	if req.Breaks == "" {
+		t.Error("the knowledge placeholder requirement states no consequence")
+	}
+	if _, ok := PromptRequirementFor("{{no_such_token}}"); ok {
+		t.Error("an unknown token must not be reported as a requirement")
+	}
+}

@@ -68,6 +68,10 @@ func TestTenantRouter_Mapping(t *testing.T) {
 		{http.MethodPut, "/api/v1/tenants/pl-1/ai-settings/threshold", "ai-settings", "/api/v1/tenants/pl-1/ai-settings/threshold"},
 		{http.MethodPut, "/api/v1/tenants/pl-1/ai-settings/handoff-rules", "ai-settings", "/api/v1/tenants/pl-1/ai-settings/handoff-rules"},
 		{http.MethodPost, "/api/v1/tenants/pl-1/ai-settings/dataset/bind", "ai-settings", "/api/v1/tenants/pl-1/ai-settings/dataset/bind"},
+		// Listed here because the sub-path list in main.go is a separate place
+		// from the module's own switch, and a handler added to one and not the
+		// other is a 404 that reads as a feature nobody built.
+		{http.MethodPost, "/api/v1/tenants/pl-1/ai-settings/knowledge/provision", "ai-settings", "/api/v1/tenants/pl-1/ai-settings/knowledge/provision"},
 		{http.MethodPost, "/api/v1/tenants/pl-1/ai-settings/test", "ai-settings", "/api/v1/tenants/pl-1/ai-settings/test"},
 
 		{http.MethodGet, "/api/v1/tenants/pl-1/channels", "channels", "/api/v1/channels"},

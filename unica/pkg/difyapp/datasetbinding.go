@@ -73,6 +73,22 @@ func WithDataset(existing interface{}, datasetID string) map[string]interface{} 
 	return cfg
 }
 
+// DatasetBound reports whether a dataset is among the ones an app retrieves
+// from, given the list BoundDatasetIDs read back.
+//
+// It sits beside the function that produces the list because it is the only
+// question anyone asks of one, and because four callers were each carrying
+// their own loop: the bridge verifying its own write, the provisioning walk,
+// the tenant's diagnostic card and the platform roster.
+func DatasetBound(ids []string, datasetID string) bool {
+	for _, id := range ids {
+		if id == datasetID {
+			return true
+		}
+	}
+	return false
+}
+
 // BoundDatasetIDs lists the dataset IDs in an app's dataset configuration.
 // A binding is verified by reading it back rather than by trusting the write:
 // Dify answers a model-config write that changed nothing with the same 200 as

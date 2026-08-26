@@ -33,6 +33,7 @@ import (
 	"github.com/kefu/unica/admin/internal/tenant/knowledge"
 	"github.com/kefu/unica/admin/internal/tenant/quality"
 	"github.com/kefu/unica/admin/internal/tenant/workbench"
+	"github.com/kefu/unica/pkg/difyapp"
 	"github.com/kefu/unica/pkg/domain"
 )
 
@@ -182,6 +183,13 @@ func main() {
 		Redis:          rdb,
 		Router:         routerBridge,
 		PromptVersions: promptVersionRepo,
+		// The knowledge-base repair on the settings page reaches the onboarding
+		// handler's provisioning walk rather than carrying its own. There is one
+		// creation path for a knowledge base, and this is how the second surface
+		// gets to it: a repair button with its own idea of how to create a
+		// dataset is exactly the split this deployment already spent a decision
+		// closing.
+		Provisioner: tenantHandler,
 	})
 
 	auditLogHandler := handler.NewAuditLogHandler(auditRepo)
@@ -417,6 +425,25 @@ func main() {
 	mux.Handle("/api/v1/platform/prompts", authMW(http.HandlerFunc(promptsHandler.HandleList)))
 	mux.Handle("/api/v1/platform/prompts/push", authMW(http.HandlerFunc(promptsHandler.HandlePush)))
 
+	// How many product lines have a knowledge base that will actually be used.
+	// Cross-tenant for the same reason the prompt roster is: every one of the
+	// five columns fails silently on its own, so a fleet can be green on every
+	// tenant page it has and still answer from general knowledge. Counting that
+	// by opening ten tenant pages is how it went unnoticed for months.
+	//
+	// Read-only throughout. The repair is a tenant-scoped control beside the
+	// other knowledge repairs; this endpoint only reports, so it never records
+	// a healthy line's inspection as a change.
+	knowledgeRosterConfig := platform.KnowledgeConfig{ProductLines: plRepo, Dify: difyBridge}
+	if cfg.DifyDatasetAPIKey != "" {
+		// Left unset without a key, so the count is reported as unknown. It is
+		// assigned inside the branch rather than as a possibly-nil client
+		// because a nil pointer in an interface field is not a nil interface.
+		knowledgeRosterConfig.Documents = difyapp.NewDatasetClient(cfg.DifyAPIBaseURL, cfg.DifyDatasetAPIKey)
+	}
+	knowledgeRosterHandler := platform.NewKnowledgeHandler(knowledgeRosterConfig)
+	mux.Handle("/api/v1/platform/knowledge", authMW(http.HandlerFunc(knowledgeRosterHandler.HandleList)))
+
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      mux,
@@ -484,9 +511,19 @@ var aiSettingsPaths = map[string]bool{
 	"dataset/bind":      true,
 	"dataset/retrieval": true,
 	"dataset/top-k":     true,
-	"survey":            true,
-	"variables/repair":  true,
-	"test":              true,
+	// Filling in a knowledge base a line never got. It sits beside the two
+	// repairs above because it is the third of the same kind, and all three are
+	// administrator-only inside the module.
+	//
+	// This list is a closed subtree: a sub-path the module serves and this map
+	// does not name is a 404 raised before the module is ever reached, which
+	// reads as a feature that was never built rather than as a routing mistake.
+	// Adding the handler and forgetting this line is the failure this project
+	// has shipped more than once.
+	"knowledge/provision": true,
+	"survey":              true,
+	"variables/repair":    true,
+	"test":                true,
 }
 
 // factsPaths map the tenant-facing "facts" vocabulary onto the ontology

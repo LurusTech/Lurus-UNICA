@@ -390,6 +390,11 @@
         某一环断了，它下面的设置改了也不会有反应——先看这里，再改设置。
       </p>
       <ol class="diag" id="diag-list"></ol>
+      <!-- What the last repair on this card actually achieved. A toast is the
+           wrong place for it: the repair regularly succeeds and still leaves
+           the knowledge base unusable, and that list has to stay on screen
+           long enough to be acted on. -->
+      <div class="notice" id="diag-provision-result" hidden style="margin:16px 0 0"></div>
     </div>
 
     <!-- System prompt -->
@@ -714,6 +719,7 @@
     diagCard: document.getElementById("diag-card"),
     diagVerdict: document.getElementById("diag-verdict"),
     diagList: document.getElementById("diag-list"),
+    diagProvisionResult: document.getElementById("diag-provision-result"),
 
     datasetPill: document.getElementById("dataset-pill"),
     datasetBindBtn: document.getElementById("dataset-bind-btn"),
@@ -888,6 +894,9 @@
       ? (state.currentTenant.display_name || state.currentTenant.name)
       : "";
     hidePageError();
+    // The last repair's outcome belongs to the line it ran on, so it goes with
+    // the line rather than staying on screen over the next one's diagnostic.
+    els.diagProvisionResult.hidden = true;
     loadSettings();
   }
 
@@ -1781,14 +1790,40 @@
     if (!know) {
       rows.push({ state: "unknown", title: "知识库检索", state_text: "读不到" });
     } else if (!know.dataset_bound) {
-      // No repair is offered here on purpose. Creating a dataset for a line
-      // that never had one is platform-side work that no endpoint does yet, and
-      // a button that cannot fix the thing beside it is worse than none — it
-      // costs a click, an error, and the operator's trust in every other button
-      // on this page.
+      // A repair is offered here now: provisioning a line up to spec is the
+      // same code onboarding runs, reachable for one line at a time, so the
+      // button beside this row can actually fix the thing it names. It builds
+      // the dataset, attaches it and sets retrieval in one pass — which is why
+      // the row below about attachment offers the same button rather than a
+      // second, narrower one.
       rows.push({ state: "bad", title: "知识库检索", state_text: "没有数据集",
         note: (know.reason || "本产线没有知识库数据集，上传的文档无处可去。") +
-          "　补建数据集需要平台侧处理，本页暂时无法自助修复。" });
+          (isAdmin() ? "" : "　补建由管理员执行，请联系平台管理员。"),
+        action: isAdmin() ? { label: "补建知识库", id: "diag-provision-knowledge" } : null });
+    } else if (know.attached === null || know.attached === undefined) {
+      // Reading the attachment failed. Saying "not attached" here would send
+      // someone to repair a binding that may be perfectly fine, and this card
+      // exists to stop a guess being shown as a fact. The repair is still
+      // offered because it is idempotent: it re-reads, and fixes only what is
+      // actually missing.
+      rows.push({ state: "warn", title: "知识库检索", state_text: "挂载状态读不到",
+        note: know.reason || "读不到 Dify 应用当前挂载的知识库，无法判断这条线的检索是否会发生。",
+        action: isAdmin() ? { label: "重新检查并补齐", id: "diag-provision-knowledge" } : null });
+    } else if (know.attached === false) {
+      // The dataset exists and accepts uploads; nothing consults it. This is
+      // the failure the whole card exists for — every other surface reads as
+      // healthy while not one answer draws on the knowledge base.
+      rows.push({ state: "bad", title: "知识库检索", state_text: "数据集未挂到 AI 应用",
+        note: know.reason || "数据集已建、未挂载：文档照常上传、索引照常完成，" +
+          "但没有一条回答会用到它，而且不会报错。",
+        action: isAdmin() ? { label: "补建知识库", id: "diag-provision-knowledge" } : null });
+    } else if (!know.search_method) {
+      // No search method at all: every retrieval comes back empty, silently.
+      // Repaired by the same endpoint the mismatch below uses.
+      rows.push({ state: "bad", title: "知识库检索", state_text: "检索方式没设上",
+        note: know.reason || "数据集没有设定检索方式，文档能收、索引能建，" +
+          "但每次检索都会落空，而且不会报错。",
+        action: isAdmin() ? { label: "修复检索", id: "diag-fix-retrieval" } : null });
     } else if (know.empty) {
       // Not a fault: a dataset with no documents has no index yet. Flagged only
       // because uploading them is the obvious next step, never in red.
@@ -1945,11 +1980,15 @@
     }
   }
 
-  // Both repairs are existing idempotent endpoints; the card is a shorter path
-  // to them. The settings are reloaded afterwards so the row that prompted the
-  // fix is redrawn from the server rather than assumed fixed.
+  // Every repair here is an idempotent endpoint; the card is a shorter path to
+  // them. The settings are reloaded afterwards so the row that prompted the fix
+  // is redrawn from the server rather than assumed fixed.
   function runDiagFix(action, btn) {
     if (state.busy) return;
+    if (action.id === "diag-provision-knowledge") {
+      provisionKnowledge(action, btn);
+      return;
+    }
     var isVars = action.id === "diag-fix-vars";
     var path = isVars ? "/ai-settings/variables/repair" : "/ai-settings/dataset/retrieval";
     setBusy(true, btn, "处理中…");
@@ -1967,6 +2006,95 @@
         reportError("修复失败", err);
       })
       .finally(function () { setBusy(false, btn, action.label); });
+  }
+
+  // Provisioning a line up to spec: build the dataset if it is missing, attach
+  // it, set retrieval. It is deliberately not reported as a plain "已修复".
+  // A run can create the dataset, attach it, set retrieval — and the knowledge
+  // base still answers with nothing, because the prompt has no
+  // {{knowledge_context}} to put the recalled text into. The server names every
+  // remaining piece in `remaining`; saying "done" over the top of that list is
+  // how a repair button becomes the next silent failure.
+  function provisionKnowledge(action, btn) {
+    setBusy(true, btn, "补建中…");
+    els.diagProvisionResult.hidden = true;
+    api(tenantPath("/ai-settings/knowledge/provision"), { method: "POST", body: "{}" })
+      .then(function (res) {
+        res = res || {};
+        renderProvisionResult(res);
+        if (!res.provisioned) {
+          toast(res.message || "无需补建：这条产线的知识库已经就位", "warn");
+        } else if (res.ready) {
+          toast("知识库已补建并可用，正在复检", "success");
+        } else {
+          toast(res.message || "已补建，但知识库还不能用", "warn");
+        }
+        return loadSettings();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        // A fatal failure can happen after the dataset was already created in
+        // Dify, and the server says so in the message. Kept on screen rather
+        // than only in a toast: it names a resource someone has to deal with.
+        renderProvisionFailure(err.message);
+        reportError("补建失败", err);
+      })
+      .finally(function () { setBusy(false, btn, action.label); });
+  }
+
+  // The outcome as itself: what the run did, then what is still missing. The
+  // second half is the point — `ready` is stricter than "the dataset exists",
+  // and the difference is exactly the failure nobody used to be told about.
+  function renderProvisionResult(res) {
+    var host = els.diagProvisionResult;
+    host.textContent = "";
+    var remaining = Array.isArray(res.remaining) ? res.remaining : [];
+    host.className = "notice " + (res.ready ? "info" : "warn");
+
+    var title = document.createElement("span");
+    title.className = "title";
+    title.textContent = res.message ||
+      (res.ready ? "知识库已就位" : "知识库还不能用");
+    host.appendChild(title);
+
+    var detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent = res.provisioned
+      ? "本次补建" + (res.dify_dataset_id ? "的数据集：" + res.dify_dataset_id + "。" : "已完成。")
+      : "这条线本来就已就位，没有向 Dify 写入任何东西。";
+    host.appendChild(detail);
+
+    if (remaining.length) {
+      var lead = document.createElement("div");
+      lead.style.marginTop = "8px";
+      lead.textContent = "还差 " + remaining.length + " 项，缺了它们知识库不会报错，只是用不上：";
+      host.appendChild(lead);
+      var ul = document.createElement("ul");
+      ul.style.margin = "6px 0 0";
+      ul.style.paddingLeft = "20px";
+      remaining.forEach(function (item) {
+        var li = document.createElement("li");
+        li.textContent = item;
+        ul.appendChild(li);
+      });
+      host.appendChild(ul);
+    }
+    host.hidden = false;
+  }
+
+  function renderProvisionFailure(message) {
+    var host = els.diagProvisionResult;
+    host.textContent = "";
+    host.className = "notice bad";
+    var title = document.createElement("span");
+    title.className = "title";
+    title.textContent = "补建失败";
+    var detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent = message || "";
+    host.appendChild(title);
+    host.appendChild(detail);
+    host.hidden = false;
   }
 
 

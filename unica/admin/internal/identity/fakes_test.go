@@ -26,11 +26,16 @@ const testBcryptCost = 4
 // fakeTenantStore is an in-memory tenantStore, so the lifecycle can be
 // exercised without a database.
 type fakeTenantStore struct {
-	byID     map[string]*repository.ProductLine
-	config   map[string]map[string]json.RawMessage
-	creates  int
-	bindings int
-	cwColumn int
+	byID       map[string]*repository.ProductLine
+	config     map[string]map[string]json.RawMessage
+	creates    int
+	bindings   int
+	configKeys int
+	cwColumn   int
+
+	// configErr fails every config_json write, standing in for a database that
+	// takes the Dify resources but will not record them.
+	configErr error
 
 	// dataDeleted records the tenants whose business data was removed, and
 	// dataCounts is what the removal reports for them.
@@ -133,6 +138,9 @@ func (s *fakeTenantStore) GetConfigJSON(ctx context.Context, id string) (json.Ra
 }
 
 func (s *fakeTenantStore) SetConfigKey(ctx context.Context, id, key string, value interface{}) error {
+	if s.configErr != nil {
+		return s.configErr
+	}
 	if _, ok := s.byID[id]; !ok {
 		return fmt.Errorf("product line not found: %s", id)
 	}
@@ -144,6 +152,16 @@ func (s *fakeTenantStore) SetConfigKey(ctx context.Context, id, key string, valu
 		s.config[id] = map[string]json.RawMessage{}
 	}
 	s.config[id][key] = data
+	s.configKeys++
+	// The repository derives ProductLine.DifyDatasetID from config_json on
+	// every read, so a fake that stored the key without reflecting it would
+	// make a re-run look like it had never written one.
+	if key == "dify_dataset_id" {
+		if ds, ok := value.(string); ok && ds != "" {
+			v := ds
+			s.byID[id].DifyDatasetID = &v
+		}
+	}
 	return nil
 }
 
@@ -364,6 +382,28 @@ type fakeDify struct {
 	mu           sync.Mutex
 	modelConfigs map[string]map[string]interface{}
 	retrieval    map[string]map[string]interface{}
+	// indexing is the technique a dataset reports. Dify assigns it when the
+	// first document is indexed, so a dataset nobody has uploaded to reports
+	// the empty string — which is the state every freshly created knowledge
+	// base is in, and the one a repair must not mistake for a fault.
+	indexing map[string]string
+
+	// appCreates and datasetCreates count the resources this fake handed out.
+	// A line that already has an app must never be given a second one: the
+	// whole reason provisioning stopped short of creating a missing dataset was
+	// a fear of exactly that.
+	appCreates     int
+	datasetCreates int
+
+	// writes counts every request that changes something in Dify. A re-run of
+	// a line that needs nothing must leave this untouched: an "ensure" that
+	// rewrites a healthy line's configuration to find out it was healthy is
+	// indistinguishable from one that repairs it.
+	writes int
+
+	// failModelConfig rejects every model-config write, which is the endpoint
+	// the dataset binding travels through.
+	failModelConfig bool
 
 	deletedApps       []string
 	deletedDatasets   []string
@@ -376,6 +416,7 @@ func newFakeDify(t *testing.T) *fakeDify {
 	f := &fakeDify{
 		modelConfigs: map[string]map[string]interface{}{},
 		retrieval:    map[string]map[string]interface{}{},
+		indexing:     map[string]string{},
 	}
 	mux := http.NewServeMux()
 
@@ -394,6 +435,10 @@ func newFakeDify(t *testing.T) *fakeDify {
 	})
 
 	mux.HandleFunc("/apps", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.writes++
+		f.appCreates++
+		f.mu.Unlock()
 		json.NewEncoder(w).Encode(bridge.DifyAppCreated{ID: "app-001", Name: "UNICA-Acme", Mode: "chat"})
 	})
 
@@ -410,8 +455,15 @@ func newFakeDify(t *testing.T) *fakeDify {
 
 		switch {
 		case sub == "api-keys":
+			f.writes++
 			json.NewEncoder(w).Encode(bridge.DifyAPIKeyCreated{ID: "key-1", Token: "app-secret-token"})
 		case sub == "model-config":
+			if f.failModelConfig {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"code":"provider_not_initialize","message":"no model provider configured"}`))
+				return
+			}
+			f.writes++
 			var cfg map[string]interface{}
 			json.NewDecoder(r.Body).Decode(&cfg)
 			f.modelConfigs[appID] = cfg
@@ -432,6 +484,10 @@ func newFakeDify(t *testing.T) *fakeDify {
 	})
 
 	mux.HandleFunc("/datasets", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.writes++
+		f.datasetCreates++
+		f.mu.Unlock()
 		json.NewEncoder(w).Encode(bridge.DifyDatasetCreated{ID: "ds-001", Name: "UNICA-Acme"})
 	})
 
@@ -443,6 +499,7 @@ func newFakeDify(t *testing.T) *fakeDify {
 
 		switch r.Method {
 		case http.MethodPatch:
+			f.writes++
 			var body struct {
 				RetrievalModel map[string]interface{} `json:"retrieval_model"`
 			}
@@ -451,6 +508,7 @@ func newFakeDify(t *testing.T) *fakeDify {
 			w.Write([]byte(`{}`))
 		case http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]interface{}{
+				"indexing_technique":   f.indexing[datasetID],
 				"retrieval_model_dict": f.retrieval[datasetID],
 			})
 		case http.MethodDelete:
@@ -482,6 +540,50 @@ func (f *fakeDify) datasetsOf(appID string) []string {
 		return nil
 	}
 	return difyapp.BoundDatasetIDs(cfg["dataset_configs"])
+}
+
+// seedDataset gives a dataset that predates this run the state Dify would
+// report for it: how its documents are indexed, and how it is searched.
+func (f *fakeDify) seedDataset(datasetID, indexingTechnique, searchMethod string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.indexing[datasetID] = indexingTechnique
+	f.retrieval[datasetID] = map[string]interface{}{
+		"search_method":    searchMethod,
+		"top_k":            6,
+		"reranking_enable": false,
+	}
+}
+
+// seedAttachment binds a dataset to an app the way an earlier run would have
+// left it, so a re-run has something to find rather than something to write.
+func (f *fakeDify) seedAttachment(appID, datasetID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	cfg := f.modelConfigs[appID]
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
+	cfg["dataset_configs"] = difyapp.WithDataset(cfg["dataset_configs"], datasetID)
+	f.modelConfigs[appID] = cfg
+}
+
+// writeCount reports how many requests changed something in Dify.
+func (f *fakeDify) writeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.writes
+}
+
+// createCounts reports how many apps and datasets were created.
+func (f *fakeDify) createCounts() (apps, datasets int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.appCreates, f.datasetCreates
 }
 
 // retrievalOf reports the search method a dataset was configured with.
@@ -516,6 +618,10 @@ func newTenantFixture(t *testing.T, difyEmail, difyPassword string, chatwoot *br
 			difyBridge: bridge.NewDifyBridge(bridge.DifyBridgeConfig{
 				AdminURL:   dify.server.URL,
 				APIBaseURL: dify.server.URL,
+				// Named rather than left to the default, because the retrieval
+				// steps compare a dataset's indexing technique against this
+				// deployment's and an unset one compares equal to nothing.
+				IndexingTechnique: "high_quality",
 			}),
 			difyAdminEmail:     difyEmail,
 			difyAdminPassword:  difyPassword,

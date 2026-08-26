@@ -95,6 +95,11 @@ type Config struct {
 	// store a failed projection has nowhere to leave the text, so it stays an
 	// error rather than becoming a saved-but-not-in-effect revision.
 	PromptVersions promptVersions
+	// Provisioner brings a product line's Dify wiring up to standard, which is
+	// what the knowledge-base repair on this page reaches for. Nil is tolerated:
+	// that repair then answers that this deployment has no provisioning to call,
+	// which is better than a button that appears to work.
+	Provisioner knowledgeProvisioner
 }
 
 // Handler serves the ai-settings sub-resource of a tenant.
@@ -104,6 +109,7 @@ type Handler struct {
 	routeCache     *routecache.Invalidator
 	router         *bridge.RouterBridge
 	promptVersions promptVersions
+	provisioner    knowledgeProvisioner
 }
 
 // NewHandler creates an AI settings handler.
@@ -114,6 +120,7 @@ func NewHandler(cfg Config) *Handler {
 		routeCache:     routecache.New(cfg.Redis, cfg.Channels),
 		router:         cfg.Router,
 		promptVersions: cfg.PromptVersions,
+		provisioner:    cfg.Provisioner,
 	}
 }
 
@@ -236,6 +243,23 @@ type promptContractStatus struct {
 // knowledgeStatus reports whether retrieval can work, not how it is configured.
 type knowledgeStatus struct {
 	DatasetBound bool `json:"dataset_bound"`
+	// DatasetID is the dataset this verdict is about. It travels with the
+	// verdict because this block is also the before/after state of an audit
+	// row, and the repair that creates a dataset would otherwise leave a row
+	// that says a line became healthy without naming what it gained.
+	DatasetID string `json:"dataset_id,omitempty"`
+	// Attached is whether the Dify app actually retrieves from this dataset.
+	// A bound id says the database knows about the dataset, not that any answer
+	// consults it: an unattached dataset accepts uploads, indexes them, and
+	// never takes part in a reply — without an error anywhere. This card used to
+	// stay silent about it, which is how a line could be reported healthy here
+	// and broken by the repair that walks the same wiring.
+	// Nil means the attachment could not be read, which is not the same as
+	// reading it and finding nothing. Both keep the line out of Ready, but only
+	// one of them means a repair is due — and this card exists to stop a guess
+	// being shown as a fact, so it must not answer "not attached" to a question
+	// it did not manage to ask.
+	Attached *bool `json:"attached"`
 	// IndexMatches is false when the retrieval method and the index disagree.
 	// Unknown datasets report false with a Reason rather than a cheerful true.
 	IndexMatches bool `json:"index_matches"`
@@ -244,7 +268,14 @@ type knowledgeStatus struct {
 	// provisioned dataset has no indexing technique until its first document is
 	// indexed, and calling that a mismatch would put a red row in front of every
 	// new tenant for something nobody did wrong.
-	Empty             bool   `json:"empty"`
+	Empty bool `json:"empty"`
+	// Ready is the whole verdict in one field: a dataset exists, the app
+	// consults it, and its search method suits the index its documents were
+	// built with. It is the same conclusion the provisioning walk reaches from
+	// the same three reads — one fact answered by two algorithms is how a card
+	// comes to say "healthy" about a line the repair endpoint calls broken, and
+	// once the two disagree neither is believed again.
+	Ready             bool   `json:"ready"`
 	IndexingTechnique string `json:"indexing_technique,omitempty"`
 	SearchMethod      string `json:"search_method,omitempty"`
 	TopK              int    `json:"top_k,omitempty"`
@@ -449,6 +480,7 @@ const thresholdRangeMessage = "threshold must be greater than 0 and at most 1 (t
 //	POST   ai-settings/variables/repair  declare the router inputs the app is missing
 //	POST   ai-settings/dataset/bind   re-bind the knowledge dataset
 //	POST   ai-settings/dataset/retrieval  realign the search method with the index
+//	POST   ai-settings/knowledge/provision  create whatever the knowledge base is missing
 //	POST   ai-settings/test           send a test message to the app
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	segments := pathSegments(r.URL.Path, tenantRoutePrefix)
@@ -562,6 +594,20 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		errorJSON(w, http.StatusNotFound, "unknown dataset action")
+	case "knowledge":
+		// POST .../knowledge/provision creates whatever this line's knowledge
+		// base is missing. It sits beside the two dataset repairs rather than
+		// on its own surface: all three fix the same wiring, and a third place
+		// to look is a third place to forget.
+		if len(rest) > 1 && rest[1] == "provision" {
+			if r.Method != http.MethodPost {
+				errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			h.provisionKnowledge(w, r, pl)
+			return
+		}
+		errorJSON(w, http.StatusNotFound, "unknown knowledge action")
 	case "variables":
 		// POST .../variables/repair declares the router inputs an app is missing.
 		if len(rest) > 1 && rest[1] == "repair" {
@@ -1239,44 +1285,107 @@ func (h *Handler) repairRetrieval(w http.ResponseWriter, r *http.Request, pl *re
 // knowledgeStatus reports whether this tenant's knowledge base can be searched.
 //
 // It asks Dify rather than reading the stored dataset id alone: a bound id says
-// documents have somewhere to go, not that a query will find them. The pairing
-// that matters is the retrieval method against the index the documents were
-// built with — mismatched, every search returns nothing and no error is raised
-// anywhere.
+// documents have somewhere to go, not that a query will find them. Three facts
+// decide it and each fails on its own without raising anything — the app has to
+// consult the dataset, the dataset has to have a search method at all, and that
+// method has to suit the index its documents were built with.
+//
+// The three are the ones the provisioning walk checks, asked in the same order
+// and answered by the same helpers. That is the point: this card and the repair
+// button beside it are two readings of one line, and when they disagree the
+// operator learns to trust neither.
 func (h *Handler) knowledgeStatus(ctx context.Context, pl *repository.ProductLine) *knowledgeStatus {
-	if pl.DifyDatasetID == nil || *pl.DifyDatasetID == "" {
+	return h.knowledgeStatusOf(ctx, derefID(pl.DifyAgentID), derefID(pl.DifyDatasetID))
+}
+
+// knowledgeStatusOf is the same diagnostic addressed by identifiers rather than
+// by a record, so a repair can report on the dataset it created a moment ago
+// instead of on the row it read before creating it.
+func (h *Handler) knowledgeStatusOf(ctx context.Context, appID, datasetID string) *knowledgeStatus {
+	if datasetID == "" {
 		return &knowledgeStatus{
 			DatasetBound: false,
 			Reason:       "本产线没有知识库数据集，上传的文档无处可去，检索恒空",
 		}
 	}
-	cfg, err := h.dify.GetDatasetConfig(ctx, *pl.DifyDatasetID, "")
+	st := &knowledgeStatus{DatasetBound: true, DatasetID: datasetID}
+
+	// Every unmet condition is collected rather than the first one reported: a
+	// line can be missing the attachment *and* carrying a mismatched search
+	// method, and being told about one, repairing it and being told about the
+	// next is how a repair loop turns into three visits.
+	var problems []string
+	switch bound, err := h.appDatasetIDs(ctx, appID); {
+	case appID == "":
+		problems = append(problems, "本产线没有 Dify 应用，知识库没有可挂载的对象，检索不会发生")
+	case err != nil:
+		log.Printf("[ai-settings] app datasets unavailable for %s: %v", appID, err)
+		problems = append(problems, attachUnknownReason+"："+err.Error())
+	case difyapp.DatasetBound(bound, datasetID):
+		yes := true
+		st.Attached = &yes
+	default:
+		no := false
+		st.Attached = &no
+		problems = append(problems, attachMissingReason)
+	}
+
+	cfg, err := h.dify.GetDatasetConfig(ctx, datasetID, "")
 	if err != nil {
-		log.Printf("[ai-settings] dataset status unavailable for %s: %v", pl.ID, err)
-		return &knowledgeStatus{
-			DatasetBound: true,
-			Reason:       "无法读取数据集当前配置：" + err.Error(),
-		}
-	}
-	st := &knowledgeStatus{
-		DatasetBound:      true,
-		IndexingTechnique: cfg.IndexingTechnique,
-		SearchMethod:      cfg.SearchMethod,
-		TopK:              cfg.TopK,
-	}
-	if cfg.IndexingTechnique == "" {
-		// Dify assigns the technique when the first document is indexed, so an
-		// empty value means "nothing uploaded yet", not "configured wrongly".
-		st.Empty = true
-		st.Reason = "数据集里还没有文档，索引方式要等第一篇文档索引后才确定"
+		log.Printf("[ai-settings] dataset status unavailable for %s: %v", datasetID, err)
+		st.Reason = strings.Join(append(problems, retrievalUnknownReason+"："+err.Error()), "；")
 		return st
 	}
-	st.IndexMatches = difyapp.RetrievalMatchesIndex(cfg.IndexingTechnique, cfg.SearchMethod)
-	if !st.IndexMatches {
-		st.Reason = "检索方式与索引方式不匹配（索引 " + cfg.IndexingTechnique +
-			"，检索 " + cfg.SearchMethod + "），每次检索都会落空"
+	st.IndexingTechnique = cfg.IndexingTechnique
+	st.SearchMethod = cfg.SearchMethod
+	st.TopK = cfg.TopK
+
+	// The verdict comes from difyapp.ClassifyRetrieval rather than from a
+	// comparison written here, so this card, the provisioning walk and the
+	// platform roster cannot come to disagree about one dataset. In particular
+	// an undecided indexing technique is its own state, not a mismatch: Dify
+	// assigns one when the first document is indexed, and calling that a fault
+	// would put a red row in front of every new tenant for something nobody did.
+	retrievable := false
+	switch difyapp.ClassifyRetrieval(cfg.IndexingTechnique, cfg.SearchMethod) {
+	case difyapp.RetrievalUnset:
+		problems = append(problems, "数据集还没有设置检索方式，每次检索都会落空")
+	case difyapp.RetrievalIndexPending:
+		st.Empty = true
+		retrievable = true
+	case difyapp.RetrievalSound:
+		st.IndexMatches = true
+		retrievable = true
+	default:
+		problems = append(problems, "检索方式与索引方式不匹配（索引 "+cfg.IndexingTechnique+
+			"，检索 "+cfg.SearchMethod+"），每次检索都会落空")
+	}
+
+	st.Ready = st.Attached != nil && *st.Attached && retrievable
+	switch {
+	case len(problems) > 0:
+		st.Reason = strings.Join(problems, "；")
+	case st.Empty:
+		st.Reason = "数据集里还没有文档，索引方式要等第一篇文档索引后才确定"
 	}
 	return st
+}
+
+// appDatasetIDs is the attachment read, kept behind a guard so a status call on
+// a line without an app never reaches the bridge.
+func (h *Handler) appDatasetIDs(ctx context.Context, appID string) ([]string, error) {
+	if appID == "" {
+		return nil, nil
+	}
+	return h.dify.AppDatasetIDs(ctx, appID, "")
+}
+
+// derefID reads an optional binding as a plain string.
+func derefID(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // runtimeStatus narrows the router's switches to the ones a tenant can act on.

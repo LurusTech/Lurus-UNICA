@@ -466,6 +466,47 @@
     </div>
     <div id="prompts-push-result" hidden></div>
 
+    <!-- Whether the knowledge half of each line is wired at all. The prompt
+         roster above says which text a line stands on; this says whether the
+         documents behind that text can ever reach it. Both fail the same way —
+         nothing errors, answers just stop drawing on anything — and counting
+         how many lines are in that state should not require opening ten tenant
+         pages one at a time. Read-only: every repair is on the tenant's own
+         page, because it is that line's own Dify app that gets written to. -->
+    <div class="panel-head" style="margin-top:32px">
+      <h2>知识库就绪度清单</h2>
+      <p>
+        一条线的知识库要真的参与回答，四件事缺一不可：有数据集、数据集挂在它的 AI 应用上、
+        检索方式与文档的索引方式自洽、提示词里留着 <span class="mono">{{knowledge_context}}</span> 占位符。
+        缺任何一件都<b>不会报错</b>——文档照常上传、索引照常完成、命中数照常统计，
+        只是答复里一个字都用不上。文档数为 0 不算不就绪：没传过资料不是故障。
+        要补建或修复请到该租户的「AI 设置」页，本页只读。
+      </p>
+    </div>
+    <div class="toolbar">
+      <span class="hint" id="knowledge-counts"></span>
+      <div class="spacer"></div>
+      <button id="knowledge-refresh-btn">刷新</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>产线</th>
+            <th>就绪</th>
+            <th>数据集</th>
+            <th>挂载</th>
+            <th>检索</th>
+            <th>提示词占位符</th>
+            <th>文档数</th>
+          </tr>
+        </thead>
+        <tbody id="knowledge-tbody">
+          <tr><td colspan="7" class="loading-text">尚未加载</td></tr>
+        </tbody>
+      </table>
+    </div>
+
     <div class="panel-head" style="margin-top:32px">
       <h2>审计轨迹</h2>
       <p>全平台的写入动作逐条在此，含上面的每一次回推。</p>
@@ -653,7 +694,8 @@
     // the next push.
     prompts: null,
     promptsSelected: {},
-    promptsLoaded: false
+    promptsLoaded: false,
+    knowledgeLoaded: false
   };
 
   var els = {
@@ -678,6 +720,10 @@
     promptsRefreshBtn: document.getElementById("prompts-refresh-btn"),
     promptsRefusal: document.getElementById("prompts-refusal"),
     promptsPushResult: document.getElementById("prompts-push-result"),
+
+    knowledgeCounts: document.getElementById("knowledge-counts"),
+    knowledgeTbody: document.getElementById("knowledge-tbody"),
+    knowledgeRefreshBtn: document.getElementById("knowledge-refresh-btn"),
     auditTbody: document.getElementById("audit-tbody"),
     auditTenant: document.getElementById("audit-tenant"),
     auditAction: document.getElementById("audit-action"),
@@ -837,6 +883,10 @@
       if (btn.dataset.panel === "panel-ops" && !state.promptsLoaded) {
         state.promptsLoaded = true;
         loadPromptRoster();
+      }
+      if (btn.dataset.panel === "panel-ops" && !state.knowledgeLoaded) {
+        state.knowledgeLoaded = true;
+        loadKnowledgeRoster();
       }
     });
   });
@@ -1319,6 +1369,137 @@
     els.promptsRefusal.hidden = true;
     loadPromptRoster();
   });
+
+
+  // ---------- Knowledge readiness roster ----------
+  //
+  // Four columns, one per thing that has to hold, in the order a query passes
+  // through them. They are separate columns rather than one verdict because
+  // they are repaired differently and a line is regularly failing more than
+  // one — a single "not ready" would send the operator to the tenant page to
+  // find out which, once per line.
+  //
+  // The cells come from the server as steps, the same result type the repair
+  // on the tenant page produces, so the two surfaces cannot drift into
+  // disagreeing about the same line. This endpoint never writes, so "done"
+  // never appears here: a cell is either already in place or failed.
+  var KNOWLEDGE_COLUMNS = [
+    { key: "dataset", ok: "已建", bad: "没有" },
+    { key: "attach", ok: "已挂载", bad: "未挂载" },
+    { key: "retrieval", ok: "自洽", bad: "会落空" },
+    { key: "prompt_placeholder", ok: "在", bad: "缺失" }
+  ];
+
+  function loadKnowledgeRoster() {
+    var tbody = els.knowledgeTbody;
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-text">' +
+      "加载中…（每条线都要读一次 Dify，可能要等几秒）</td></tr>";
+    return api("/api/v1/platform/knowledge")
+      .then(function (data) {
+        renderKnowledgeRoster(data || {});
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载失败: ' +
+          escapeHtml(err.message) + "</td></tr>";
+        els.knowledgeCounts.textContent = "";
+      });
+  }
+
+  function renderKnowledgeRoster(data) {
+    var lines = Array.isArray(data.lines) ? data.lines : [];
+    var tbody = els.knowledgeTbody;
+    tbody.innerHTML = "";
+
+    var counts = data.counts || {};
+    var missing = data.missing || {};
+    els.knowledgeCounts.textContent =
+      "共 " + (counts.lines || 0) + " 条 · 就绪 " + (counts.ready || 0) +
+      " · 未就绪 " + (counts.not_ready || 0) +
+      "　缺数据集 " + (missing.dataset || 0) +
+      " · 未挂载 " + (missing.attach || 0) +
+      " · 检索会落空 " + (missing.retrieval || 0) +
+      " · 缺占位符 " + (missing.prompt_placeholder || 0) +
+      (data.generated_at ? "　（读于 " + formatDate(data.generated_at) + "）" : "");
+
+    if (!lines.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无产线</td></tr>';
+      return;
+    }
+    lines.forEach(function (line) { tbody.appendChild(knowledgeRosterRow(line)); });
+  }
+
+  // Steps are addressed by key rather than by position: this roster's four
+  // arrive in a fixed order today, but the same type is used elsewhere with a
+  // variable set, and an index would quietly read the wrong column the day
+  // that changes.
+  function knowledgeStep(line, key) {
+    var steps = Array.isArray(line.steps) ? line.steps : [];
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i].key === key) return steps[i];
+    }
+    return null;
+  }
+
+  function knowledgeCell(step, col) {
+    var td = document.createElement("td");
+    if (!step) {
+      td.appendChild(pill("muted", "—"));
+      return td;
+    }
+    var failed = step.state === "failed";
+    td.appendChild(pill(failed ? "bad" : "ok", failed ? col.bad : col.ok));
+    // detail is the consequence in plain words; error is the underlying reason
+    // and stays behind it rather than beside it.
+    if (step.detail) {
+      td.title = step.detail + (step.error ? "（" + step.error + "）" : "");
+    }
+    return td;
+  }
+
+  function knowledgeRosterRow(line) {
+    var tr = document.createElement("tr");
+
+    var tdName = document.createElement("td");
+    tdName.textContent = line.display_name || line.name || line.product_line_id;
+    if (!line.has_dify_app) {
+      tdName.appendChild(document.createTextNode(" "));
+      tdName.appendChild(pill("bad", "无 AI 应用"));
+    }
+    tr.appendChild(tdName);
+
+    var tdReady = document.createElement("td");
+    tdReady.appendChild(line.ready ? pill("ok", "可用") : pill("bad", "不可用"));
+    tr.appendChild(tdReady);
+
+    KNOWLEDGE_COLUMNS.forEach(function (col) {
+      tr.appendChild(knowledgeCell(knowledgeStep(line, col.key), col));
+    });
+
+    // A dataset nobody has uploaded to is not a fault, so this column never
+    // colours a row. Unreadable is said as itself — reporting 0 documents when
+    // the count could not be read would invent a fact.
+    var tdDocs = document.createElement("td");
+    var docs = line.documents;
+    if (!docs) {
+      tdDocs.textContent = "—";
+    } else if (docs.known) {
+      // has_more means the count is a page rather than a total, which some Dify
+      // versions are all that answer. Shown as "N+" so it is never read as the
+      // whole of what the dataset holds.
+      tdDocs.className = "mono";
+      tdDocs.textContent = String(docs.total || 0) + (docs.has_more ? "+" : "");
+      if (docs.has_more) tdDocs.title = "Dify 只报了一页，实际文档数不少于这个数。";
+    } else {
+      tdDocs.appendChild(pill("muted", "读不到"));
+      if (docs.reason) tdDocs.title = docs.reason;
+    }
+    tr.appendChild(tdDocs);
+
+    return tr;
+  }
+
+  els.knowledgeRefreshBtn.addEventListener("click", loadKnowledgeRoster);
 
 
   // ---------- Tenants ----------
