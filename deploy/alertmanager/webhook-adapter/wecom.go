@@ -16,8 +16,8 @@ type WeComNotifier struct {
 
 // WeComMessage is the WeCom robot webhook message format.
 type WeComMessage struct {
-	MsgType  string          `json:"msgtype"`
-	Markdown WeComMarkdown   `json:"markdown"`
+	MsgType  string        `json:"msgtype"`
+	Markdown WeComMarkdown `json:"markdown"`
 }
 
 // WeComMarkdown is the markdown body for WeCom messages.
@@ -54,8 +54,8 @@ func (w *WeComNotifier) Send(webhookURL string, _ string, payload AlertManagerPa
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("wecom returned status %d", resp.StatusCode)
+	if err := checkWebhookResponse("wecom", resp); err != nil {
+		return err
 	}
 
 	return nil

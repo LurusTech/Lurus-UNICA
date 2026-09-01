@@ -20,8 +20,8 @@ type DingTalkNotifier struct {
 
 // DingTalkMessage is the DingTalk robot webhook message format.
 type DingTalkMessage struct {
-	MsgType  string              `json:"msgtype"`
-	Markdown DingTalkMarkdown    `json:"markdown"`
+	MsgType  string           `json:"msgtype"`
+	Markdown DingTalkMarkdown `json:"markdown"`
 }
 
 // DingTalkMarkdown is the markdown body for DingTalk messages.
@@ -69,8 +69,8 @@ func (d *DingTalkNotifier) Send(webhookURL string, secret string, payload AlertM
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("dingtalk returned status %d", resp.StatusCode)
+	if err := checkWebhookResponse("dingtalk", resp); err != nil {
+		return err
 	}
 
 	return nil

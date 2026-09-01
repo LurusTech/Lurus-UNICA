@@ -14,13 +14,13 @@ import (
 // AlertManagerPayload represents the webhook POST body from AlertManager.
 type AlertManagerPayload struct {
 	Version           string            `json:"version"`
-	GroupKey           string            `json:"groupKey"`
+	GroupKey          string            `json:"groupKey"`
 	TruncatedAlerts   int               `json:"truncatedAlerts"`
 	Status            string            `json:"status"`
 	Receiver          string            `json:"receiver"`
-	GroupLabels       map[string]string  `json:"groupLabels"`
-	CommonLabels      map[string]string  `json:"commonLabels"`
-	CommonAnnotations map[string]string  `json:"commonAnnotations"`
+	GroupLabels       map[string]string `json:"groupLabels"`
+	CommonLabels      map[string]string `json:"commonLabels"`
+	CommonAnnotations map[string]string `json:"commonAnnotations"`
 	ExternalURL       string            `json:"externalURL"`
 	Alerts            []Alert           `json:"alerts"`
 }
@@ -38,8 +38,8 @@ type Alert struct {
 
 // Config holds the webhook adapter configuration.
 type Config struct {
-	Server   ServerConfig              `yaml:"server"`
-	Targets  map[string][]TargetConfig `yaml:"targets"`
+	Server  ServerConfig              `yaml:"server"`
+	Targets map[string][]TargetConfig `yaml:"targets"`
 }
 
 // ServerConfig holds the HTTP server settings.

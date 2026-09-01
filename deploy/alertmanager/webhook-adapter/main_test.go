@@ -126,6 +126,7 @@ func TestAlertHandler_SendToMockTarget(t *testing.T) {
 		buf.ReadFrom(r.Body)
 		received = buf.Bytes()
 		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	defer mockServer.Close()
 
@@ -166,6 +167,7 @@ func TestAlertHandler_ResolvedNotification(t *testing.T) {
 		buf.ReadFrom(r.Body)
 		received = buf.Bytes()
 		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	defer mockServer.Close()
 
@@ -201,6 +203,7 @@ func TestAlertHandler_FallbackToDefault(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	defer mockServer.Close()
 
@@ -233,6 +236,9 @@ func TestAlertHandler_MultipleTargets(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.WriteHeader(http.StatusOK)
+		// Shared across dingtalk/wecom (errcode) and feishu (code/StatusCode)
+		// success shapes, since all three targets hit this same mock server.
+		w.Write([]byte(`{"errcode":0,"errmsg":"ok","code":0,"msg":"success","StatusCode":0,"StatusMessage":"success"}`))
 	}))
 	defer mockServer.Close()
 

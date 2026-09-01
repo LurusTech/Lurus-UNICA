@@ -19,10 +19,10 @@ type FeishuNotifier struct {
 
 // FeishuMessage is the Feishu robot webhook message format.
 type FeishuMessage struct {
-	Timestamp string          `json:"timestamp,omitempty"`
-	Sign      string          `json:"sign,omitempty"`
-	MsgType   string          `json:"msg_type"`
-	Card      FeishuCard      `json:"card"`
+	Timestamp string     `json:"timestamp,omitempty"`
+	Sign      string     `json:"sign,omitempty"`
+	MsgType   string     `json:"msg_type"`
+	Card      FeishuCard `json:"card"`
 }
 
 // FeishuCard is the interactive card payload.
@@ -89,8 +89,8 @@ func (f *FeishuNotifier) Send(webhookURL string, secret string, payload AlertMan
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("feishu returned status %d", resp.StatusCode)
+	if err := checkWebhookResponse("feishu", resp); err != nil {
+		return err
 	}
 
 	return nil
