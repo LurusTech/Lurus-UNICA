@@ -202,6 +202,61 @@
     font-size: 0.82rem; line-height: 1.6; border-radius: 0 8px 8px 0;
   }
 
+  /* ---- Editable platform model --------------------------------------------
+     The one platform value on this page that is no longer compiled in, so it
+     is the only one that gets a form. It sits in its own card rather than as
+     one more group among the read-only ones above, because a save button that
+     reaches exactly one of eight groups reads as a save button for all of
+     them. */
+  .model-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .model-card .pf-group:last-of-type { margin-bottom: 18px; }
+  .model-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 0 18px;
+  }
+  .model-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .model-actions .spacer { flex: 1; }
+  /* Louder than .pf-warn, and red rather than amber, because this is not a
+     status line: an under-budget max_tokens breaks every answer on the
+     platform and reports nothing while doing it. */
+  .model-danger {
+    margin: 0 0 18px; padding: 12px 14px; border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent);
+    background: color-mix(in srgb, var(--bad) 10%, transparent);
+    font-size: 0.83rem; line-height: 1.75;
+  }
+  .model-danger b { color: var(--bad); }
+  .model-result {
+    margin-top: 18px; padding: 12px 14px; border-radius: 10px; font-size: 0.83rem;
+    line-height: 1.7; border: 1px solid var(--border); word-break: break-word;
+  }
+  .model-result.ok {
+    border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+    background: color-mix(in srgb, var(--ok) 10%, transparent);
+  }
+  .model-result.bad {
+    border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+    background: color-mix(in srgb, var(--bad) 10%, transparent);
+  }
+  .model-result h4 { margin: 0 0 6px; font-size: 0.88rem; }
+  /* The provider's own words, kept verbatim and looking like it. A rejected
+     model name is only ever explained in the text Dify sends back, and
+     rewording it would delete the one sentence that says what to type. */
+  .model-result .raw {
+    margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace;
+    font-size: 0.78rem; white-space: pre-wrap; word-break: break-word;
+  }
+  /* "Unreadable" must not look like "mismatched". One is two known values
+     disagreeing; the other is a reading that never arrived, and pushing on it
+     is a guess. Dashed and muted rather than coloured, so that a Dify outage
+     cannot fill the column with alarm-coloured pills that read as drift. */
+  .pill.dashed { border-style: dashed; }
+
   .ops-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 28px; }
   .ops-card {
     background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
@@ -414,17 +469,127 @@
     </div>
 
     <div class="panel-head" style="margin-top:32px">
-      <h2>平台设定（只读）</h2>
+      <h2>平台设定</h2>
       <p>
         下面每一项都决定全平台每一条回答，而且都<b>不是本页能改的</b>：
         一半是 router 的环境变量（改完要重启 router），一半是编译进程序的常量（改完要发版）。
         列在这里，是为了不必登服务器、也不必翻代码，就能回答"现在到底是什么设定"。
         凭据一律不显示——不显示值，也不显示掩码。
+        唯一的例外是模型：它已经不再是编译期常量，收到了下面的「生效模型」里，改完不用发版。
       </p>
     </div>
     <div id="platform-settings">
       <p class="pf-note">加载中…</p>
     </div>
+
+    <!-- ---- The model, which used to be one of the constants above ----------
+         It is read the same way as the groups above, so it stays next to them,
+         but it is written, so it is not one of them. Every write is verified
+         against a real Dify app before anything is stored, which means the
+         value shown here is always one Dify has already accepted at least
+         once — never merely something someone typed. -->
+    <div class="panel-head" style="margin-top:32px">
+      <h2>生效模型</h2>
+      <p>
+        全平台默认一份，租户不可选。统一是为了让各产线的评测分数可比——换个模型，
+        所有金标与阈值都要重跑；而且默认故意用朴素模型，好让提示词、检索与本体自己的毛病
+        浮出来，不被强模型的推理盖过去。产品线可以单独覆盖，但那是<b>显式例外</b>，
+        偏离的线会在下面的清单里标出来，它的分数不能和别的线横着比。
+        保存时会先挑一条真实产线，用新配置写进它的 AI 应用，<b>Dify 不认就一个字节都不落库</b>；
+        保存只改这份默认值，存量产线要在下面的漂移清单里勾选重推才会跟上。
+      </p>
+    </div>
+    <div class="model-card">
+      <div id="model-state">
+        <p class="pf-note">加载中…</p>
+      </div>
+      <form id="model-form" hidden>
+        <div class="model-danger">
+          <b>max_tokens 低于 <span class="model-min-tokens">2048</span> 会让答复整条为空。</b>
+          这个模型先吐推理、再吐答案，预算不够时推理就把额度用光了：回来的不是截断的半句话，
+          而是<b>一条空回复</b>。空回复在下游和正常回复分不出来，会被原样转给客户，
+          日志里也不会有任何一条错误。省下的那点预算换来的是一整条产线静默地回空话。
+        </div>
+        <div class="model-grid">
+          <div class="field">
+            <label for="f-model-provider">供应商 provider</label>
+            <input id="f-model-provider" autocomplete="off" spellcheck="false" />
+            <div class="hint">Dify 里的模型供应商标识，例如 openai_api_compatible。</div>
+          </div>
+          <div class="field">
+            <label for="f-model-name">模型名 name</label>
+            <input id="f-model-name" autocomplete="off" spellcheck="false" />
+            <div class="hint">必须是 Dify 里已经配好、能直接调用的模型名。写错了会被 Dify 挡下来。</div>
+          </div>
+          <div class="field">
+            <label for="f-model-temperature">temperature</label>
+            <input id="f-model-temperature" type="number" step="0.1" min="0" max="2" />
+            <div class="hint">取值 0–2，越低越照着资料说话。</div>
+          </div>
+          <div class="field">
+            <label for="f-model-max-tokens">max_tokens</label>
+            <input id="f-model-max-tokens" type="number" step="1" min="2048" />
+            <div class="hint">下限 <span class="model-min-tokens">2048</span>，理由见上面那段。</div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-model-note">本次改动说明</label>
+          <input id="f-model-note" autocomplete="off" placeholder="为什么换这个模型——留给下一个翻版本历史的人" />
+          <div class="hint">存进这一版的版本记录，并写入审计。</div>
+        </div>
+        <div class="model-actions">
+          <span class="hint" id="model-form-hint"></span>
+          <div class="spacer"></div>
+          <button type="button" id="model-builtin-btn">填入内置默认值</button>
+          <button type="submit" class="primary" id="model-save-btn">保存并验证</button>
+        </div>
+      </form>
+      <div id="model-save-result" hidden></div>
+    </div>
+
+    <!-- Which lines are actually answering with the model above. The card says
+         what the default is; this says which apps have it. Two different facts:
+         saving reaches exactly one line — the one borrowed to verify — and
+         every other line stays pinned to whatever it was given last time. -->
+    <div class="panel-head" style="margin-top:32px">
+      <h2>模型漂移清单</h2>
+      <p>
+        平台默认改过之后，存量产线不会自动跟上——它们的 AI 应用还钉在写入当时的那个模型上。
+        下面逐条列出：这条线<b>应该</b>用哪个模型（平台默认，或它自己的覆盖）、
+        Dify 里<b>实际</b>是哪个、两者对不对得上。
+        「读不到」和「不一致」不是一回事：前者是这一次没问出结果——没绑 AI 应用、Dify 没答、
+        或者应用里根本没有模型配置——不知道它在跑什么，重推是在赌；
+        后者是两个值都读到了，就是不一样。Dify 一挂，整列都会变成「读不到」，那时候不该重推。
+        重推推的是每条线<b>自己</b>应生效的那个值：标着「已偏离」的线推的是它自己的覆盖，
+        不会被拉回平台默认；要取消覆盖请到该租户的「AI 设置」页。
+        <b>默认一条都不选</b>。
+      </p>
+    </div>
+    <div class="toolbar">
+      <span class="hint" id="models-counts"></span>
+      <div class="spacer"></div>
+      <button class="primary" id="models-push-btn" disabled>重推所选</button>
+      <button id="models-refresh-btn">刷新</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px"></th>
+            <th>产线</th>
+            <th>档位</th>
+            <th>应生效模型</th>
+            <th>Dify 实际</th>
+            <th>状态</th>
+            <th>最后推送</th>
+          </tr>
+        </thead>
+        <tbody id="models-tbody">
+          <tr><td colspan="7" class="loading-text">尚未加载</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="models-push-result" hidden></div>
 
     <!-- Who is behind the template. The state above says what the template is
          now; this says which lines are actually standing on it. -->
@@ -689,12 +854,24 @@
     auditTotal: 0,
     auditLoaded: false,
     platformLoaded: false,
+    // The platform model exactly as the server last reported it. Held rather
+    // than re-read off the inputs because a save has to carry `mode` back
+    // unchanged — it has no field of its own — and because "this is already
+    // the effective configuration" is answered against the server's copy, not
+    // against whatever is currently typed.
+    model: null,
     // The roster and the ids ticked on it. Selection is held here rather than
     // read off the boxes so a refresh cannot silently carry a stale tick into
     // the next push.
     prompts: null,
     promptsSelected: {},
     promptsLoaded: false,
+    // Same arrangement as the prompt roster above, and for the same reason: a
+    // tick lives here rather than on the box, so that reloading the table
+    // cannot carry a stale selection into the next push.
+    models: null,
+    modelsSelected: {},
+    modelsLoaded: false,
     knowledgeLoaded: false
   };
 
@@ -713,6 +890,24 @@
     userTenantFilter: document.getElementById("user-tenant-filter"),
 
     difyLink: document.getElementById("dify-link"),
+
+    modelState: document.getElementById("model-state"),
+    modelForm: document.getElementById("model-form"),
+    modelFormHint: document.getElementById("model-form-hint"),
+    modelBuiltinBtn: document.getElementById("model-builtin-btn"),
+    modelSaveBtn: document.getElementById("model-save-btn"),
+    modelSaveResult: document.getElementById("model-save-result"),
+    fModelProvider: document.getElementById("f-model-provider"),
+    fModelName: document.getElementById("f-model-name"),
+    fModelTemperature: document.getElementById("f-model-temperature"),
+    fModelMaxTokens: document.getElementById("f-model-max-tokens"),
+    fModelNote: document.getElementById("f-model-note"),
+
+    modelsCounts: document.getElementById("models-counts"),
+    modelsTbody: document.getElementById("models-tbody"),
+    modelsPushBtn: document.getElementById("models-push-btn"),
+    modelsRefreshBtn: document.getElementById("models-refresh-btn"),
+    modelsPushResult: document.getElementById("models-push-result"),
 
     promptsCounts: document.getElementById("prompts-counts"),
     promptsTbody: document.getElementById("prompts-tbody"),
@@ -880,6 +1075,10 @@
         state.platformLoaded = true;
         loadPlatformSettings();
       }
+      if (btn.dataset.panel === "panel-ops" && !state.modelsLoaded) {
+        state.modelsLoaded = true;
+        loadModelRoster();
+      }
       if (btn.dataset.panel === "panel-ops" && !state.promptsLoaded) {
         state.promptsLoaded = true;
         loadPromptRoster();
@@ -912,7 +1111,12 @@
   function loadPlatformSettings() {
     var host = document.getElementById("platform-settings");
     return api("/api/v1/platform/settings")
-      .then(function (data) { renderPlatformSettings(host, data); })
+      .then(function (data) {
+        renderPlatformSettings(host, data);
+        // The model rides along on the same request but renders into its own
+        // card: it is the one value here that is written rather than only read.
+        renderModelSection((data || {}).model);
+      })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
         host.textContent = "";
@@ -920,6 +1124,9 @@
         p.className = "pf-warn";
         p.textContent = "读取平台设定失败：" + err.message;
         host.appendChild(p);
+        // No form over an unread configuration. Saving from prefilled defaults
+        // would overwrite whatever is actually stored with a guess.
+        renderModelSection(null);
       });
   }
 
@@ -1015,16 +1222,12 @@
     pfRow(d, "满意度调研", sv.enabled ? "默认开启" : "默认关闭",
       "最少 " + sv.min_customer_messages + " 条客户消息，等待 " + sv.timeout_hours + " 小时");
 
-    // 3. The model. One for the whole platform, on purpose.
-    var m = compiled.model || {};
-    var mg = pfGroup(host, "生效模型", "编译期常量 · 改完需发版",
-      "全平台统一一个模型，租户不可选。统一是为了让各产线的表现可比——" +
-      "换个模型，所有金标与阈值都要重跑。");
-    pfRow(mg, "模型", m.name || "");
-    pfRow(mg, "供应商", m.provider || "");
-    pfRow(mg, "temperature / max_tokens", String(m.temperature) + " / " + String(m.max_tokens));
-
-    // 4. What bounds retrieval before any tenant setting applies.
+    // 3. What bounds retrieval before any tenant setting applies.
+    //
+    // The model used to be group 3 here, described as a compiled-in constant.
+    // It is stored now, so it renders as its own card above with a form on it;
+    // leaving it in this list would have kept a "改完需发版" label on the one
+    // value on the page that no longer needs a release.
     var k = compiled.knowledge || {};
     var kg = pfGroup(host, "知识库检索", "编译期常量 · 改完需发版",
       "文档怎么切、怎么搜，决定了检索最多能返回什么。切分规则只对此后上传的文档生效——" +
@@ -1036,7 +1239,7 @@
     pfRow(kg, "切分规则", "按 " + JSON.stringify(seg.separator || "") + " 分段，每段上限 " +
       (seg.max_tokens || "-") + " tokens");
 
-    // 5. The prompt every line starts from.
+    // 4. The prompt every line starts from.
     var pg = pfGroup(host, "平台提示词模板", "编译期常量 · 改完需发版",
       "每条产线开户时拿到的就是这份，之后可以自己改。改了模板不会自动流向存量租户——" +
       "他们的 AI 设置页会显示「平台模板已更新」，由他们自己点更新。");
@@ -1056,7 +1259,7 @@
       pg.appendChild(rd);
     }
 
-    // 6. The strategy texts, which are what SCENE_MODE actually injects.
+    // 5. The strategy texts, which are what SCENE_MODE actually injects.
     var sg = pfGroup(host, "应答策略正文", "编译期常量 · 改完需发版",
       "商业阶段判定出来之后，注入提示词的就是下面这几段。它们只改表达方式，不改可陈述的内容。" +
       "词表是按零售调的，非零售租户开启后效果有限。");
@@ -1064,12 +1267,559 @@
       pfText(sg, "展开「" + item.stage + "」策略", item.text);
     });
 
-    // 7. Credentials: named, never shown.
+    // 6. Credentials: named, never shown.
     var cg = pfGroup(host, "凭据", "在 Dify 控制台管理 · 本页不显示",
       "模型供应商 API Key、Dify 控制台账号、各租户的 Dify API Key 与 Chatwoot Token " +
       "都不在本页显示，也不显示掩码——掩码同样会出现在每一张截图里。" +
       "需要改动请到上面的 Dify 控制台。");
   }
+
+  // ---------- Platform model (the one setting here that is written) ----------
+  //
+  // Everything on this card follows from one rule the server keeps: a model is
+  // stored only after a real Dify app has accepted it. So a save either
+  // produced a configuration Dify answered with, or produced nothing at all —
+  // there is no third outcome where the table holds a value nobody has ever
+  // run. That is also why failures are reported in the provider's own words
+  // rather than a phrase of ours: when a model name is refused, that text is
+  // the only place the correct name is described.
+  //
+  // `mode` deliberately has no input. It is not a knob an operator turns — it
+  // decides which Dify API shape the app speaks, and moving it independently of
+  // the model name is how an app stops answering entirely. It is carried
+  // through a save exactly as the server handed it over.
+
+  var MODEL_TIER_LABELS = {
+    override: "本线覆盖",
+    platform: "平台默认",
+    builtin:  "内置默认值"
+  };
+
+  var MODEL_SOURCE_LABELS = {
+    console: "控制台保存",
+    provision: "开户创建",
+    seed: "搬迁自 AI 应用",
+    platform: "平台默认"
+  };
+
+  function modelNum(v) {
+    return (v === null || v === undefined || v === "") ? "—" : String(v);
+  }
+
+  // Works for both shapes on this page: the stored spec, and the four fields
+  // Dify reports back for a live app. Dify never reports `mode`, so it is not
+  // part of this line either — printing an empty one would read as "this app
+  // has no mode" rather than "we were not told".
+  function modelSpecText(spec) {
+    if (!spec) return "—";
+    return (spec.provider || "?") + " / " + (spec.name || "?") +
+      "　temperature " + modelNum(spec.temperature) +
+      "　max_tokens " + modelNum(spec.max_tokens);
+  }
+
+  function renderModelSection(model) {
+    var host = els.modelState;
+    host.textContent = "";
+    state.model = model || null;
+
+    if (!model) {
+      var p = document.createElement("p");
+      p.className = "pf-warn";
+      p.textContent = "读不到当前的模型配置。这里不给表单：在不知道现在用的是什么的情况下保存，" +
+        "等于拿一个猜出来的值覆盖掉真正生效的那一份。";
+      host.appendChild(p);
+      els.modelForm.hidden = true;
+      els.modelSaveResult.hidden = true;
+      return;
+    }
+
+    var spec = model.spec || {};
+    var builtin = model.tier === "builtin";
+    var group = pfGroup(host, "当前生效",
+      builtin ? "内置默认值 · 库里还没有版本" : "库中生效版本 · 已被 Dify 接受过",
+      builtin
+        ? "从来没有在本页保存过，现在用的是编译进程序的那份内置值。保存一次就会有第一条版本记录。"
+        : "这是存在库里、并且写进真实 AI 应用验证过的那一版。");
+    pfRow(group, "模型", spec.name || "");
+    pfRow(group, "供应商", spec.provider || "");
+    pfRow(group, "temperature / max_tokens",
+      modelNum(spec.temperature) + " / " + modelNum(spec.max_tokens));
+    pfRow(group, "调用方式 mode", spec.mode || "", "本页不提供修改：它决定应用说哪一套接口");
+    if (model.version) {
+      pfRow(group, "版本", "v" + model.version,
+        (MODEL_SOURCE_LABELS[model.source] || model.source || "") +
+        (model.created_at ? "　" + formatDate(model.created_at) : ""));
+    }
+    if (model.note) pfRow(group, "改动说明", model.note);
+    if (model.pushed_at) {
+      // Said in full because the timestamp invites the opposite reading: one
+      // line receiving the configuration is what stamps it, and the rest of the
+      // estate can still be answering with something else entirely.
+      pfRow(group, "最早送达 Dify", formatDate(model.pushed_at),
+        "只表示至少有一个 AI 应用收到过，不代表各产线都已生效——那要看下面的清单");
+    }
+    if (model.reason) {
+      var warn = document.createElement("p");
+      warn.className = "pf-warn";
+      warn.textContent = "回落到内置默认值：" + model.reason;
+      group.appendChild(warn);
+    }
+
+    var minTokens = model.min_max_tokens || 2048;
+    Array.prototype.forEach.call(document.querySelectorAll(".model-min-tokens"),
+      function (el) { el.textContent = String(minTokens); });
+    els.fModelMaxTokens.min = String(minTokens);
+
+    fillModelForm(spec);
+    els.fModelNote.value = "";
+    els.modelForm.hidden = false;
+
+    // `editable` is the server saying whether the write path is wired up at
+    // all. The form stays visible and goes dead rather than disappearing: the
+    // values on it are real, and it is only the button that is not.
+    var editable = model.editable !== false;
+    setModelFormEnabled(editable);
+    els.modelFormHint.textContent = editable
+      ? "保存会先挑一条产线验证，Dify 认了才落库。"
+      : "本部署没有接通模型写入，只能看，不能改。";
+  }
+
+  function fillModelForm(spec) {
+    spec = spec || {};
+    els.fModelProvider.value = spec.provider || "";
+    els.fModelName.value = spec.name || "";
+    els.fModelTemperature.value =
+      (spec.temperature === null || spec.temperature === undefined) ? "" : String(spec.temperature);
+    els.fModelMaxTokens.value =
+      (spec.max_tokens === null || spec.max_tokens === undefined) ? "" : String(spec.max_tokens);
+  }
+
+  function setModelFormEnabled(on) {
+    [els.fModelProvider, els.fModelName, els.fModelTemperature, els.fModelMaxTokens,
+      els.fModelNote, els.modelBuiltinBtn, els.modelSaveBtn].forEach(function (el) {
+      el.disabled = !on;
+    });
+  }
+
+  function saveModel() {
+    var current = (state.model || {}).spec || {};
+    var temperature = parseFloat(els.fModelTemperature.value);
+    var maxTokens = parseInt(els.fModelMaxTokens.value, 10);
+
+    // Only the two numbers are checked here, and only for being present: an
+    // empty field would otherwise travel as NaN and come back as a parse error
+    // that names no field. Every other rule — the token floor, the temperature
+    // range, whether Dify knows this model — belongs to the server, so that
+    // this page and the API cannot end up disagreeing about what is allowed.
+    if (isNaN(temperature)) { toast("temperature 不能为空", "error"); return; }
+    if (isNaN(maxTokens)) { toast("max_tokens 不能为空", "error"); return; }
+
+    var body = {
+      provider: (els.fModelProvider.value || "").trim(),
+      name: (els.fModelName.value || "").trim(),
+      mode: (current.mode || "").trim(),
+      temperature: temperature,
+      max_tokens: maxTokens,
+      note: (els.fModelNote.value || "").trim()
+    };
+
+    if (!confirm("确认把平台默认模型改成 " + (body.provider || "（空）") + " / " +
+      (body.name || "（空）") + " 吗？\n" +
+      "保存会先挑一条产线，用新配置写进它的 AI 应用；Dify 接受了才落库，拒绝了什么都不改。\n" +
+      "其余产线不会自动跟上，要在下面的漂移清单里勾选重推。")) return;
+
+    els.modelSaveResult.hidden = true;
+    var label = els.modelSaveBtn.textContent;
+    els.modelSaveBtn.disabled = true;
+    els.modelSaveBtn.textContent = "验证中…";
+
+    api("/api/v1/platform/model", { method: "PUT", body: JSON.stringify(body) })
+      .then(function (data) {
+        data = data || {};
+        renderModelSaveResult(true, data, 200);
+        toast(data.changed === false ? "这就是当前生效的配置，没有新增版本" : "已保存，并已通过验证",
+          data.changed === false ? "warn" : "success");
+        if (data.model) renderModelSection(data.model);
+        return loadModelRoster();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        renderModelSaveResult(false, err.data || { error: err.message }, err.status);
+        toast("保存失败", "error");
+      })
+      .finally(function () {
+        els.modelSaveBtn.textContent = label;
+        els.modelSaveBtn.disabled = false;
+      });
+  }
+
+  // Success names the line used to verify, because that line is now on the new
+  // configuration and no other line is: it is the one row below that will
+  // already read 一致 without anybody pushing it. Failure carries Dify's reply
+  // verbatim — a refused model name is only ever explained there.
+  function renderModelSaveResult(ok, data, status) {
+    var host = els.modelSaveResult;
+    host.textContent = "";
+    host.className = "model-result " + (ok ? "ok" : "bad");
+    data = data || {};
+
+    var v = data.verification || {};
+    var who = v.display_name || v.name || v.product_line_id || "";
+    var h = document.createElement("h4");
+    var body = document.createElement("div");
+    var raw = "";
+
+    if (ok && data.changed === false) {
+      h.textContent = "没有改动";
+      body.textContent = "请求的配置就是当前生效的那一份，没有验证，也没有新增版本。";
+    } else if (ok) {
+      h.textContent = "✓ 已保存";
+      var text = who
+        ? "用产线「" + who + "」验证：新配置写进了它的 AI 应用，Dify 接受之后才落的库。"
+        : "新配置已经通过 Dify 验证并落库。";
+      if (v.already_on_new_config) {
+        text += "这条线本来就跟着平台默认走，验证写进去的值就留在那儿了——" +
+          "它在下面的清单里已经是「一致」，重推时可以跳过。";
+      } else if (v.reverted) {
+        text += "这条线有自己的覆盖，只是被借来验证，用完已经把它自己的配置推了回去，偏离没有被抹掉。";
+      } else if (v.revert_error) {
+        text += "注意：借它验证之后没能推回原配置（" + v.revert_error +
+          "），它现在停在平台默认上，请到该租户的「AI 设置」页确认。";
+      }
+      text += "其余产线还停在原来的模型上，要在下面的漂移清单里勾选重推。";
+      body.textContent = text;
+    } else {
+      var lines = [];
+      if (status === 502) {
+        h.textContent = "✗ Dify 拒绝了这个配置，一个字节都没有落库";
+        if (who) lines.push("验证用的产线：" + who + "。");
+        lines.push("下面是 Dify 的原话。模型名或供应商标识对不上时它会直接说出来，照着它改。");
+      } else if (status === 409) {
+        h.textContent = "✗ 没有可以用来验证的产线，未落库";
+        lines.push("平台默认必须先在一条真实产线上验证过才允许保存，而现在没有任何产线绑定了 AI 应用。");
+      } else if (status === 500) {
+        h.textContent = "✗ Dify 接受了，但落库失败";
+        if (who) lines.push("验证用的产线：" + who + "。");
+        lines.push("它已经被用旧配置推了回去，不会留下一条配置漂移的线；库里仍然是原来那一版。");
+      } else if (status === 400) {
+        h.textContent = "✗ 配置不合法，未落库";
+        lines.push("请求连服务端的校验都没过，没有联系过 Dify。");
+      } else if (status === 503) {
+        h.textContent = "✗ 本部署没有接通模型写入";
+        lines.push("模型仍然只能通过发版更改，本页保存不了。");
+      } else {
+        h.textContent = "✗ 保存失败";
+      }
+      body.textContent = lines.join("");
+      raw = data.error || data.message || "";
+    }
+
+    host.appendChild(h);
+    host.appendChild(body);
+    if (raw) {
+      var rawEl = document.createElement("div");
+      rawEl.className = "raw";
+      rawEl.textContent = raw;
+      host.appendChild(rawEl);
+    }
+    host.hidden = false;
+  }
+
+  els.modelBuiltinBtn.addEventListener("click", function () {
+    var builtin = (state.model || {}).builtin;
+    if (!builtin) { toast("没有读到内置默认值", "warn"); return; }
+    fillModelForm(builtin);
+    els.fModelNote.value = "恢复内置默认值";
+    toast("已填入内置默认值，还要点保存才会生效", "warn");
+  });
+
+  els.modelForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    saveModel();
+  });
+
+
+  // ---------- Model drift roster ----------
+  //
+  // Two axes, kept apart on purpose. 档位 says which configuration a line is
+  // supposed to be on — the platform default, or an override it was given
+  // deliberately. 状态 says what its Dify app actually answers with. A line can
+  // be on an entirely correct tier and still be answering with something else,
+  // and that gap is the only reason this table exists.
+  //
+  // "读不到" is its own state rather than a flavour of "不一致": it means the
+  // reading never arrived, so nobody knows what that app is running, and
+  // pushing on it is a bet rather than a repair. Dify being down puts the whole
+  // column there at once, which is exactly when the table must not read as an
+  // estate full of drift.
+  //
+  // Nothing is ticked by default, same as the prompt roster: a deviating line
+  // is deviating because somebody chose it, and a select-all button would treat
+  // that choice as damage.
+
+  var MODEL_PROJECTION_PILLS = {
+    in_effect: ["ok",           "一致"],
+    drifted:   ["bad",          "不一致"],
+    unknown:   ["muted dashed", "读不到"]
+  };
+
+  var MODEL_PUSH_STAGE_LABELS = {
+    lookup: "没有找到这条产线",
+    binding: "这条线没有 AI 应用",
+    validate: "这条线该用的配置本身不合法，没有推送",
+    push: "写入 AI 应用失败"
+  };
+
+  function loadModelRoster() {
+    var tbody = els.modelsTbody;
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-text">' +
+      "加载中…（每条线都要读一次 AI 应用，可能要等几秒）</td></tr>";
+    return api("/api/v1/platform/models")
+      .then(function (data) {
+        state.models = data || {};
+        state.modelsSelected = {};
+        renderModelRoster();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        state.models = null;
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载失败: ' +
+          escapeHtml(err.message) + "</td></tr>";
+        els.modelsCounts.textContent = "";
+        updateModelPushButton();
+      });
+  }
+
+  function renderModelRoster() {
+    var data = state.models || {};
+    var lines = Array.isArray(data.lines) ? data.lines : [];
+    var tbody = els.modelsTbody;
+    tbody.innerHTML = "";
+
+    var counts = data.counts || {};
+    els.modelsCounts.textContent =
+      "一致 " + (counts.in_effect || 0) + " · 不一致 " + (counts.drifted || 0) +
+      " · 读不到 " + (counts.unknown || 0) +
+      " · 已偏离平台模型 " + (data.deviating || 0) +
+      (data.generated_at ? "　（读于 " + formatDate(data.generated_at) + "）" : "");
+
+    if (!lines.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无产线</td></tr>';
+      updateModelPushButton();
+      return;
+    }
+    lines.forEach(function (line) { tbody.appendChild(modelRosterRow(line)); });
+    updateModelPushButton();
+  }
+
+  function modelRosterRow(line) {
+    var tr = document.createElement("tr");
+
+    // A line with no AI app has nowhere to push to. Disabled rather than
+    // absent, so the row still reads as a product line that exists.
+    var tdBox = document.createElement("td");
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.disabled = !line.has_dify_app;
+    box.checked = !!state.modelsSelected[line.product_line_id];
+    box.setAttribute("aria-label", "选择 " + (line.display_name || line.name));
+    box.addEventListener("change", function () {
+      if (box.checked) state.modelsSelected[line.product_line_id] = true;
+      else delete state.modelsSelected[line.product_line_id];
+      updateModelPushButton();
+    });
+    tdBox.appendChild(box);
+
+    var tdName = document.createElement("td");
+    tdName.textContent = line.display_name || line.name || line.product_line_id;
+    if (!line.has_dify_app) {
+      tdName.appendChild(document.createTextNode(" "));
+      tdName.appendChild(pill("bad", "无 AI 应用"));
+    }
+
+    // Deviating is a statement about scores, not about health: the line runs
+    // the model somebody picked for it, and the consequence is that its numbers
+    // stop being comparable with everyone else's. Spelled out on the row rather
+    // than only in a tooltip, because whoever reads an evaluation table has to
+    // know which rows were measured on a different model.
+    var tdTier = document.createElement("td");
+    tdTier.appendChild(pill(line.deviates ? "warn" : "muted",
+      MODEL_TIER_LABELS[line.tier] || line.tier || "未知"));
+    if (line.deviates) {
+      tdTier.appendChild(document.createTextNode(" "));
+      tdTier.appendChild(pill("warn", "已偏离"));
+      tdTier.title = "该线已偏离平台模型，其评测分数不可与其他产品线横向比较。";
+    }
+    if (line.version) {
+      var ver = document.createElement("span");
+      ver.className = "mono";
+      ver.style.marginLeft = "6px";
+      ver.textContent = "v" + line.version;
+      ver.title = MODEL_SOURCE_LABELS[line.source] || line.source || "";
+      tdTier.appendChild(ver);
+    }
+
+    var tdWant = document.createElement("td");
+    tdWant.className = "wrap";
+    tdWant.textContent = modelSpecText(line.effective);
+    if (line.note) tdWant.title = line.note;
+
+    var proj = line.projection || {};
+    var tdLive = document.createElement("td");
+    tdLive.className = "wrap";
+    if (proj.model) {
+      tdLive.textContent = modelSpecText(proj.model);
+    } else {
+      // Nothing was read, so nothing is printed. Falling back to the expected
+      // value here would make the two columns agree on a reading that never
+      // happened.
+      tdLive.appendChild(pill("muted dashed", "未读到"));
+      if (proj.reason) tdLive.title = proj.reason;
+    }
+
+    var tdState = document.createElement("td");
+    var pp = MODEL_PROJECTION_PILLS[proj.state] || ["muted dashed", proj.state || "未知"];
+    tdState.appendChild(pill(pp[0], pp[1]));
+    if (proj.reason) tdState.title = proj.reason;
+
+    var tdPushed = document.createElement("td");
+    tdPushed.textContent = line.pushed_at ? formatDate(line.pushed_at) : "从未推送";
+    if (line.pushed_at && line.tier === "platform") {
+      tdPushed.title = "这是平台默认那一版的时间戳，表示它至少送达过一个 AI 应用，" +
+        "不表示这条线已经生效——那看状态列。";
+    }
+
+    tr.appendChild(tdBox);
+    tr.appendChild(tdName);
+    tr.appendChild(tdTier);
+    tr.appendChild(tdWant);
+    tr.appendChild(tdLive);
+    tr.appendChild(tdState);
+    tr.appendChild(tdPushed);
+    return tr;
+  }
+
+  function selectedModelIds() {
+    return Object.keys(state.modelsSelected || {});
+  }
+
+  function updateModelPushButton() {
+    var n = selectedModelIds().length;
+    els.modelsPushBtn.disabled = n === 0;
+    els.modelsPushBtn.textContent = n ? "重推所选（" + n + " 条）" : "重推所选";
+  }
+
+  function pushSelectedModels() {
+    var ids = selectedModelIds();
+    if (!ids.length) return;
+
+    // Counted off the roster rather than off the ticks alone. Two of the things
+    // this button can do deserve to be said before the click rather than
+    // explained after it: a deliberately deviating line is about to be written
+    // to, and a line nobody could read is about to be written to blind.
+    var lines = (state.models && state.models.lines) ? state.models.lines : [];
+    var picked = lines.filter(function (l) { return state.modelsSelected[l.product_line_id]; });
+    var deviating = picked.filter(function (l) { return l.deviates; }).length;
+    var unknown = picked.filter(function (l) {
+      return ((l.projection || {}).state || "") === "unknown";
+    }).length;
+
+    var msg = "确认把应生效的模型重新写入选中的 " + ids.length + " 条产线的 AI 应用吗？\n" +
+      "这一步只做下发，不会新增版本记录。\n";
+    if (deviating) {
+      msg += "其中 " + deviating + " 条带着自己的覆盖，推的是它们自己的覆盖值，不会被拉回平台默认。\n";
+    }
+    if (unknown) {
+      msg += "其中 " + unknown + " 条现在读不到 Dify 里的实际配置，推完才知道结果。\n";
+    }
+    if (!confirm(msg)) return;
+
+    els.modelsPushResult.hidden = true;
+    var label = els.modelsPushBtn.textContent;
+    els.modelsPushBtn.disabled = true;
+    els.modelsPushBtn.textContent = "重推中…";
+
+    api("/api/v1/platform/models/push", {
+      method: "POST",
+      body: JSON.stringify({ product_line_ids: ids, note: "控制台批量重推模型" })
+    })
+      .then(function (data) {
+        data = data || {};
+        renderModelPushResult(data);
+        toast("重推完成：成功 " + (data.pushed || 0) + " 条，失败 " + (data.failed || 0) + " 条",
+          (data.failed ? "warn" : "success"));
+        return loadModelRoster();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        toast("重推失败: " + err.message, "error");
+      })
+      .finally(function () {
+        els.modelsPushBtn.textContent = label;
+        updateModelPushButton();
+      });
+  }
+
+  // One line per product line, success and failure alike. A batch that reports
+  // only a total leaves the operator guessing which tenants to go look at.
+  function renderModelPushResult(data) {
+    var host = els.modelsPushResult;
+    host.textContent = "";
+
+    var head = document.createElement("div");
+    head.className = "pf-note";
+    head.textContent = "重推 " + (data.requested || 0) + " 条：成功 " + (data.pushed || 0) +
+      " 条，失败 " + (data.failed || 0) + " 条。";
+    host.appendChild(head);
+
+    var steps = document.createElement("div");
+    steps.className = "report-steps";
+    (data.results || []).forEach(function (r) {
+      var step = document.createElement("div");
+      step.className = "report-step";
+
+      var mark = document.createElement("span");
+      mark.className = "report-mark " + (r.ok ? "ok" : "warn");
+      mark.textContent = r.ok ? "✓" : "✗";
+
+      var body = document.createElement("div");
+      body.className = "report-body";
+      var title = document.createElement("div");
+      title.className = "report-title";
+      title.textContent = (r.display_name || r.name || r.product_line_id) +
+        (r.tier ? "　" + (MODEL_TIER_LABELS[r.tier] || r.tier) : "") +
+        (r.version ? "　v" + r.version : "");
+
+      var msg = document.createElement("div");
+      msg.className = "report-msg";
+      if (r.ok) {
+        // What it was before is worth a line: it is the only record of what that
+        // app had been answering with, and the roster overwrites it on the very
+        // next reload.
+        msg.textContent = (r.already_in_effect
+          ? "写入前就已经是 " + modelSpecText(r.spec) + "，配置没有变化。"
+          : "已写入 " + modelSpecText(r.spec) + "。") +
+          (r.previous ? "　推之前 AI 应用里是：" + modelSpecText(r.previous) + "。" : "");
+      } else {
+        msg.textContent = (MODEL_PUSH_STAGE_LABELS[r.stage] || r.stage || "失败") +
+          (r.error ? "：" + r.error : "");
+      }
+      body.appendChild(title);
+      body.appendChild(msg);
+      step.appendChild(mark);
+      step.appendChild(body);
+      steps.appendChild(step);
+    });
+    host.appendChild(steps);
+    host.hidden = false;
+  }
+
+  els.modelsPushBtn.addEventListener("click", pushSelectedModels);
+  els.modelsRefreshBtn.addEventListener("click", function () {
+    els.modelsPushResult.hidden = true;
+    loadModelRoster();
+  });
+
 
   // ---------- Prompt roster (who is behind the template) ----------
   //

@@ -97,6 +97,11 @@ func main() {
 	// which is why both the tenant's settings page and the platform's push read
 	// and write it rather than treating the Dify app as the store.
 	promptVersionRepo := repository.NewPromptVersionRepository(db)
+	// The model's authority, in the same relationship to Dify as the prompt's:
+	// this table decides, the Dify app carries a projection of the decision. It
+	// holds one platform-wide revision and a revision per product line that has
+	// deliberately left it, which is why every reader passes a scope.
+	modelVersionRepo := repository.NewModelVersionRepository(db)
 
 	// Parse AES encryption key for channel credential storage
 	var aesKey []byte
@@ -162,6 +167,9 @@ func main() {
 		BcryptCost:         cfg.BcryptCost,
 		Audit:              auditLogger,
 		PromptVersions:     promptVersionRepo,
+		// So a line created today is pinned to the model this deployment is
+		// actually on, not the one this binary was compiled with.
+		ModelVersions: modelVersionRepo,
 	})
 	channelHandler := channels.NewHandler(channelRepo, aesKey, cfg.GatewayHost, rdb)
 	knowledgeHandler := knowledge.NewHandler(plRepo,
@@ -190,6 +198,19 @@ func main() {
 		// dataset is exactly the split this deployment already spent a decision
 		// closing.
 		Provisioner: tenantHandler,
+	})
+
+	// One product line's model, the deliberate exception to the platform's one
+	// model for everyone. It sits beside the AI settings rather than inside them
+	// because it is not a tenant's setting to make: it suspends the property the
+	// single platform model exists to provide — scores from different lines that
+	// can be compared at all — so it is administrator-only and says so in its
+	// answer. The module checks that inside; the route only has to reach it.
+	modelOverrideHandler := aisettings.NewModelOverrideHandler(aisettings.ModelOverrideConfig{
+		ProductLines: plRepo,
+		Versions:     modelVersionRepo,
+		Dify:         difyBridge,
+		Audit:        auditLogger,
 	})
 
 	auditLogHandler := handler.NewAuditLogHandler(auditRepo)
@@ -390,6 +411,7 @@ func main() {
 		handoffs:         http.HandlerFunc(signalsHandler.HandleHandoffs),
 		handoffAnnotate:  http.HandlerFunc(signalsHandler.HandleAnnotate),
 		workbench:        http.HandlerFunc(workbenchHandler.Handle),
+		productLineModel: http.HandlerFunc(modelOverrideHandler.Handle),
 	}
 	mux.Handle(tenantPrefix, authMW(tenantAuth(tenantResources)))
 
@@ -398,14 +420,30 @@ func main() {
 	mux.Handle("/api/v1/audit-logs", authMW(http.HandlerFunc(auditLogHandler.HandleAuditLogs)))
 
 	// What this deployment is set to, for an operator who would otherwise need a
-	// shell on the router host. Read-only by nature: half of it is the router's
-	// environment and the other half is compiled in, so neither can be written
-	// through an API at all.
-	platformHandler := platform.NewHandler(routerBridge)
+	// shell on the router host. Mostly read-only: the router's half is the
+	// router's environment and most of the rest is compiled in.
+	//
+	// The model is the exception, and the reason this handler now takes a store,
+	// a roster and the bridge. It used to be a compiled-in constant like its
+	// neighbours; it is now a stored value the write below changes without a
+	// release, which is why the page can report which tier the live value came
+	// from instead of asserting that it cannot change.
+	platformHandler := platform.NewSettingsHandler(platform.SettingsConfig{
+		Router:       routerBridge,
+		Models:       modelVersionRepo,
+		ProductLines: plRepo,
+		Dify:         difyBridge,
+		Audit:        auditLogger,
+	})
 	mux.Handle("/api/v1/platform/settings", authMW(http.HandlerFunc(platformHandler.Handle)))
 
 	// The previous path kept, since it is what the runbook names.
 	mux.Handle("/api/v1/platform/runtime", authMW(http.HandlerFunc(platformHandler.Handle)))
+
+	// Writing the platform default. Its own path rather than a method on the
+	// settings route: everything else there is read-only, and a PUT that landed
+	// on the same address would read as though the whole page were writable.
+	mux.Handle("/api/v1/platform/model", authMW(http.HandlerFunc(platformHandler.HandleModel)))
 
 	// Which tenants are still on an older platform template, and the one
 	// control that acts on the answer. Both are platform-scoped: falling behind
@@ -424,6 +462,24 @@ func main() {
 	})
 	mux.Handle("/api/v1/platform/prompts", authMW(http.HandlerFunc(promptsHandler.HandleList)))
 	mux.Handle("/api/v1/platform/prompts/push", authMW(http.HandlerFunc(promptsHandler.HandlePush)))
+
+	// The same pair for the model, and for the same reason: a value the console
+	// changes is only half changed until every Dify app carries it, so the
+	// roster reports which lines are on what and the push acts on the answer.
+	//
+	// The roster reads each line's app rather than trusting the table, because
+	// the failure this exists to catch is precisely the one where the table and
+	// Dify disagree. A line that cannot be read is reported as unknown, never
+	// folded into "drifted": a Dify outage would otherwise present as a fleet
+	// that has all drifted at once, and invite a push that fixes nothing.
+	modelsHandler := platform.NewModelsHandler(platform.ModelsConfig{
+		ProductLines: plRepo,
+		Versions:     modelVersionRepo,
+		Dify:         difyBridge,
+		Audit:        auditLogger,
+	})
+	mux.Handle("/api/v1/platform/models", authMW(http.HandlerFunc(modelsHandler.HandleList)))
+	mux.Handle("/api/v1/platform/models/push", authMW(http.HandlerFunc(modelsHandler.HandlePush)))
 
 	// How many product lines have a knowledge base that will actually be used.
 	// Cross-tenant for the same reason the prompt roster is: every one of the
@@ -495,6 +551,7 @@ type tenantRouter struct {
 	handoffs         http.Handler
 	handoffAnnotate  http.Handler
 	workbench        http.Handler
+	productLineModel http.Handler
 }
 
 // aiSettingsPaths is the closed list of ai-settings sub-paths. Listing them here
@@ -597,6 +654,17 @@ func (t *tenantRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		t.serve(w, r, t.handoffAnnotate, joinPath(legacyHandoffEventsPrefix, sub))
+	case "product-lines":
+		// A sibling subtree of ai-settings, not a member of it: the closed list
+		// above governs the ai-settings names only, and adding this one there
+		// would route a model write into the settings module. The module reads
+		// the tenant route itself and checks the pair of ids agrees, so the
+		// request travels on untouched.
+		if !strings.HasSuffix(sub, "/model") {
+			handler.ErrorJSON(w, http.StatusNotFound, "unknown product-lines sub-path: "+sub)
+			return
+		}
+		t.productLineModel.ServeHTTP(w, r)
 	case "workbench":
 		if sub != "sso" {
 			handler.ErrorJSON(w, http.StatusNotFound, "unknown workbench sub-path: "+sub)

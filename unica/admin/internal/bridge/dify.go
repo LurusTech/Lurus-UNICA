@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -696,21 +697,76 @@ func flattenModel(model map[string]interface{}) *AppModelInfo {
 	return out
 }
 
-// PinPlatformModel points an app at the one model the platform serves every
-// tenant with.
+// PinModel points an app at a given model, and confirms afterwards that the
+// app actually answers with it.
 //
-// Nothing used to write this at all, so a provisioned app inherited whatever
-// the Dify workspace default happened to be — which is how the fleet ended up
-// split across two models, with different token ceilings, and no interface
-// reporting it. Pinning it at provisioning time is what keeps the fleet from
-// drifting apart again one new tenant at a time.
+// Nothing used to write model_config["model"] at all, so a provisioned app
+// inherited whatever the Dify workspace default happened to be — which is how
+// the fleet ended up split across two models, with different token ceilings,
+// and no interface reporting it. Writing it explicitly is what keeps the fleet
+// from drifting apart again one new tenant at a time; taking the spec as an
+// argument rather than reading a constant is what lets the console change it
+// without a release, and lets a per-line override deviate on purpose.
 //
 // Like the system prompt, this goes through POST /apps/{id}/model-config, which
 // replaces the whole configuration object; the current one is read first and
 // written back with only the model changed.
+func (b *DifyBridge) PinModel(ctx context.Context, appID string, spec difyapp.ModelSpec) error {
+	return b.pinModelWithToken(ctx, appID, spec, "")
+}
+
+// PinModelWithToken is PinModel for a caller that already holds a console
+// session, and it exists because provisioning is one such caller: the app was
+// created moments earlier through a token this bridge did not mint, and letting
+// PinModel take its own would log in a second time on every new product line.
+//
+// The value it pins is the caller's, resolved from the store — a line's own
+// override, the platform revision, or the built-in default. That resolution is
+// the admin layer's, not this one's: this package has no database and must not
+// grow one.
+func (b *DifyBridge) PinModelWithToken(ctx context.Context, appID string, spec difyapp.ModelSpec, token string) error {
+	return b.pinModelWithToken(ctx, appID, spec, token)
+}
+
+// PinPlatformModel points an app at the platform's built-in default. It is the
+// provisioning path: a new app has no configuration of its own to inherit, and
+// the token is already in hand from the console session that created it, so it
+// is passed along rather than minted again.
+//
+// Deployments that have edited the model in the console are pinned from the
+// stored value instead — resolving that is the admin layer's job, and it calls
+// PinModel with what it resolved. This entry point stays for callers that want
+// the built-in default by name.
 func (b *DifyBridge) PinPlatformModel(ctx context.Context, appID, token string) error {
+	return b.pinModelWithToken(ctx, appID, difyapp.PlatformModel(), token)
+}
+
+// pinModelWithToken carries the read-modify-write both entry points share, plus
+// the console token when the caller already holds one.
+// ErrModelWriteLanded marks the model writes that Dify accepted but whose
+// effect could not be confirmed: the readback failed, or came back describing a
+// different model than the one just written.
+//
+// It exists because the caller's next move differs entirely between the two
+// ways a pin can fail. A rejected write leaves the app exactly as it was, so
+// there is nothing to undo and nothing to record. A landed-but-unconfirmed
+// write may already be answering customers on the new model, so it needs the
+// same revert and the same audit entry a successful write would need — and the
+// operator needs to be told the app was touched, rather than the flat "nothing
+// was written" that a rejection warrants. Reporting both as one error is how a
+// console ends up stating the opposite of what happened.
+var ErrModelWriteLanded = errors.New("model config write was accepted but its effect could not be confirmed")
+
+func (b *DifyBridge) pinModelWithToken(ctx context.Context, appID string, spec difyapp.ModelSpec, token string) error {
 	if appID == "" {
 		return fmt.Errorf("app id is empty")
+	}
+	// Validated here as well as at the HTTP edge, because this is the last
+	// place before the value reaches Dify and Dify will not object: it stores a
+	// token ceiling too small for this model to finish reasoning as readily as
+	// a workable one, and the app then answers customers with empty replies.
+	if err := spec.Validate(); err != nil {
+		return fmt.Errorf("pin model: %w", err)
 	}
 	if token == "" {
 		var err error
@@ -721,26 +777,86 @@ func (b *DifyBridge) PinPlatformModel(ctx context.Context, appID, token string) 
 
 	body, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/apps/"+appID, nil, token)
 	if err != nil {
-		return fmt.Errorf("read app config: %w", err)
+		return fmt.Errorf("pin model: read app config: %w", err)
 	}
 	var envelope struct {
 		ModelConfig map[string]interface{} `json:"model_config"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return fmt.Errorf("unmarshal app config: %w", err)
+		return fmt.Errorf("pin model: unmarshal app config: %w", err)
 	}
 	cfg := envelope.ModelConfig
 	if cfg == nil {
 		cfg = map[string]interface{}{}
 	}
-	cfg["model"] = difyapp.PlatformModel().AsModelConfig()
+	cfg["model"] = spec.AsModelConfig()
 
 	if _, err := b.doAdminRequestWithToken(ctx, http.MethodPost, "/apps/"+appID+"/model-config", cfg, token); err != nil {
-		return fmt.Errorf("write model config: %w", err)
+		// Dify's own complaint is passed through whole. A model name this
+		// deployment has no provider for is rejected here, and the operator who
+		// typed it is the one who needs to read the rejection.
+		//
+		// This is the one failure after which the app is known to be untouched:
+		// the write never took. Every failure below this line is reported as
+		// ErrModelWriteLanded instead, because by then the write has been
+		// accepted and the app may already be answering on the new model.
+		return fmt.Errorf("pin model: write model config: %w", err)
 	}
-	log.Printf("[dify-bridge] pinned app_id=%s to %s/%s", appID,
-		difyapp.PlatformModel().Provider, difyapp.PlatformModel().Name)
+
+	// Verified rather than trusted, for the reason the prompt write states about
+	// this same endpoint: a model-config write that changed nothing comes back
+	// with the same 200 as one that took effect. Without this readback the
+	// console would record a model as in force while the app kept answering on
+	// the previous one — and the whole point of storing the model is to be able
+	// to say which one produced a given evaluation score.
+	verify, err := b.doAdminRequestWithToken(ctx, http.MethodGet, "/apps/"+appID, nil, token)
+	if err != nil {
+		return fmt.Errorf("pin model: verify: %w: %w", ErrModelWriteLanded, err)
+	}
+	// Into a fresh envelope, not the one the write was built from. Unmarshal
+	// merges into an existing map rather than replacing it, so decoding the
+	// readback over the config just written would leave that config's own model
+	// standing wherever the response has none — and an app Dify left with no
+	// model at all is precisely one of the outcomes this check exists to catch.
+	var liveEnvelope struct {
+		ModelConfig map[string]interface{} `json:"model_config"`
+	}
+	if err := json.Unmarshal(verify, &liveEnvelope); err != nil {
+		return fmt.Errorf("pin model: unmarshal verified config: %w: %w", ErrModelWriteLanded, err)
+	}
+	live, _ := liveEnvelope.ModelConfig["model"].(map[string]interface{})
+	// Matches compares the provider, the name and both completion parameters —
+	// an app on the right model with the wrong token ceiling is the
+	// configuration that returned empty answers, so agreeing on the name alone
+	// is not agreement.
+	if !spec.Matches(live) {
+		return fmt.Errorf("pin model: app %s still answers with a different model after the write (wrote %s, in effect %s): %w",
+			appID, describeSpec(spec), describeLiveModel(live), ErrModelWriteLanded)
+	}
+
+	log.Printf("[dify-bridge] pinned app_id=%s to %s/%s (temperature=%g max_tokens=%d)",
+		appID, spec.Provider, spec.Name, spec.Temperature, spec.MaxTokens)
 	return nil
+}
+
+// describeSpec renders a spec the way the readback failure has to report it:
+// with the completion parameters, since those are half of what "a different
+// model" can mean here.
+func describeSpec(spec difyapp.ModelSpec) string {
+	return fmt.Sprintf("%s/%s temperature=%g max_tokens=%d",
+		spec.Provider, spec.Name, spec.Temperature, spec.MaxTokens)
+}
+
+// describeLiveModel renders what Dify reports back, including the case where it
+// reports no model object at all — which is itself a failure worth naming
+// rather than printing as an empty pair of slashes.
+func describeLiveModel(model map[string]interface{}) string {
+	if model == nil {
+		return "no model configured"
+	}
+	info := flattenModel(model)
+	return fmt.Sprintf("%s/%s temperature=%g max_tokens=%d",
+		info.Provider, info.Name, info.Temperature, info.MaxTokens)
 }
 
 // UpdateSystemPrompt updates the system prompt of a Dify app.

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/pkg/difyapp"
 )
 
@@ -45,7 +46,7 @@ const (
 const (
 	StepTitleApp       = "Dify 应用"
 	StepTitleAPIKey    = "应用 API Key"
-	StepTitleModel     = "平台模型"
+	StepTitleModel     = "生效模型"
 	StepTitleDataset   = "知识库数据集"
 	StepTitleBinding   = "绑定信息写回"
 	StepTitleAttach    = "知识库挂载"
@@ -249,16 +250,37 @@ func (h *TenantHandler) EnsureDifyLine(ctx context.Context, productLineID string
 		// default and the fleet drifted apart one tenant at a time — silently,
 		// because no interface reported which model a line was on.
 		//
+		// What gets pinned is the configuration in force now, not the one this
+		// binary was built with. Those were the same thing while the model was a
+		// compiled-in constant; they stop being the same the moment an operator
+		// saves a new platform default from the console, and a line provisioned
+		// after that save would otherwise be born already behind the fleet — the
+		// exact drift the pin exists to prevent, arrived at from the other
+		// direction. The token is passed along: the console session that created
+		// the app moments ago is still good, and minting a second one per new
+		// product line is a login this path does not need.
+		//
 		// Reported rather than fatal: this needs a model provider configured in
 		// the workspace, which a fresh deployment may not have yet, and that
 		// must not block onboarding. An existing app is left alone — its model
 		// is the platform's roster to reconcile, and rewriting it from here
 		// would make every repair of a knowledge base also a model change.
-		if err := h.difyBridge.PinPlatformModel(ctx, appID, token); err != nil {
-			log.Printf("[tenants] WARN: app %s not pinned to the platform model; it will answer with the Dify workspace default: %v", appID, err)
+		spec, tier, resolveErr := h.effectiveModel(ctx, pl.ID)
+		if err := h.difyBridge.PinModelWithToken(ctx, appID, spec, token); err != nil {
+			log.Printf("[tenants] WARN: app %s not pinned to the effective model; it will answer with the Dify workspace default: %v", appID, err)
 			res.add(StepKeyModel, StepTitleModel, StepFailed, ModelFailureDetail, err)
+		} else if resolveErr != nil {
+			// The pin took, so the app is on a known model rather than the
+			// workspace default — but it is the built-in one, and this
+			// deployment may have moved past it. Said out loud, because the only
+			// other place that would reveal it is a drift listing nobody has a
+			// reason to open right after onboarding reported success.
+			res.add(StepKeyModel, StepTitleModel, StepDone,
+				"已按内置默认值锁定模型 "+describeModelSpec(spec)+
+					"：读取模型配置失败，若平台默认已经改过，请在模型漂移清单里重推这条线", nil)
 		} else {
-			res.add(StepKeyModel, StepTitleModel, StepDone, "已锁定平台模型", nil)
+			res.add(StepKeyModel, StepTitleModel, StepDone,
+				modelTierDetail(tier)+" "+describeModelSpec(spec), nil)
 		}
 	} else {
 		res.add(StepKeyApp, StepTitleApp, StepAlready, "已有 Dify 应用 "+appID, nil)
@@ -439,4 +461,88 @@ func (h *TenantHandler) ensureDatasetRetrieval(ctx context.Context, res *DifyLin
 	default:
 		apply("检索方式与索引方式不一致，已改为与索引自洽")
 	}
+}
+
+// The tiers a model configuration can come from, in the order they are
+// consulted. The same three words the console pages use, so an operator who
+// learns them on the drift listing recognises them in an onboarding step.
+const (
+	modelTierOverride = "override"
+	modelTierPlatform = "platform"
+	modelTierBuiltin  = "builtin"
+)
+
+// effectiveModel resolves the configuration a line's app should be pinned to:
+// this line's own override, else the stored platform default, else the value
+// compiled into this binary.
+//
+// The order is the whole point and it is stated in exactly one other place —
+// the platform listing that reports drift. Two implementations of it would mean
+// a console that shows one model beside a line that was pinned to another, and
+// the listing would be reporting on itself rather than on Dify. This copy
+// exists only because provisioning cannot import the platform package without
+// turning a leaf into a cycle; it must keep to the same order.
+//
+// A read failure is not fatal and not silent. It returns the built-in default
+// with the error alongside, so the caller can pin something known and say which
+// tier it came from — an app left on the Dify workspace default is the one
+// outcome worth avoiding here, and it is the outcome a bare error would produce.
+func (h *TenantHandler) effectiveModel(ctx context.Context, productLineID string) (difyapp.ModelSpec, string, error) {
+	if h.modelVersions == nil {
+		// No store wired: this deployment answers with the compiled-in value
+		// and always has. Not an error — it is the state a deployment that has
+		// not run migration 021 is legitimately in.
+		return difyapp.PlatformModel(), modelTierBuiltin, nil
+	}
+
+	if productLineID != "" {
+		override, err := h.modelVersions.Active(ctx, &productLineID)
+		if err != nil {
+			return difyapp.PlatformModel(), modelTierBuiltin, err
+		}
+		if override != nil {
+			return override.Spec(), modelTierOverride, nil
+		}
+	}
+
+	platform, err := h.modelVersions.Active(ctx, nil)
+	if err != nil {
+		return difyapp.PlatformModel(), modelTierBuiltin, err
+	}
+	if platform != nil {
+		return platform.Spec(), modelTierPlatform, nil
+	}
+	return difyapp.PlatformModel(), modelTierBuiltin, nil
+}
+
+// modelTierDetail opens the step's detail line with where the pinned value came
+// from. An override is worth naming: a line answering on its own model produces
+// scores nothing else can be compared against, and the moment that becomes true
+// is the moment to say so rather than the next time somebody reads a report.
+func modelTierDetail(tier string) string {
+	switch tier {
+	case modelTierOverride:
+		return "已按该产线的模型覆盖锁定"
+	case modelTierPlatform:
+		return "已按控制台保存的平台模型锁定"
+	default:
+		return "已按内置默认值锁定模型"
+	}
+}
+
+// describeModelSpec renders a configuration the way the console does, so the
+// two token ceilings that once split this fleet are visible in the step itself
+// rather than only in a listing somebody has to go and open.
+func describeModelSpec(spec difyapp.ModelSpec) string {
+	return fmt.Sprintf("%s/%s temperature=%g max_tokens=%d",
+		spec.Provider, spec.Name, spec.Temperature, spec.MaxTokens)
+}
+
+// modelVersions is the model authority, narrowed to the one question
+// provisioning asks it: what is a scope on right now. It cannot publish,
+// because a newly created app adopts the configuration in force rather than
+// declaring one of its own — writing a revision from here would put a row under
+// every new line and quietly take it out of the platform default's reach.
+type modelVersions interface {
+	Active(ctx context.Context, productLineID *string) (*repository.ModelVersion, error)
 }

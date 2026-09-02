@@ -1,12 +1,13 @@
 package difyapp
 
-// PlatformModel is the one model every product line answers with.
-//
-// The model is a platform decision, not a tenant one. Whatever a tenant is
-// shown or would like, one model serves them all: it is what makes scores
-// comparable across product lines, and choosing a deliberately modest one is
-// what lets defects in the prompt, the retrieval and the ontology surface
-// instead of being papered over by a stronger model's reasoning.
+import (
+	"fmt"
+	"strings"
+)
+
+// ModelSpec is the model a provisioned Dify app is pinned to: which provider
+// serves it, which model, and the two completion parameters that decide whether
+// an answer comes back whole.
 //
 // It lives here beside DefaultSystemPrompt because both are the same kind of
 // thing — the contract a provisioned Dify app is created to satisfy — and
@@ -21,8 +22,8 @@ package difyapp
 // an empty reply was forwarded to customers as a normal answer. Liability
 // questions needed up to 2021 completion tokens, so 2048 would still clip the
 // longest of them.
-// The json tags are for the console, which reports the model in force: it is
-// the one thing on that page nobody can change and everybody needs to know.
+// The json tags are for the console, which reports the model in force and, now
+// that the value is editable there, writes it back in the same shape.
 type ModelSpec struct {
 	Provider    string  `json:"provider"`
 	Name        string  `json:"name"`
@@ -31,7 +32,28 @@ type ModelSpec struct {
 	MaxTokens   int     `json:"max_tokens"`
 }
 
-// PlatformModel returns the model every provisioned app is pinned to.
+// MinMaxTokens is the floor a spec's completion budget may not go under, named
+// so the console can state the same number it will be rejected against instead
+// of repeating a literal that could drift away from this one.
+const MinMaxTokens = 2048
+
+// PlatformModel returns the built-in default: the model an app is pinned to
+// when no configured row is in force for it. It is a fallback, not the
+// authority. The authority is the stored configuration, and resolving what is
+// actually in force is the admin layer's job — nothing in this package may
+// reach a database, which is exactly why the default has to exist as code.
+//
+// The model remains a platform decision, not a tenant one. Whatever a tenant is
+// shown or would like, one model serves them all: it is what makes scores
+// comparable across product lines, and choosing a deliberately modest one is
+// what lets defects in the prompt, the retrieval and the ontology surface
+// instead of being papered over by a stronger model's reasoning.
+//
+// That argument did not stop holding when the value became editable, so making
+// it editable did not make it a tenant setting. One platform-wide value is
+// still the default every line inherits; a per-line override is an explicit
+// exception, recorded as a deviation and labelled in the console as a line
+// whose scores can no longer be compared with the rest.
 func PlatformModel() ModelSpec {
 	return ModelSpec{
 		Provider:    "openai_api_compatible",
@@ -40,6 +62,36 @@ func PlatformModel() ModelSpec {
 		Temperature: 0.3,
 		MaxTokens:   4096,
 	}
+}
+
+// Validate reports whether a spec is fit to be pinned to an app. It is the gate
+// in front of every write — to Dify and to the store behind it — so a rule that
+// is not here is a rule nothing downstream applies either.
+//
+// Dify itself would accept most of what this rejects, which is the point: a
+// remote API that stores a value without complaint is not the same as a
+// configuration that answers customers. The floor on MaxTokens is the rule
+// worth reading twice. Below it this model spends the whole budget emitting its
+// reasoning and returns an empty completion rather than a truncated one, and an
+// empty completion does not look like a failure anywhere downstream — it has
+// already been forwarded to a customer as a normal answer once.
+func (m ModelSpec) Validate() error {
+	if strings.TrimSpace(m.Provider) == "" {
+		return fmt.Errorf("model provider is required")
+	}
+	if strings.TrimSpace(m.Name) == "" {
+		return fmt.Errorf("model name is required")
+	}
+	if strings.TrimSpace(m.Mode) == "" {
+		return fmt.Errorf("model mode is required")
+	}
+	if m.Temperature < 0 || m.Temperature > 2 {
+		return fmt.Errorf("temperature %g is out of range: it has to be between 0 and 2", m.Temperature)
+	}
+	if m.MaxTokens < MinMaxTokens {
+		return fmt.Errorf("max_tokens %d is below the floor of %d: this model emits its reasoning before its answer, so a budget this small is spent while still reasoning and the reply comes back empty rather than truncated — an empty reply is indistinguishable from a normal one downstream and has been forwarded to a customer as an answer", m.MaxTokens, MinMaxTokens)
+	}
+	return nil
 }
 
 // AsModelConfig renders the spec into the shape Dify's model_config["model"]

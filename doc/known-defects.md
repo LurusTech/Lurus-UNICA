@@ -551,6 +551,21 @@ Q: 到货挑出来1.2斤是坏的，能赔我多少？
 
 **已处置**：五条产线 `max_tokens` 统一改为 4096（`tmp/unify_model.py`）。
 
+**2026-08-26 补记，处置范围比当时以为的窄**：上面那次处置用的是一次性脚本，
+只覆盖了参与跑分的五条线。模型漂移清单上线当天（配置面重构阶段 4）实机一查，
+**演练线 DrillCo / DrillCo2 / DrillCo3 / DrillCo4 / DrillCo5 五条根本没被扫到**：
+它们跑在 `deepseek-chat` 上而不是平台声明的模型，且 `temperature` 与 `max_tokens`
+双双为 0 —— 即 `completion_params` 从未被写过，一直吃 Dify 工作空间的默认值。
+这正是 `pkg/difyapp/model.go` 顶部注释记的那笔账（"nothing wrote
+model_config["model"] at all, so every app inherited whatever the Dify workspace
+default happened to be"），它从未被清掉，只是没人再看。
+
+根因不是脚本漏了谁，是**处置手段本身是一次性的**：`PinPlatformModel` 全仓库只有
+开通新应用时一个调用点，存量应用一律不碰，于是任何在脚本之后新建的、
+或脚本当时没列进去的线，都会重新漂回工作空间默认值而无人知晓。
+阶段 4 把这条路补成常规能力——漂移清单逐线读 Dify 实况比对，
+勾选即可重推，写审计——并已借它把上述五条线纠正到 `deepseek-v4-flash` / 4096。
+
 **未根治的部分**：空答复本身仍会被照发。参数调大只是把触发概率压低——
 问题更长、知识库更大、推理更绕的时候还会撞上。真正的修复是
 **在链路里把"空答复"当成失败**：判定层遇到 `answer == ""` 应当直接转人工，
@@ -598,3 +613,37 @@ D18 那 18 条空答复里，**有 6 条被金标判为通过**
 **与 D18 的关系**：同一类故障——不该到客户眼前的东西到了客户眼前。
 D18 的修复（`pkg/domain.IsBlankAnswer`）能兜住"剥离后为空"的情形，
 但兜不住"根本没被剥离"——那种情况下答复非空，只是内容是内部标记。
+
+## D21 配置项为空不是报错，是功能静默消失
+
+有一类环境变量，**没配等于把整块功能悄悄关掉**，而界面上完全看不出来：
+
+| 变量 | 为空的后果 |
+|---|---|
+| `DIFY_DATASET_API_KEY` | 全平台租户的知识库管理直接禁用（`admin/internal/config/config.go:24-28`，`tenant/knowledge/knowledge.go:88-106`，`h.dataset` 为 nil） |
+| `ACEST_KB_URL` | 经验库召回与反馈整个不装配（`router/cmd/router/main.go:104,350-374`，`r.acest == nil` 时直接跳过召回注入） |
+| `ROUTER_INTERNAL_URL` | 平台管理页的运行开关只读镜像显示 unknown（`admin/internal/config/config.go:43-52`） |
+
+这三个都不是纯连接串——它们同时是业务功能的开关，只是这层含义没写在任何地方。
+运维看到的是"我没配这个可选变量"，租户看到的是"这个功能不存在"，两边都不知道对方看到了什么。
+
+**与 D8 同源**：没配置不报错、功能消失、界面照常。D8 是"有 app 无 dataset"走不出去的死状态，
+这条是"没 key 则整个模块不装配"，形态一样——**缺失被当成一种合法状态默默接受**。
+
+修法不是给每个变量加必填校验（有些本来就该可选），而是让门户能说出
+"本部署没有启用哪些能力、因为什么"。方案见 `doc/plan-workbench-settings.md` 第五条。
+
+## D22 同一秒内两次登录拿到完全相同的 token
+
+JWT 载荷里没有随机标识（`admin/internal/auth/jwt.go:51` `GenerateTokenPair`），
+同一用户在同一秒内登录两次，`iat` 与 `exp` 都相同，签出来的 access token 与 refresh token
+**字节级完全一致**。2026-08-26 实机复现：连续两次登录返回的 token 字符串相同；
+间隔 1.2 秒后再试则不同。
+
+后果限于 refresh 一侧：Redis 键是 `refresh:<token哈希>`（`handler/auth.go:90`），
+两个会话共用同一个键，而 refresh 是一次性的（用后即删，`auth.go:131`），
+于是先用掉的那个会话把另一个会话的续期能力一起废掉。
+
+现在影响很小——要在同一秒内登两次同一账号才会撞上。但一旦前端接上自动续期
+（`doc/plan-workbench-settings.md` 第六条），并发刷新就可能踩到。
+根治是签发时加一个随机标识，让每次签发必然唯一。

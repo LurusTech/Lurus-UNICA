@@ -36,6 +36,7 @@ func newTestTenantRouter() (*tenantRouter, *string, *string) {
 		handoffs:         mk("handoffs"),
 		handoffAnnotate:  mk("handoff-annotate"),
 		workbench:        mk("workbench"),
+		productLineModel: mk("product-line-model"),
 	}, &hit, &served
 }
 
@@ -96,6 +97,13 @@ func TestTenantRouter_Mapping(t *testing.T) {
 		// The workbench reads the tenant route itself, so its request arrives
 		// on the address the client used.
 		{http.MethodGet, "/api/v1/tenants/pl-1/workbench/sso", "workbench", "/api/v1/tenants/pl-1/workbench/sso"},
+
+		// One line's model override. A sibling of ai-settings rather than a
+		// member of it, so it is governed by its own case here and not by the
+		// closed sub-path list; the module reads the tenant route itself and
+		// checks that the two ids agree.
+		{http.MethodPut, "/api/v1/tenants/pl-1/product-lines/pl-1/model", "product-line-model", "/api/v1/tenants/pl-1/product-lines/pl-1/model"},
+		{http.MethodDelete, "/api/v1/tenants/pl-1/product-lines/pl-1/model", "product-line-model", "/api/v1/tenants/pl-1/product-lines/pl-1/model"},
 	}
 
 	for _, c := range cases {
@@ -127,6 +135,12 @@ func TestTenantRouter_UnknownPathsAreNotServed(t *testing.T) {
 		"/api/v1/tenants/pl-1/facts/ontology",
 		"/api/v1/tenants/pl-1/workbench",
 		"/api/v1/tenants/pl-1/users",
+		// The product-lines subtree serves exactly one resource. Its root and
+		// the line itself are not addresses: a tenant is its product line here,
+		// so a listing under this path would be a second way to say what
+		// /api/v1/tenants/{id} already says.
+		"/api/v1/tenants/pl-1/product-lines",
+		"/api/v1/tenants/pl-1/product-lines/pl-1",
 	}
 
 	for _, p := range paths {

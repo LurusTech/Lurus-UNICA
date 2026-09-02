@@ -330,6 +330,11 @@
   }
   .result-box .answer { white-space: pre-wrap; word-break: break-word; }
   .result-box .meta { color: var(--text-muted); font-size: 0.8rem; margin-top: 10px; }
+  /* The model box is written as aligned lines and is read as a block of
+     parameters, so its newlines have to survive. */
+  #model-info { white-space: pre-wrap; word-break: break-word; }
+  /* Explanations that belong to a 240px-wide box but not inside it. */
+  #model-edit > .hint { margin-bottom: 16px; }
   .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 8px 0; }
 
   /* Toasts */
@@ -591,17 +596,76 @@
       </div>
     </div>
 
-    <!-- Model in force (read-only) -->
+    <!-- Model in force -->
     <div class="card">
       <div class="card-head">
         <h2>生效模型</h2>
         <span class="pill" id="model-pill" hidden></span>
       </div>
       <p class="card-sub">
-        模型与推理参数由平台统一指定，全部产线共用一个，租户不可更改。
-        统一是为了让各产线的评测结果可比；这里列出来，是因为看不见比改不了更容易出事。
+        平台给所有产线指定同一个模型，为的是让各产线的评测分数能放在一起比较；模型本身也刻意选得朴素，
+        好让提示词、检索、本体上的毛病直接表现成差回答，而不是被更强的推理能力盖过去。
+        这条产线可以由平台管理员单独换掉它，但那是一次显式的例外，代价写在下面。
       </p>
       <div class="result-box mono" id="model-info">读取中…</div>
+      <div class="hint" id="model-tier"></div>
+      <div class="notice warn" id="model-deviation" hidden></div>
+
+      <!-- The editor is administrator-only and hidden rather than disabled for
+           everyone else, the same way the recall size above is: an override
+           suspends a platform-level decision, so it is not something a tenant's
+           own people can grant themselves, and a greyed-out form would only
+           raise a question they cannot act on. -->
+      <div id="model-edit" hidden>
+        <div class="hint" id="model-edit-intro"></div>
+
+        <div class="field">
+          <label for="f-model-provider">供应商（provider）</label>
+          <input id="f-model-provider" placeholder="例如：openai_api_compatible" />
+        </div>
+        <div class="field">
+          <label for="f-model-name">模型名（name）</label>
+          <input id="f-model-name" placeholder="例如：deepseek-v4-flash" />
+        </div>
+        <div class="field narrow">
+          <label for="f-model-mode">调用方式（mode）</label>
+          <input id="f-model-mode" placeholder="例如：chat" />
+        </div>
+        <div class="field narrow">
+          <label for="f-model-temp">temperature</label>
+          <input id="f-model-temp" type="number" min="0" max="2" step="0.1" />
+        </div>
+        <div class="hint">
+          temperature 取值 0 到 2。0 是合法值，会让输出变成确定性的——留空不等于 0，必须自己填。
+        </div>
+        <div class="field narrow">
+          <label for="f-model-tokens">max_tokens</label>
+          <input id="f-model-tokens" type="number" min="2048" step="128" />
+        </div>
+        <div class="hint">
+          max_tokens <b>不得低于 2048</b>：这个模型先输出推理、后输出答案，预算不够时吐出来的是一条空回复，
+          而不是被截断的回复。空回复在下游与正常回复分不出来，会被当成正常答复转给客户。
+        </div>
+        <div class="field">
+          <label for="f-model-note">变更说明</label>
+          <input id="f-model-note" placeholder="这条线为什么要用自己的模型" />
+          <div class="hint">写进本产线的模型版本历史，供以后有人问「这条线为什么被豁免」时查。</div>
+        </div>
+
+        <div class="hint" id="model-edit-warn">
+          保存会先把这套配置写进本产线的 AI 应用做验证，Dify 认了才落库；不认就原样返回它的错误，一个字节都不写入。
+          <b>保存即建立覆盖</b>——哪怕填的值与平台默认一字不差，这条线也会从此带着自己的配置，
+          将来平台统一改模型时不会跟着改。只想跟随平台，请用「恢复为平台默认」。
+        </div>
+        <div class="notice bad" id="model-error" hidden></div>
+
+        <div class="actions-row">
+          <button class="primary" id="model-save-btn">保存本线覆盖</button>
+          <button id="model-reset-btn">恢复为平台默认</button>
+          <span class="spacer"></span>
+          <span class="hint" id="model-state"></span>
+        </div>
+      </div>
     </div>
 
     <!-- Test message -->
@@ -658,6 +722,17 @@
     // The prompt contract as the server defines it. Held rather than hardcoded
     // so the checklist and the write path cannot come to disagree.
     contract: null,
+    // What this line's application answers with, as read out of Dify.
+    modelLive: null,
+    // Which tier that value came from, resolved by the platform roster.
+    // Null means unresolved, which is not the same as "no override": a
+    // tenant's own people cannot read the roster at all.
+    modelScope: null,
+    modelScopeError: "",
+    modelScopeLoading: false,
+    // Set once the operator types in the model form, so a late answer from
+    // the roster refills the boxes only while they are still untouched.
+    modelFormDirty: false,
     busy: false
   };
 
@@ -715,6 +790,20 @@
 
     modelPill: document.getElementById("model-pill"),
     modelInfo: document.getElementById("model-info"),
+    modelTier: document.getElementById("model-tier"),
+    modelDeviation: document.getElementById("model-deviation"),
+    modelEdit: document.getElementById("model-edit"),
+    modelEditIntro: document.getElementById("model-edit-intro"),
+    fModelProvider: document.getElementById("f-model-provider"),
+    fModelName: document.getElementById("f-model-name"),
+    fModelMode: document.getElementById("f-model-mode"),
+    fModelTemp: document.getElementById("f-model-temp"),
+    fModelTokens: document.getElementById("f-model-tokens"),
+    fModelNote: document.getElementById("f-model-note"),
+    modelError: document.getElementById("model-error"),
+    modelSaveBtn: document.getElementById("model-save-btn"),
+    modelResetBtn: document.getElementById("model-reset-btn"),
+    modelState: document.getElementById("model-state"),
 
     diagCard: document.getElementById("diag-card"),
     diagVerdict: document.getElementById("diag-verdict"),
@@ -827,6 +916,12 @@
             var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
             var err = new Error(msg);
             err.status = res.status;
+            // The parsed body travels with the error. A failure can carry more
+            // than one sentence — a write that had to be undone and could not
+            // be reports both what failed and what state that left behind —
+            // and a caller that only ever sees .message would drop the half
+            // that says the line was changed anyway.
+            err.data = data;
             throw err;
           }
           return data;
@@ -915,6 +1010,13 @@
     els.loading.hidden = false;
     els.loading.textContent = "加载中…";
     els.panels.hidden = true;
+    // The tier is re-resolved for whichever line is being opened. Carrying
+    // the previous line's answer across would put one line's override on
+    // another line's card, which is the one mistake this row cannot make.
+    state.modelScope = null;
+    state.modelScopeError = "";
+    state.modelScopeLoading = isAdmin();
+    state.modelFormDirty = false;
 
     // The facts switch lives on its own page and its own endpoint, but whether
     // it is having any effect can only be judged together with the platform
@@ -934,6 +1036,7 @@
         // without the version store answers 503 here, and that must leave the
         // rest of the page working rather than fail it.
         loadPromptVersions();
+        loadModelScope();
         els.loading.hidden = true;
         els.panels.hidden = false;
       })
@@ -1015,33 +1118,490 @@
     els.promptResetBtn.hidden = false;
   }
 
+  // ---------- Model ----------
+  //
+  // The card answers two questions that used to have one answer between them:
+  // what this line's application actually answers with, and which tier that
+  // value came from. While the model was a constant compiled into the build
+  // those were the same question. They stopped being the same the moment the
+  // platform default became editable, and the difference is the whole point of
+  // the tier row — a line answering on a model of its own produces evaluation
+  // scores nobody can place beside another line's, and that cost has to be
+  // visible on the page where the override lives.
+
+  // The floor below which this model answers with nothing at all. The server
+  // holds the same number and refuses anything under it, so a page that let a
+  // smaller value through would only be choosing which of the two says no.
+  var MODEL_MIN_MAX_TOKENS = 2048;
+
+  // The one sentence that has to accompany an override wherever it is shown.
+  // The server sends it too; it is repeated here because the roster this page
+  // reads the tier from does not carry it, and a warning that appears on only
+  // some of the paths that reach this state is not a warning.
+  var MODEL_DEVIATION_NOTICE = "该线已偏离平台模型，其评测分数不可与其他产品线横向比较。";
+
+  var MODEL_SOURCE_TEXT = {
+    console: "控制台",
+    provision: "开通流程",
+    seed: "初始化",
+    platform: "平台"
+  };
+
   // The model card reports what the tenant's application actually answers with.
-  // A line that has drifted off the platform model is called out rather than
-  // shown as ordinary: its answers are not comparable with the other lines',
-  // and until this card existed nothing anywhere said which model was in use.
+  // The live values are read out of Dify rather than out of the store, so what
+  // is shown is what a customer is being served, and a configuration that never
+  // reached the app cannot masquerade as one that did.
   function renderModel(model) {
-    if (!model) {
+    state.modelLive = model || null;
+    // The tier arrives separately and later; until it does, the values are
+    // rendered without a claim about where they came from.
+    renderModelScope();
+    if (!state.modelFormDirty) prefillModelForm(state.modelLive);
+  }
+
+  // The box of live values, plus — when both are known — whether the store and
+  // the application still agree. A disagreement is reported rather than
+  // repaired: this page can write one line's configuration, and a line whose
+  // app never received one is put right from the platform's drift roster.
+  function renderModelInfoBox() {
+    var live = state.modelLive;
+    var scope = state.modelScope;
+    var lines = [];
+
+    if (live) {
+      lines.push("供应商        " + (live.provider || "-"));
+      lines.push("模型          " + (live.name || "-"));
+      lines.push("temperature   " + live.temperature);
+      lines.push("max_tokens    " + live.max_tokens);
+    } else {
+      lines.push("无法读取 AI 应用当前使用的模型（应用未开通，或 Dify 暂不可达）。");
+      if (scope && scope.spec) {
+        lines.push("");
+        lines.push("按配置，这条产线应当使用：");
+        lines.push("供应商        " + (scope.spec.provider || "-"));
+        lines.push("模型          " + (scope.spec.name || "-"));
+        lines.push("temperature   " + scope.spec.temperature);
+        lines.push("max_tokens    " + scope.spec.max_tokens);
+      }
+    }
+
+    if (live && scope && scope.spec && !sameModelSpec(live, scope.spec)) {
+      lines.push("");
+      lines.push("注意：AI 应用里正在生效的值与配置不一致。");
+      lines.push("配置为 " + modelSpecText(scope.spec) + "；");
+      lines.push("这条线的 AI 应用没有收到它，或收到之后又被改过。");
+      lines.push("可在平台的模型漂移清单里重推这条线。");
+    }
+
+    els.modelInfo.textContent = lines.join("\n");
+  }
+
+  // Which tier this line's model came from, and what follows from that.
+  //
+  // The tier is not in the tenant settings payload — that endpoint reports the
+  // application's live model, which is a different fact — so it is read from
+  // the platform drift roster, the one surface that resolves override → stored
+  // platform revision → built-in value. That roster is administrator-only, so
+  // for a tenant's own people the tier is genuinely unavailable here, and the
+  // row says so instead of guessing the more flattering of the two.
+  function renderModelScope() {
+    var scope = state.modelScope;
+    var live = state.modelLive;
+    var isOverride = !!scope && scope.tier === "override";
+
+    renderModelInfoBox();
+
+    if (scope) {
+      setPill(els.modelPill, isOverride ? "warn" : "ok", isOverride ? "本线覆盖" : "平台默认");
+    } else if (live) {
+      // Without the tier, the only honest statement is whether these values
+      // match the ones compiled into this build. That is no longer the same as
+      // "matches the platform default": the platform default is editable now,
+      // and a deployment that changed it has every line off the built-in value
+      // without a single override existing.
+      setPill(els.modelPill, live.pinned ? "ok" : "warn",
+        live.pinned ? "与内置默认一致" : "与内置默认不一致");
+    } else {
       els.modelPill.hidden = true;
-      els.modelInfo.textContent = "无法读取当前模型（AI 应用未开通，或 Dify 暂不可达）。";
+    }
+
+    renderModelTierRow(scope, live, isOverride);
+    renderModelDeviation(scope, isOverride);
+    applyModelEditAvailability(scope, isOverride);
+  }
+
+  function renderModelTierRow(scope, live, isOverride) {
+    if (state.modelScopeLoading) {
+      setModelTierRow("来源", "正在确认这条产线的模型来自哪一档…");
       return;
     }
-    els.modelInfo.textContent = [
-      "供应商        " + (model.provider || "-"),
-      "模型          " + (model.name || "-"),
-      "temperature   " + model.temperature,
-      "max_tokens    " + model.max_tokens
-    ].join("\n");
-    els.modelPill.hidden = false;
-    if (model.pinned) {
-      els.modelPill.textContent = "与平台一致";
-      els.modelPill.className = "pill";
-    } else {
-      els.modelPill.textContent = "已偏离平台设定";
-      els.modelPill.className = "pill warn";
-      els.modelInfo.textContent +=
-        "\n\n此应用未使用平台指定的模型，其回答与其他产线不可比。请联系平台管理员。";
+
+    if (scope && isOverride) {
+      setModelTierRow("来源：本产线自己的模型覆盖",
+        modelRevisionText(scope) +
+        "取消覆盖后，这条线会回到平台默认：" + modelSpecText(scope.platform) + "。");
+      return;
     }
+    if (scope && scope.tier === "platform") {
+      setModelTierRow("来源：平台默认",
+        modelRevisionText(scope) +
+        "这条产线没有自己的覆盖，平台统一改模型时它会跟着改。");
+      return;
+    }
+    if (scope) {
+      setModelTierRow("来源：平台内置默认值",
+        "控制台里还没有保存过平台模型配置，用的是随版本编译进来的那一份。" +
+        "这条产线没有自己的覆盖。");
+      return;
+    }
+
+    if (isAdmin()) {
+      setModelTierRow("来源：本次无法判定",
+        "读取平台模型清单失败" + (state.modelScopeError ? "（" + state.modelScopeError + "）" : "") +
+        "，因此说不出这条线用的是平台默认还是自己的覆盖。上面的值仍是 AI 应用里真实生效的。");
+      return;
+    }
+
+    // A tenant's own people can read what their application answers with, but
+    // not which tier it came from — that lives on an administrator-only
+    // surface. Saying so is better than a badge that would be a coin flip.
+    setModelTierRow("来源：本页无法判定",
+      "档位（平台默认 / 本线覆盖）属于平台侧信息，当前账号读不到。" +
+      (live && !live.pinned
+        ? "另外，当前生效值与随版本编译进来的内置默认值不一致：可能是平台已统一换过模型，" +
+          "也可能是这条线设了单独覆盖。若是后者，" + MODEL_DEVIATION_NOTICE +
+          "请向平台管理员确认。"
+        : ""));
   }
+
+  function setModelTierRow(label, detail) {
+    els.modelTier.textContent = "";
+    var strong = document.createElement("b");
+    strong.textContent = label;
+    els.modelTier.appendChild(strong);
+    if (detail) els.modelTier.appendChild(document.createTextNode(" " + detail));
+  }
+
+  // Which revision the line stands on, when there is one to name. The platform
+  // revision is worth naming on a line that merely inherits it: that is the row
+  // this line will follow the next time the platform default moves.
+  function modelRevisionText(scope) {
+    if (!scope || !scope.version) return "";
+    var bits = ["v" + scope.version];
+    if (scope.source) bits.push(MODEL_SOURCE_TEXT[scope.source] || scope.source);
+    if (scope.createdAt) bits.push(shortTime(scope.createdAt));
+    var text = "（" + bits.join("，") + "）";
+    if (scope.note) text += "说明：" + scope.note + "。";
+    return text + "　";
+  }
+
+  // The cost of the exception, stated where the exception is. Not decoration:
+  // the platform runs one model precisely so that scores from different lines
+  // mean the same thing, and a page that showed an override as an ordinary
+  // setting would be inviting exactly the comparison it breaks.
+  function renderModelDeviation(scope, isOverride) {
+    els.modelDeviation.textContent = "";
+    if (!isOverride) {
+      els.modelDeviation.hidden = true;
+      return;
+    }
+    var title = document.createElement("span");
+    title.className = "title";
+    title.textContent = "这条产线用的是自己的模型";
+    var detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent = MODEL_DEVIATION_NOTICE +
+      "它的评测结果只能与自己的历史比较；平台之所以统一指定模型，" +
+      "就是为了让各产线的分数是同一把尺子量出来的。" +
+      (isAdmin()
+        ? "不再需要这个例外时，用下面的「恢复为平台默认」取消。"
+        : "如需取消，请联系平台管理员。");
+    els.modelDeviation.appendChild(title);
+    els.modelDeviation.appendChild(detail);
+    els.modelDeviation.hidden = false;
+  }
+
+  // Who may write here, and whether this line is in a state where a write means
+  // anything. Both buttons go through Dify, so a line with no application has
+  // nothing to verify against and nothing to project onto.
+  function applyModelEditAvailability(scope, isOverride) {
+    els.modelEdit.hidden = !isAdmin();
+    if (!isAdmin()) return;
+
+    var tenant = state.currentTenant;
+    var hasApp = !!(tenant && tenant.dify_agent_id);
+    // With the tier unknown, removal is still offered: the server answers "no
+    // override to remove" as an ordinary success, so the worst case is a wasted
+    // click, while withholding it would strand a line nobody can tell deviates.
+    var removable = hasApp && (!scope || isOverride);
+
+    els.modelSaveBtn.disabled = !hasApp;
+    els.modelResetBtn.disabled = !removable;
+
+    if (!hasApp) {
+      els.modelEditIntro.textContent =
+        "本产线还没有绑定 AI 应用，模型配置既无法验证也无法下发。请先完成开通。";
+      return;
+    }
+    els.modelEditIntro.textContent = scope && !isOverride
+      ? "下面这套值是这条线当前继承的平台默认。改动只影响本产线，其他产线不受影响。"
+      : "改动只影响本产线，其他产线不受影响。";
+  }
+
+  // The form is filled from whatever is known, most authoritative first: the
+  // resolved configuration once the roster has answered, the application's live
+  // values before that. It is never refilled over typing in progress — a slow
+  // roster arriving mid-edit must not quietly replace what an operator is in
+  // the middle of writing.
+  function prefillModelForm(spec) {
+    if (!spec) return;
+    els.fModelProvider.value = spec.provider || "";
+    els.fModelName.value = spec.name || "";
+    // The live payload carries no mode: Dify does not report it, and the
+    // comparison the platform makes does not use it. Left alone rather than
+    // blanked, so a mode that came from the roster survives a later refill.
+    if (typeof spec.mode === "string" && spec.mode) els.fModelMode.value = spec.mode;
+    els.fModelTemp.value = typeof spec.temperature === "number" ? spec.temperature : "";
+    els.fModelTokens.value = typeof spec.max_tokens === "number" ? spec.max_tokens : "";
+  }
+
+  function modelSpecText(spec) {
+    if (!spec) return "未知";
+    return (spec.provider || "-") + " / " + (spec.name || "-") +
+      "（temperature " + spec.temperature + "，max_tokens " + spec.max_tokens + "）";
+  }
+
+  // Compared on the four parameters both sides report. Dify's app payload has
+  // no mode field, so including it here would report drift on every line.
+  function sameModelSpec(a, b) {
+    if (!a || !b) return false;
+    return String(a.provider || "") === String(b.provider || "") &&
+      String(a.name || "") === String(b.name || "") &&
+      Number(a.temperature) === Number(b.temperature) &&
+      Number(a.max_tokens) === Number(b.max_tokens);
+  }
+
+  // The address of this line's override. In this schema a tenant is a product
+  // line — one id names both — and the server refuses a pair that disagrees,
+  // so the same id is written into both segments.
+  function modelOverridePath() {
+    var id = encodeURIComponent(tenantSegment());
+    return TENANT_ROOT + id + "/product-lines/" + id + "/model";
+  }
+
+  // Loaded after the page is on screen rather than with it. The roster polls
+  // Dify once per product line, so a deployment with many lines would otherwise
+  // hold the whole page behind the slowest one; and a failure here has to
+  // degrade this single row rather than fail the settings the page exists for.
+  function loadModelScope() {
+    if (!isAdmin()) {
+      state.modelScopeLoading = false;
+      renderModelScope();
+      return Promise.resolve();
+    }
+    var lineID = String(tenantSegment());
+    state.modelScopeLoading = true;
+    renderModelScope();
+
+    return api("/api/v1/platform/models")
+      .then(function (data) {
+        state.modelScopeLoading = false;
+        var rows = (data && Array.isArray(data.lines)) ? data.lines : [];
+        var row = null;
+        for (var i = 0; i < rows.length; i++) {
+          if (String(rows[i].product_line_id) === lineID) { row = rows[i]; break; }
+        }
+        if (!row) {
+          state.modelScopeError = "平台模型清单里没有这条产线";
+        } else {
+          state.modelScope = {
+            tier: row.tier,
+            spec: row.effective || null,
+            version: row.version,
+            source: row.source,
+            note: row.note,
+            createdAt: row.created_at,
+            // What this line would answer with if it had no override of its
+            // own: the stored platform revision, or the built-in value when
+            // nothing has been saved yet.
+            platform: (data.platform && data.platform.spec) || data.builtin || null
+          };
+          if (!state.modelFormDirty) prefillModelForm(state.modelScope.spec);
+        }
+        renderModelScope();
+        // The diagnostic names the model too, and it was drawn before the tier
+        // was known. Redrawn now so the two places say the same thing.
+        renderDiagnostics(buildDiagnostics(state.settings, state.factsConfig));
+      })
+      .catch(function (err) {
+        state.modelScopeLoading = false;
+        if (err.message === "unauthorized") return;
+        state.modelScopeError = err.status === 503
+          ? "本部署没有接入模型配置存储"
+          : err.message;
+        renderModelScope();
+      });
+  }
+
+  // heading defaults to the ordinary case — the write was refused and the line
+  // is untouched. A caller passes its own when that is not what happened: a
+  // write that landed and could not be undone needs a heading that does not
+  // tell the operator to stop looking.
+  function showModelError(message, heading) {
+    els.modelError.textContent = "";
+    if (!message) {
+      els.modelError.hidden = true;
+      return;
+    }
+    var title = document.createElement("span");
+    title.className = "title";
+    title.textContent = heading || "写入未生效";
+    // The server's own words, verbatim. When Dify refuses a model it is the
+    // only party that knows why — a name this workspace does not carry, a
+    // provider that was never configured — and a sentence of our own would be
+    // a worse guess at it.
+    var detail = document.createElement("span");
+    detail.className = "detail";
+    // Newlines are meaningful here: a failed write and a failed undo are two
+    // separate facts, and without this they run together into one sentence.
+    detail.style.whiteSpace = "pre-line";
+    detail.textContent = message;
+    els.modelError.appendChild(title);
+    els.modelError.appendChild(detail);
+    els.modelError.hidden = false;
+  }
+
+  function markModelFormDirty() { state.modelFormDirty = true; }
+  [els.fModelProvider, els.fModelName, els.fModelMode, els.fModelTemp, els.fModelTokens]
+    .forEach(function (input) { input.addEventListener("input", markModelFormDirty); });
+
+  els.modelSaveBtn.addEventListener("click", function () {
+    if (state.busy) return;
+
+    var provider = els.fModelProvider.value.trim();
+    var name = els.fModelName.value.trim();
+    var mode = els.fModelMode.value.trim();
+    var tempText = els.fModelTemp.value.trim();
+    var tokens = parseInt(els.fModelTokens.value, 10);
+
+    if (!provider || !name || !mode) {
+      toast("供应商、模型名、调用方式都必须填写", "error");
+      return;
+    }
+    // Refused here rather than defaulted: an empty box that became 0 would turn
+    // a half-filled form into a deterministic model nobody chose, and 0 is a
+    // legal value, so nothing downstream would ever question it.
+    if (tempText === "") {
+      toast("temperature 必填：留空会被当成 0，而 0 是合法值，会让输出变成确定性的", "error");
+      return;
+    }
+    var temp = Number(tempText);
+    if (isNaN(temp) || temp < 0 || temp > 2) {
+      toast("temperature 须在 0 到 2 之间", "error");
+      return;
+    }
+    if (isNaN(tokens) || tokens < MODEL_MIN_MAX_TOKENS) {
+      toast("max_tokens 不得低于 " + MODEL_MIN_MAX_TOKENS +
+        "：低于这个数，这个模型返回的是空回复，而不是被截断的回复", "error");
+      return;
+    }
+
+    showModelError("");
+    els.modelState.style.color = "";
+    els.modelState.textContent = "";
+    setBusy(true, els.modelSaveBtn, "验证并保存中…");
+
+    api(modelOverridePath(), {
+      method: "PUT",
+      body: JSON.stringify({
+        provider: provider,
+        name: name,
+        mode: mode,
+        temperature: temp,
+        max_tokens: tokens,
+        note: els.fModelNote.value.trim()
+      })
+    })
+      .then(function (resp) {
+        resp = resp || {};
+        if (!resp.changed) {
+          // Not a new revision, but the value did reach Dify: saving the same
+          // configuration again is how an operator repairs a line that was
+          // edited in the Dify console, so it has to be reported as having
+          // been sent, not as having been skipped.
+          els.modelState.textContent = "无新版本，已重新下发 " + nowText();
+          toast("这条产线已经是这套配置，未新建版本；已重新写入它的 AI 应用", "warn");
+          return loadSettings();
+        }
+        state.modelFormDirty = false;
+        els.fModelNote.value = "";
+        els.modelState.textContent = "已保存并下发 " + nowText();
+        toast("已保存本线覆盖，并已写入 AI 应用" +
+          (resp.model && resp.model.version ? "（v" + resp.model.version + "）" : ""), "success");
+        // Reloaded rather than patched from the response: the top half of this
+        // card shows what Dify answers with, and that is only worth showing if
+        // it was read back from Dify.
+        return loadSettings();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.modelState.style.color = "var(--bad)";
+        els.modelState.textContent = "保存失败 " + nowText();
+        var detail = err.message;
+        if (err.data && err.data.revert_error) {
+          // The save failed and the undo failed too, so this line is left
+          // carrying a configuration no version records. Saying only "save
+          // failed" would send the operator away from a line that did change.
+          detail += "\n注意：" + err.data.revert_error +
+            "\n这条产线现在的实际配置与下面显示的可能不一致，请到平台管理页的模型漂移清单核对。";
+        }
+        showModelError(detail,
+          err.data && err.data.revert_error ? "写入未落库，且撤回失败" : null);
+        reportError("保存模型覆盖失败", err);
+        // Reloaded so the card shows what Dify actually answers with rather
+        // than the form the operator typed.
+        loadSettings();
+      })
+      .finally(function () { setBusy(false, els.modelSaveBtn, "保存本线覆盖"); });
+  });
+
+  els.modelResetBtn.addEventListener("click", function () {
+    if (state.busy) return;
+    if (!confirm("确认取消这条产线的模型覆盖吗？\n" +
+      "这条线会回到平台默认模型，平台默认值会立即写入它的 AI 应用。\n" +
+      "覆盖的历史仍然保留，需要时可以重新设置。")) return;
+
+    showModelError("");
+    els.modelState.style.color = "";
+    els.modelState.textContent = "";
+    setBusy(true, els.modelResetBtn, "恢复中…");
+
+    api(modelOverridePath(), { method: "DELETE" })
+      .then(function (resp) {
+        resp = resp || {};
+        if (!resp.changed) {
+          els.modelState.textContent = "无改动 " + nowText();
+          toast("这条产线本来就没有覆盖，一直跟随平台默认", "warn");
+          return null;
+        }
+        state.modelFormDirty = false;
+        els.fModelNote.value = "";
+        els.modelState.textContent = "已恢复为平台默认 " + nowText();
+        toast("已取消覆盖，这条产线回到平台默认模型", "success");
+        return loadSettings();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.modelState.style.color = "var(--bad)";
+        els.modelState.textContent = "恢复失败 " + nowText();
+        // A 502 here means the override is gone from the store while the app
+        // has not caught up — half done, and the server says which half. Shown
+        // verbatim for that reason.
+        showModelError(err.message);
+        reportError("恢复平台默认失败", err);
+      })
+      .finally(function () { setBusy(false, els.modelResetBtn, "恢复为平台默认"); });
+  });
 
   // Whether the prompt in hand is a prompt at all. When the settings endpoint
   // could not read one it answers with an explanation in its place — writing
@@ -1893,13 +2453,26 @@
         state_text: rt.intent_triage === "shadow" ? "生效（分诊仅观测）" : "生效" });
     }
 
-    // 6. The model is a platform decision; a line that has drifted off it is
-    //    not comparable with the others, which belongs on this card too.
+    // 6. The model. Which tier it came from decides what this row means:
+    //    a line on an override answers on a model of its own, so its scores
+    //    cannot be read beside anybody else's. Where the tier could not be
+    //    read, the row says what it can prove — that the values do or do not
+    //    match the ones compiled into this build — rather than calling a
+    //    platform-wide model change a deviation of this line's.
     if (model) {
-      rows.push(model.pinned
-        ? { state: "ok", title: "生效模型", state_text: model.name }
-        : { state: "warn", title: "生效模型", state_text: model.name + "（已偏离平台设定）",
-            note: "本应用未使用平台指定的模型，其回答与其他产线不可比。请联系平台管理员。" });
+      var scope = state.modelScope;
+      if (scope && scope.tier === "override") {
+        rows.push({ state: "warn", title: "生效模型", state_text: model.name + "（本线覆盖）",
+          note: MODEL_DEVIATION_NOTICE + "不再需要这个例外时，可在下方「生效模型」卡片恢复为平台默认。" });
+      } else if (scope) {
+        rows.push({ state: "ok", title: "生效模型", state_text: model.name + "（平台默认）" });
+      } else if (model.pinned) {
+        rows.push({ state: "ok", title: "生效模型", state_text: model.name });
+      } else {
+        rows.push({ state: "warn", title: "生效模型", state_text: model.name + "（与内置默认不一致）",
+          note: "本应用的模型与随版本编译进来的内置默认值不同：可能是平台已统一换过模型，" +
+            "也可能是这条线设了单独覆盖。前者无碍，后者意味着本线的评测分数不可与其他产线横向比较。" });
+      }
     }
 
     return rows;

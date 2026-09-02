@@ -74,6 +74,12 @@ type TenantHandler struct {
 	// exactly as it did before — and the difference is confined to whether the
 	// new line starts with a local prompt authority or without one.
 	promptVersions promptVersions
+
+	// modelVersions resolves what a newly provisioned line's Dify app is
+	// pinned to. Nil is tolerated and means the built-in default, which is
+	// exactly what a deployment that has not run migration 021 is on; see
+	// effectiveModel.
+	modelVersions modelVersions
 }
 
 // auditTrail is the one audit capability this package uses.
@@ -99,6 +105,9 @@ type TenantHandlerConfig struct {
 	// PromptVersions gives a newly provisioned line its version 1; see
 	// TenantHandler.promptVersions. Nil is tolerated.
 	PromptVersions promptVersions
+	// ModelVersions says which model a newly provisioned line is pinned to;
+	// see TenantHandler.modelVersions. Nil is tolerated.
+	ModelVersions modelVersions
 }
 
 // NewTenantHandler creates the tenant lifecycle handler.
@@ -114,6 +123,7 @@ func NewTenantHandler(cfg TenantHandlerConfig) *TenantHandler {
 		bcryptCost:         cfg.BcryptCost,
 		audit:              cfg.Audit,
 		promptVersions:     cfg.PromptVersions,
+		modelVersions:      cfg.ModelVersions,
 	}
 }
 

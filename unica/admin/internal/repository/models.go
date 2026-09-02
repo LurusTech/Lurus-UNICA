@@ -48,3 +48,36 @@ type ChannelConfig struct {
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
+
+// ModelVersion is one stored revision of the answering model's configuration,
+// as it lives in model_versions (021).
+//
+// ProductLineID is the row's scope rather than an optional attribute of it: nil
+// is the platform default that every line answers with, and a value is that one
+// line's deliberate override. The database column is nullable for the same
+// reason, and every query in model_version.go folds the two cases together with
+// COALESCE — see the migration for why a plain UNIQUE would not have held.
+//
+// The parameters are spread across fields rather than embedding difyapp.
+// ModelSpec so that this file keeps describing rows the way the rest of it
+// does, one field per column; ModelVersion.Spec converts to the spec type the
+// bridge and the validator take.
+type ModelVersion struct {
+	ID            int64      `json:"id"`
+	ProductLineID *string    `json:"product_line_id,omitempty"`
+	Version       int        `json:"version"`
+	Provider      string     `json:"provider"`
+	Name          string     `json:"name"`
+	Mode          string     `json:"mode"`
+	Temperature   float64    `json:"temperature"`
+	MaxTokens     int        `json:"max_tokens"`
+	Active        bool       `json:"active"`
+	// PushedAt is when this revision reached Dify, and nil when it has not. A
+	// nil PushedAt on the active revision is the "versioned, not yet in effect"
+	// state: the save is safe here while customers are still being answered by
+	// the model the previous revision named.
+	PushedAt  *time.Time `json:"pushed_at,omitempty"`
+	Source    string     `json:"source"`
+	Note      string     `json:"note,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+}

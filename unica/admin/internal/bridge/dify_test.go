@@ -741,3 +741,242 @@ func TestDifyBridge_SetDatasetRetrieval_KeepsAnAdministratorsTopK(t *testing.T) 
 		t.Errorf("search method = %q, want the one matching the economy index", got)
 	}
 }
+
+// modelConfigStub is a Dify console stub that keeps what it was given, so a
+// write can be read back. A stub that answers with the old configuration
+// forever cannot tell a model that took effect from one Dify accepted and
+// dropped, and that distinction is the entire reason PinModel reads back.
+//
+// clamp, when set, rewrites the configuration on the way in — which is what a
+// deployment whose provider caps the completion budget actually does, and it
+// still answers 200.
+type modelConfigStub struct {
+	t       *testing.T
+	stored  map[string]interface{}
+	written map[string]interface{}
+	tokens  []string
+	writes  int
+	clamp   func(cfg map[string]interface{})
+	// reject, when set, is the error body Dify answers the write with instead
+	// of storing it.
+	reject string
+}
+
+func (s *modelConfigStub) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.tokens = append(s.tokens, r.Header.Get("Authorization"))
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apps/app-123":
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": "app-123", "model_config": s.stored})
+		case r.Method == http.MethodPost && r.URL.Path == "/apps/app-123/model-config":
+			s.writes++
+			if s.reject != "" {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(s.reject))
+				return
+			}
+			var cfg map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&cfg)
+			s.written = cfg
+			if s.clamp != nil {
+				s.clamp(cfg)
+			}
+			s.stored = cfg
+			w.Write([]byte(`{"result":"success"}`))
+		default:
+			s.t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}
+}
+
+func newModelConfigStub(t *testing.T) *modelConfigStub {
+	return &modelConfigStub{
+		t: t,
+		stored: map[string]interface{}{
+			"pre_prompt":      "the prompt this write must not disturb",
+			"prompt_type":     "simple",
+			"user_input_form": []interface{}{},
+			"model": map[string]interface{}{
+				"provider":          "deepseek",
+				"name":              "deepseek-chat",
+				"completion_params": map[string]interface{}{"temperature": 0.9, "max_tokens": 1024},
+			},
+		},
+	}
+}
+
+// TestDifyBridge_PinModel_WritesAndReadsBack covers the ordinary path: the
+// requested model reaches the app, the rest of the configuration survives the
+// read-modify-write, and the readback agrees.
+func TestDifyBridge_PinModel_WritesAndReadsBack(t *testing.T) {
+	stub := newModelConfigStub(t)
+	server := httptest.NewServer(stub.handler())
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, AdminToken: "test-token"})
+	spec := difyapp.ModelSpec{
+		Provider:    "openai_api_compatible",
+		Name:        "some-other-model",
+		Mode:        "chat",
+		Temperature: 0.1,
+		MaxTokens:   8192,
+	}
+
+	if err := b.PinModel(context.Background(), "app-123", spec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	model, _ := stub.written["model"].(map[string]interface{})
+	if !spec.Matches(model) {
+		t.Errorf("the written model is not the requested one: %v", stub.written["model"])
+	}
+	if model["mode"] != "chat" {
+		t.Errorf("mode was not written: %v", model["mode"])
+	}
+	// The endpoint replaces the whole configuration object, so anything the
+	// read-modify-write drops is silently reset on the live app.
+	if stub.written["pre_prompt"] != "the prompt this write must not disturb" {
+		t.Errorf("the system prompt was dropped from the written config: %v", stub.written["pre_prompt"])
+	}
+	if stub.written["prompt_type"] != "simple" {
+		t.Errorf("prompt_type was dropped from the written config: %v", stub.written["prompt_type"])
+	}
+}
+
+// TestDifyBridge_PinModel_RejectsAWriteThatDidNotTake covers the answer this
+// endpoint gives for a write it did not keep: the same 200 as one that took
+// effect. Here the model name lands but the token ceiling is clamped, which is
+// the shape that matters most — an app on the right model with the wrong
+// ceiling is the configuration that returned empty answers, and reporting it as
+// pinned is how the console would come to name a model that never produced the
+// scores attributed to it.
+func TestDifyBridge_PinModel_RejectsAWriteThatDidNotTake(t *testing.T) {
+	stub := newModelConfigStub(t)
+	stub.clamp = func(cfg map[string]interface{}) {
+		model, _ := cfg["model"].(map[string]interface{})
+		params, _ := model["completion_params"].(map[string]interface{})
+		params["max_tokens"] = 2048
+	}
+	server := httptest.NewServer(stub.handler())
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, AdminToken: "test-token"})
+	spec := difyapp.ModelSpec{
+		Provider: "openai_api_compatible", Name: "deepseek-v4-flash", Mode: "chat",
+		Temperature: 0.3, MaxTokens: 8192,
+	}
+
+	err := b.PinModel(context.Background(), "app-123", spec)
+	if err == nil {
+		t.Fatal("a write the app did not keep was reported as success")
+	}
+	if !strings.Contains(err.Error(), "still answers with a different model") {
+		t.Errorf("error should say the model is not in effect, got: %v", err)
+	}
+	// The operator has to be able to see which half disagreed without opening
+	// the Dify console.
+	if !strings.Contains(err.Error(), "max_tokens=8192") || !strings.Contains(err.Error(), "max_tokens=2048") {
+		t.Errorf("error should name both what was written and what is in effect, got: %v", err)
+	}
+}
+
+// TestDifyBridge_PinModel_ReportsAnAppWithNoModelAtAll covers the readback
+// finding no model object: the message has to name that rather than print an
+// empty provider and name, which reads as a comparison bug instead of a state.
+func TestDifyBridge_PinModel_ReportsAnAppWithNoModelAtAll(t *testing.T) {
+	stub := newModelConfigStub(t)
+	stub.clamp = func(cfg map[string]interface{}) { delete(cfg, "model") }
+	server := httptest.NewServer(stub.handler())
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, AdminToken: "test-token"})
+	err := b.PinModel(context.Background(), "app-123", difyapp.PlatformModel())
+	if err == nil {
+		t.Fatal("an app left with no model was reported as pinned")
+	}
+	if !strings.Contains(err.Error(), "no model configured") {
+		t.Errorf("error should name the missing model, got: %v", err)
+	}
+}
+
+// TestDifyBridge_PinModel_PassesTheRejectionThrough covers a model this
+// deployment has no provider for. Dify's own complaint is the only thing that
+// says why, and the operator who typed the name is the one who needs to read
+// it, so it travels back whole instead of being replaced with a summary.
+func TestDifyBridge_PinModel_PassesTheRejectionThrough(t *testing.T) {
+	stub := newModelConfigStub(t)
+	stub.reject = `{"code":"provider_not_initialize","message":"Model schema not found for gpt-9 in openai_api_compatible"}`
+	server := httptest.NewServer(stub.handler())
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, AdminToken: "test-token"})
+	spec := difyapp.ModelSpec{
+		Provider: "openai_api_compatible", Name: "gpt-9", Mode: "chat",
+		Temperature: 0.3, MaxTokens: 4096,
+	}
+
+	err := b.PinModel(context.Background(), "app-123", spec)
+	if err == nil {
+		t.Fatal("a rejected write was reported as success")
+	}
+	if !strings.Contains(err.Error(), "Model schema not found for gpt-9") {
+		t.Errorf("Dify's own rejection did not reach the caller: %v", err)
+	}
+}
+
+// TestDifyBridge_PinModel_RefusesAnInvalidSpec covers the guard in front of the
+// write. Dify would store a ceiling this low without complaint and the app
+// would then answer customers with empty replies, so the request never leaves.
+func TestDifyBridge_PinModel_RefusesAnInvalidSpec(t *testing.T) {
+	stub := newModelConfigStub(t)
+	server := httptest.NewServer(stub.handler())
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, AdminToken: "test-token"})
+	spec := difyapp.PlatformModel()
+	spec.MaxTokens = 512
+
+	err := b.PinModel(context.Background(), "app-123", spec)
+	if err == nil {
+		t.Fatal("a spec below the completion-budget floor was written")
+	}
+	if stub.writes != 0 {
+		t.Errorf("an invalid spec still reached the app (%d writes)", stub.writes)
+	}
+	if !strings.Contains(err.Error(), "max_tokens") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+}
+
+func TestDifyBridge_PinModel_EmptyAppID(t *testing.T) {
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: "http://localhost", AdminToken: "token"})
+	if err := b.PinModel(context.Background(), "", difyapp.PlatformModel()); err == nil {
+		t.Fatal("expected an error for an empty app id")
+	}
+}
+
+// TestDifyBridge_PinPlatformModel_WritesTheBuiltInDefault covers the
+// provisioning entry point: it pins the built-in default and uses the console
+// token it was handed rather than minting another one — there is no login
+// configured on this bridge, so a mint would fail outright.
+func TestDifyBridge_PinPlatformModel_WritesTheBuiltInDefault(t *testing.T) {
+	stub := newModelConfigStub(t)
+	server := httptest.NewServer(stub.handler())
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL})
+
+	if err := b.PinPlatformModel(context.Background(), "app-123", "provisioning-token"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	model, _ := stub.written["model"].(map[string]interface{})
+	if !difyapp.PlatformModel().Matches(model) {
+		t.Errorf("the app was not pinned to the platform default: %v", stub.written["model"])
+	}
+	for _, got := range stub.tokens {
+		if got != "Bearer provisioning-token" {
+			t.Errorf("the supplied console token was not used: %q", got)
+		}
+	}
+}
