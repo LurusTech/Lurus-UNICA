@@ -144,6 +144,8 @@ const (
 	// defined beside its counterpart so the two writers of this trail cannot
 	// drift apart on the spelling.
 	auditResourcePlatformModel = "platform_model"
+	// auditResourceDifyConsole marks a console session opened for a browser.
+	auditResourceDifyConsole = "dify_console"
 	// auditResourceProductLineModel is one line's model being written or
 	// projected. Every row this file writes is one of these, including a push
 	// that projected the inherited platform value: the thing acted on was that

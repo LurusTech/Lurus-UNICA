@@ -433,6 +433,7 @@ func main() {
 		Models:       modelVersionRepo,
 		ProductLines: plRepo,
 		Dify:         difyBridge,
+		Console:      difyBridge,
 		Audit:        auditLogger,
 	})
 	mux.Handle("/api/v1/platform/settings", authMW(http.HandlerFunc(platformHandler.Handle)))
@@ -444,6 +445,8 @@ func main() {
 	// settings route: everything else there is read-only, and a PUT that landed
 	// on the same address would read as though the whole page were writable.
 	mux.Handle("/api/v1/platform/model", authMW(http.HandlerFunc(platformHandler.HandleModel)))
+	// Administrators only; the check lives in the handler, with its reason.
+	mux.Handle("/api/v1/platform/dify-console/session", authMW(http.HandlerFunc(platformHandler.HandleDifyConsoleSession)))
 
 	// Which tenants are still on an older platform template, and the one
 	// control that acts on the answer. Both are platform-scoped: falling behind

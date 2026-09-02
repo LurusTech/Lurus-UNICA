@@ -72,6 +72,14 @@ type settingsPinner interface {
 	PinModel(ctx context.Context, appID string, spec difyapp.ModelSpec) error
 }
 
+// consoleSessionMinter opens a Dify console session for a browser to adopt. It
+// is separate from settingsPinner because a deployment can be able to push a
+// model without being able to hand out a console session: pushing works with a
+// static admin token, and a session must not be minted from one.
+type consoleSessionMinter interface {
+	ConsoleSession(ctx context.Context) (accessToken, refreshToken string, err error)
+}
+
 // settingsAudit is the trail. Same shape as the prompt side's, for the same
 // reason: this rewrites something every tenant is answered by.
 type settingsAudit interface {
@@ -108,6 +116,9 @@ type SettingsConfig struct {
 	// ProductLines supplies the verification target for a model write.
 	ProductLines settingsLines
 	Dify         settingsPinner
+	// Console may be nil, which leaves the Dify console entry unavailable
+	// rather than broken.
+	Console consoleSessionMinter
 	// Audit may be nil, which disables the trail. The live wiring always sets it.
 	Audit settingsAudit
 }
@@ -117,8 +128,9 @@ type Handler struct {
 	router SwitchReader
 	models settingsModelStore
 	lines  settingsLines
-	dify   settingsPinner
-	audit  settingsAudit
+	dify    settingsPinner
+	console consoleSessionMinter
+	audit   settingsAudit
 }
 
 // NewHandler creates a read-only platform settings handler.
@@ -139,8 +151,9 @@ func NewSettingsHandler(cfg SettingsConfig) *Handler {
 		router: cfg.Router,
 		models: cfg.Models,
 		lines:  cfg.ProductLines,
-		dify:   cfg.Dify,
-		audit:  cfg.Audit,
+		dify:    cfg.Dify,
+		console: cfg.Console,
+		audit:   cfg.Audit,
 	}
 }
 
@@ -678,6 +691,73 @@ func (h *Handler) record(r *http.Request, resourceID string, plRef *string,
 	}
 	h.audit.LogEvent(actorID, actorRole, "push", auditResourcePlatformModel, resourceID, plRef,
 		beforeState, afterState, audit.ExtractIP(r))
+}
+
+// HandleDifyConsoleSession mints a Dify console session so an administrator
+// arriving from the platform page is already signed in there.
+//
+// Administrators only, and deliberately so. The Dify console has a single
+// shared administrator account: whoever holds a session for it can read and
+// change every tenant's apps, datasets and model provider credentials. There is
+// no per-user console identity to hand out instead, so the entry is kept to the
+// people who already hold platform-wide authority here.
+//
+// The pair goes to the caller and nowhere else. It is not logged, and the audit
+// row records only that a session was opened.
+func (h *Handler) HandleDifyConsoleSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if h.console == nil {
+		// 503 rather than 500: nothing failed, this deployment simply has no
+		// path to a Dify console.
+		errorJSON(w, http.StatusServiceUnavailable,
+			"这个部署没有接入 Dify 控制台通道，无法免密进入")
+		return
+	}
+
+	access, refresh, err := h.console.ConsoleSession(r.Context())
+	if err != nil {
+		log.Printf("[platform] dify console session error: %v", err)
+		h.recordConsoleSession(r, err)
+		errorJSON(w, http.StatusServiceUnavailable,
+			"无法打开 Dify 控制台会话："+err.Error())
+		return
+	}
+
+	h.recordConsoleSession(r, nil)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"access_token":  access,
+		"refresh_token": refresh,
+	})
+}
+
+// recordConsoleSession leaves a trail of who opened a console session and when.
+// The tokens are not part of it: an audit row is read by more people than the
+// session was minted for, and a credential in it would outlive its usefulness
+// as evidence long before it stopped being usable as a credential.
+func (h *Handler) recordConsoleSession(r *http.Request, failure error) {
+	if h.audit == nil {
+		return
+	}
+	actorID, actorRole := "", ""
+	if claims := auth.GetClaims(r.Context()); claims != nil {
+		actorID, actorRole = claims.UserID, claims.Role
+	}
+	after := map[string]interface{}{"ok": failure == nil}
+	if failure != nil {
+		after["error"] = failure.Error()
+	}
+	// "create" rather than "login": the audit_logs_action_check constraint holds a
+	// fixed vocabulary, and a verb outside it is refused at insert time — the row
+	// would be lost rather than rejected loudly. Creating a console session is what
+	// this is.
+	h.audit.LogEvent(actorID, actorRole, "create", auditResourceDifyConsole, "dify-console", nil,
+		nil, after, audit.ExtractIP(r))
 }
 
 // requireAdmin gates every endpoint on this page. The check is here rather than

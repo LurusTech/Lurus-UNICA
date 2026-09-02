@@ -319,8 +319,12 @@ MaxTokens    4096
       `/` 是 `307 → /apps`、资源全为绝对的 `/_next/...`，且顶层路由与门户撞车。
       改走「Dify 自己 nginx 供出的同源种子页写 localStorage」——前提已验：
       控制台登录 API 返回 access+refresh，Dify 前端从 `console_token` / `refresh_token` 读取。
-- [ ] C2. Dify 入口：改为「同源种子页」形态，**只给 admin**（共享管理员钥匙即全平台权限，
-      且租户在 Dify 改的设置会被权威源判为漂移后静默冲掉）。下一增量，设计见 `doc/active_task.md` 的 Deferred。
+- [x] C2. Dify 入口：改为「同源种子页」形态，**只给 admin**（共享管理员钥匙即全平台权限，
+      且租户在 Dify 改的设置会被权威源判为漂移后静默冲掉）。
+      **已实现并实机验收（2026-09-02）**：`GET /api/v1/platform/dify-console/session`（admin 限定）
+      签一次控制台会话，token 走 URL fragment 交给 Dify 自己 nginx 供出的同源种子页，
+      种子页写 localStorage 后清掉 fragment 并跳 `/apps`。`home.html` 未动。
+      **这是一条已接受的决定**：租户不获得 Dify 入口，他们要看的分段由 C3/C4 在门户内解决。
 - [x] C3. admin 侧新增文档分段只读接口，转发 Dify 分段查询
 - [x] C4. 「我的知识库」文档条目加"查看分段"，只读展示
 

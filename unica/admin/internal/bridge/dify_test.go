@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -292,6 +293,130 @@ func TestDifyBridge_Login_MissingCredentials(t *testing.T) {
 
 	if _, err := b.Login(context.Background(), "", ""); err == nil {
 		t.Fatal("expected error for missing credentials")
+	}
+}
+
+func TestDifyBridge_ConsoleSession_ReturnsBothTokens(t *testing.T) {
+	var logins int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/login" {
+			t.Errorf("expected /login, got %s", r.URL.Path)
+		}
+		logins++
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": "success",
+			"data": map[string]string{
+				"access_token":  "console-access-" + strconv.Itoa(logins),
+				"refresh_token": "console-refresh-" + strconv.Itoa(logins),
+			},
+		})
+	}))
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{
+		AdminURL:      server.URL,
+		AdminEmail:    "admin@example.com",
+		AdminPassword: "secret",
+	})
+
+	access, refresh, err := b.ConsoleSession(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if access != "console-access-1" || refresh != "console-refresh-1" {
+		t.Errorf("got access=%q refresh=%q", access, refresh)
+	}
+
+	// The pair handed to a browser is never the cached working credential: a
+	// second call must reach Dify again, so a console logout in the browser
+	// cannot revoke what provisioning is running on.
+	//
+	// What is asserted is the second login, not two different access tokens.
+	// Dify's console access token carries only iat and exp, so two logins in the
+	// same second really do return the same string — measured, not assumed. Its
+	// refresh token is random and does differ, and that is the half that matters:
+	// it is the single-use, long-lived one.
+	access2, refresh2, err := b.ConsoleSession(context.Background())
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if logins != 2 {
+		t.Errorf("logins = %d, want 2 — the session was served from cache", logins)
+	}
+	if refresh2 == refresh {
+		t.Errorf("second session reused the first refresh token: %q", refresh2)
+	}
+	_ = access2
+}
+
+// A static admin token never expires. Whatever else it is good for, it is not
+// something to hand to a browser, so this path refuses rather than falling back
+// to it.
+func TestDifyBridge_ConsoleSession_RefusesStaticToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no request may be made when only a static token is configured")
+	}))
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, AdminToken: "static-forever"})
+
+	if _, _, err := b.ConsoleSession(context.Background()); err == nil {
+		t.Fatal("expected a refusal when only a static admin token is configured")
+	} else if !strings.Contains(err.Error(), "DIFY_ADMIN_EMAIL") {
+		t.Errorf("the error should name the setting that is missing, got: %v", err)
+	}
+}
+
+func TestDifyBridge_ConsoleSession_MissingCredentials(t *testing.T) {
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: "http://localhost"})
+
+	if _, _, err := b.ConsoleSession(context.Background()); err == nil {
+		t.Fatal("expected an error with no credentials configured")
+	}
+}
+
+// Dify answering without a refresh token would leave the browser with a session
+// it cannot renew, which is worse than not opening one.
+func TestDifyBridge_ConsoleSession_RequiresRefreshToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": "success",
+			"data":   map[string]string{"access_token": "only-access"},
+		})
+	}))
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{
+		AdminURL:      server.URL,
+		AdminEmail:    "admin@example.com",
+		AdminPassword: "secret",
+	})
+
+	if _, _, err := b.ConsoleSession(context.Background()); err == nil {
+		t.Fatal("expected an error when the reply carried no refresh token")
+	}
+}
+
+// Login keeps its one-token signature; the pair is only for ConsoleSession.
+func TestDifyBridge_Login_StillReturnsAccessTokenOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": "success",
+			"data": map[string]string{
+				"access_token":  "a-token",
+				"refresh_token": "r-token",
+			},
+		})
+	}))
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL})
+	token, err := b.Login(context.Background(), "admin@example.com", "secret")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "a-token" {
+		t.Errorf("Login returned %q, want the access token", token)
 	}
 }
 

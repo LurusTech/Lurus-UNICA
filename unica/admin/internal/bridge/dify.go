@@ -197,6 +197,9 @@ type difyLoginResponse struct {
 	Result string `json:"result"`
 	Data   struct {
 		AccessToken string `json:"access_token"`
+		// RefreshToken is what the console frontend needs alongside the access
+		// token to keep a browser session alive on its own.
+		RefreshToken string `json:"refresh_token"`
 	} `json:"data"`
 }
 
@@ -211,11 +214,19 @@ func (b *DifyBridge) APIBaseURL() string {
 // Login authenticates against the Dify console API with an admin email/password and
 // returns an access token that can be passed to the other provisioning methods.
 func (b *DifyBridge) Login(ctx context.Context, email, password string) (string, error) {
+	access, _, err := b.loginPair(ctx, email, password)
+	return access, err
+}
+
+// loginPair is the login call itself. It returns both halves because the
+// console frontend needs both; every caller inside this service wants only the
+// access token and goes through Login.
+func (b *DifyBridge) loginPair(ctx context.Context, email, password string) (string, string, error) {
 	if b.config.AdminURL == "" {
-		return "", fmt.Errorf("dify admin URL is empty")
+		return "", "", fmt.Errorf("dify admin URL is empty")
 	}
 	if email == "" || password == "" {
-		return "", fmt.Errorf("dify admin email/password is empty")
+		return "", "", fmt.Errorf("dify admin email/password is empty")
 	}
 
 	reqBody := map[string]interface{}{
@@ -225,44 +236,44 @@ func (b *DifyBridge) Login(ctx context.Context, email, password string) (string,
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("marshal login request: %w", err)
+		return "", "", fmt.Errorf("marshal login request: %w", err)
 	}
 
 	url := b.config.AdminURL + "/login"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return "", fmt.Errorf("create login request: %w", err)
+		return "", "", fmt.Errorf("create login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	start := time.Now()
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("dify login: %w", err)
+		return "", "", fmt.Errorf("dify login: %w", err)
 	}
 	defer resp.Body.Close()
 
 	elapsed := time.Since(start)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read login response: %w", err)
+		return "", "", fmt.Errorf("read login response: %w", err)
 	}
 
 	log.Printf("[dify-bridge] POST /login -> %d (%s)", resp.StatusCode, elapsed)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("HTTP %d from POST /login: %s", resp.StatusCode, string(body))
+		return "", "", fmt.Errorf("HTTP %d from POST /login: %s", resp.StatusCode, string(body))
 	}
 
 	var loginResp difyLoginResponse
 	if err := json.Unmarshal(body, &loginResp); err != nil {
-		return "", fmt.Errorf("unmarshal login response: %w", err)
+		return "", "", fmt.Errorf("unmarshal login response: %w", err)
 	}
 	if loginResp.Data.AccessToken == "" {
-		return "", fmt.Errorf("dify login response missing access_token")
+		return "", "", fmt.Errorf("dify login response missing access_token")
 	}
 
-	return loginResp.Data.AccessToken, nil
+	return loginResp.Data.AccessToken, loginResp.Data.RefreshToken, nil
 }
 
 // CreateChatApp provisions a new Dify chat app in the default workspace and applies the
@@ -1123,6 +1134,28 @@ func (b *DifyBridge) consoleToken(ctx context.Context) (string, error) {
 	b.cachedToken = token
 	b.tokenMintedAt = time.Now()
 	return token, nil
+}
+
+// ConsoleSession mints a token pair for a browser to adopt, so an administrator
+// reaching the Dify console from this service does not sign in a second time.
+//
+// It logs in every time. The cached token consoleToken keeps is this service's
+// own working credential, and handing the same string to a browser would make a
+// console logout there revoke what provisioning runs on. A static AdminToken is
+// refused outright: it does not expire, and a credential that never expires is
+// not one to put in a browser.
+func (b *DifyBridge) ConsoleSession(ctx context.Context) (string, string, error) {
+	if b.config.AdminEmail == "" || b.config.AdminPassword == "" {
+		return "", "", fmt.Errorf("dify console session needs DIFY_ADMIN_EMAIL and DIFY_ADMIN_PASSWORD; a static DIFY_ADMIN_TOKEN cannot be used for this")
+	}
+	access, refresh, err := b.loginPair(ctx, b.config.AdminEmail, b.config.AdminPassword)
+	if err != nil {
+		return "", "", fmt.Errorf("mint console session: %w", err)
+	}
+	if refresh == "" {
+		return "", "", fmt.Errorf("dify login response missing refresh_token")
+	}
+	return access, refresh, nil
 }
 
 // invalidateConsoleToken drops the cached minted token after a 401 so the next

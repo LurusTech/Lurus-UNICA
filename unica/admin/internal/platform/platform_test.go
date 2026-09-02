@@ -651,3 +651,152 @@ func TestHandleModel_RefusesWhenTheWritePathIsNotWired(t *testing.T) {
 		t.Fatalf("status = %d, want 503: %s", w.Code, w.Body.String())
 	}
 }
+
+// --- Dify console session ---
+
+type stubConsoleMinter struct {
+	access  string
+	refresh string
+	err     error
+	calls   int
+}
+
+func (s *stubConsoleMinter) ConsoleSession(ctx context.Context) (string, string, error) {
+	s.calls++
+	return s.access, s.refresh, s.err
+}
+
+type consoleAuditRow struct {
+	action       string
+	resourceType string
+	after        interface{}
+}
+
+type consoleAudit struct{ rows []consoleAuditRow }
+
+func (a *consoleAudit) LogEvent(_, _, action, resourceType, _ string,
+	_ *string, _, afterState interface{}, _ string) {
+	a.rows = append(a.rows, consoleAuditRow{action: action, resourceType: resourceType, after: afterState})
+}
+
+func getConsoleSession(t *testing.T, h *Handler, role string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform/dify-console/session", nil)
+	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
+		&auth.Claims{Role: role, UserID: "u-1"}))
+	w := httptest.NewRecorder()
+	h.HandleDifyConsoleSession(w, req)
+	return w
+}
+
+func TestDifyConsoleSession_ReturnsThePair(t *testing.T) {
+	minter := &stubConsoleMinter{access: "acc-1", refresh: "ref-1"}
+	trail := &consoleAudit{}
+	h := NewSettingsHandler(SettingsConfig{Console: minter, Audit: trail})
+
+	w := getConsoleSession(t, h, rbac.RoleAdmin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.AccessToken != "acc-1" || resp.RefreshToken != "ref-1" {
+		t.Errorf("got %+v", resp)
+	}
+	if minter.calls != 1 {
+		t.Errorf("minted %d sessions, want 1", minter.calls)
+	}
+	if len(trail.rows) != 1 || trail.rows[0].action != "create" || trail.rows[0].resourceType != "dify_console" {
+		t.Errorf("audit rows = %+v", trail.rows)
+	}
+}
+
+// An audit row is read by more people than the session was minted for, and a
+// credential inside one stays usable long after it has stopped being evidence.
+func TestDifyConsoleSession_KeepsTokensOutOfTheTrail(t *testing.T) {
+	minter := &stubConsoleMinter{access: "secret-access-value", refresh: "secret-refresh-value"}
+	trail := &consoleAudit{}
+	h := NewSettingsHandler(SettingsConfig{Console: minter, Audit: trail})
+
+	if w := getConsoleSession(t, h, rbac.RoleAdmin); w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	encoded, err := json.Marshal(trail.rows[0].after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"secret-access-value", "secret-refresh-value"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("the audit row carries a token: %s", encoded)
+		}
+	}
+}
+
+func TestDifyConsoleSession_RequiresAdmin(t *testing.T) {
+	minter := &stubConsoleMinter{access: "acc-1", refresh: "ref-1"}
+	h := NewSettingsHandler(SettingsConfig{Console: minter})
+
+	if w := getConsoleSession(t, h, rbac.RoleUser); w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a tenant: %s", w.Code, w.Body.String())
+	}
+	if minter.calls != 0 {
+		t.Error("a tenant's request minted a console session")
+	}
+}
+
+// No console channel is not a failure; it is a deployment that cannot offer
+// this, and saying so beats a button that appears to work.
+func TestDifyConsoleSession_UnavailableWithoutAChannel(t *testing.T) {
+	h := NewSettingsHandler(SettingsConfig{})
+
+	if w := getConsoleSession(t, h, rbac.RoleAdmin); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDifyConsoleSession_ReportsAFailedMintAndRecordsIt(t *testing.T) {
+	minter := &stubConsoleMinter{err: errors.New("dify console session needs DIFY_ADMIN_EMAIL")}
+	trail := &consoleAudit{}
+	h := NewSettingsHandler(SettingsConfig{Console: minter, Audit: trail})
+
+	w := getConsoleSession(t, h, rbac.RoleAdmin)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "DIFY_ADMIN_EMAIL") {
+		t.Errorf("the reply should say which setting is missing: %s", w.Body.String())
+	}
+	// A refused attempt is still an attempt, and the trail has to hold it.
+	if len(trail.rows) != 1 {
+		t.Fatalf("audit rows = %d, want 1", len(trail.rows))
+	}
+	encoded, _ := json.Marshal(trail.rows[0].after)
+	if !strings.Contains(string(encoded), "\"ok\":false") {
+		t.Errorf("the audit row does not record the failure: %s", encoded)
+	}
+}
+
+func TestDifyConsoleSession_RejectsNonGet(t *testing.T) {
+	minter := &stubConsoleMinter{access: "acc-1", refresh: "ref-1"}
+	h := NewSettingsHandler(SettingsConfig{Console: minter})
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/api/v1/platform/dify-console/session", nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
+			&auth.Claims{Role: rbac.RoleAdmin, UserID: "u-1"}))
+		w := httptest.NewRecorder()
+		h.HandleDifyConsoleSession(w, req)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s: status = %d, want 405", method, w.Code)
+		}
+	}
+	if minter.calls != 0 {
+		t.Error("a non-GET minted a console session")
+	}
+}
+

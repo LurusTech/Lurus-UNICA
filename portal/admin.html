@@ -273,6 +273,14 @@
     margin-top: auto; color: var(--primary); text-decoration: none; font-size: 0.85rem; font-weight: 500;
   }
   .ops-card a.go:hover { text-decoration: underline; }
+  /* The Dify entry became a button when it started minting a session, and it
+     has to keep reading as the link it was. */
+  .ops-card button.go {
+    margin-top: auto; align-self: flex-start; padding: 0; border: none; background: none;
+    color: var(--primary); font-size: 0.85rem; font-weight: 500; cursor: pointer; font-family: inherit;
+  }
+  .ops-card button.go:hover { text-decoration: underline; }
+  .ops-card button.go[disabled] { color: var(--text-muted); cursor: default; text-decoration: none; }
 
   /* Spinner for pending actions */
   .spinner {
@@ -465,7 +473,7 @@
         <h3>Dify 控制台</h3>
         <span class="tag">平台运维工具 · 共享凭证</span>
         <p>模型供应商、应用编排与知识库索引的底层控制台。全平台共用一套凭证，请勿转交给租户用户。</p>
-        <a class="go" id="dify-link" href="#" target="_blank" rel="noopener">打开控制台 →</a>
+        <button type="button" class="go" id="dify-link">打开控制台 →</button>
       </div>
     </div>
 
@@ -2956,6 +2964,48 @@
   }
   function escapeAttr(str) { return escapeHtml(str); }
 
+  // ---------- Dify console ----------
+  // The console is entered through a session this service mints, so an
+  // administrator does not sign in a second time. The window is opened first
+  // and synchronously: a window opened later, after the request comes back, is
+  // not the result of a click any more and browsers block it.
+  //
+  // The tokens travel in the fragment. A fragment is never sent to a server, so
+  // it stays out of Dify's access log and out of any Referer; the seed page
+  // clears it from the address bar before it leaves.
+  els.difyLink.addEventListener("click", function () {
+    // Without a feature string: "noopener" makes window.open return null, and the
+    // handle is the whole point — the window has to be navigated once the session
+    // comes back. The opener it keeps points at this page and the window is sent to
+    // our own Dify instance, so there is nothing here for a third party to reach.
+    var win = window.open("about:blank", "_blank");
+    if (!win) {
+      toast("浏览器拦截了新窗口，请允许弹出窗口后重试", "error");
+      return;
+    }
+    els.difyLink.disabled = true;
+    els.difyLink.textContent = "正在打开…";
+    api("/api/v1/platform/dify-console/session")
+      .then(function (data) {
+        if (!data || !data.access_token || !data.refresh_token) {
+          throw new Error("返回的会话不完整");
+        }
+        win.location.replace(DIFY_CONSOLE_BASE + "/unica/console-entry#a=" +
+          encodeURIComponent(data.access_token) + "&r=" + encodeURIComponent(data.refresh_token));
+      })
+      .catch(function (err) {
+        // The blank window would otherwise sit there looking like a failure
+        // nobody explained.
+        try { win.close(); } catch (e) { /* already gone */ }
+        if (err.message === "unauthorized") return;
+        toast("打不开 Dify 控制台：" + err.message, "error");
+      })
+      .finally(function () {
+        els.difyLink.disabled = false;
+        els.difyLink.textContent = "打开控制台 →";
+      });
+  });
+
   // ---------- Init ----------
   // The page is administrator territory. The server refuses everything here to
   // anyone else, so the check below is only about not showing a workspace the
@@ -2972,7 +3022,7 @@
   }
 
   els.userEmail.textContent = claims.email || "";
-  els.difyLink.href = DIFY_CONSOLE_BASE + "/";
+  // The Dify entry mints a session on click; there is no href to prepare.
   syncUserTenantField();
 
   // The tenant roster resolves the names the user rows and the trail display,
