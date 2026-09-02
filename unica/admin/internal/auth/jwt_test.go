@@ -126,3 +126,48 @@ func TestInvalidTokenString(t *testing.T) {
 		t.Fatal("expected error for invalid token string")
 	}
 }
+
+// TestGenerateTokenPair_UniquePerIssue pins that two pairs issued back to back
+// for the same user are distinct. Before each token carried its own jti the
+// claims held nothing unique, so two issues within the same second produced
+// byte-identical strings and an automatic refresh could invalidate its own
+// replacement.
+func TestGenerateTokenPair_UniquePerIssue(t *testing.T) {
+	mgr := NewJWTManager("test-secret-key", 2*time.Hour, 7*24*time.Hour)
+
+	first, err := mgr.GenerateTokenPair("user-1", "a@b.com", "user", "tenant-1")
+	if err != nil {
+		t.Fatalf("first GenerateTokenPair failed: %v", err)
+	}
+	second, err := mgr.GenerateTokenPair("user-1", "a@b.com", "user", "tenant-1")
+	if err != nil {
+		t.Fatalf("second GenerateTokenPair failed: %v", err)
+	}
+
+	if first.AccessToken == second.AccessToken {
+		t.Error("two issues produced the same access token")
+	}
+	if first.RefreshToken == second.RefreshToken {
+		t.Error("two issues produced the same refresh token")
+	}
+
+	for name, pair := range map[string]*TokenPair{"first": first, "second": second} {
+		accessClaims, err := mgr.ValidateToken(pair.AccessToken)
+		if err != nil {
+			t.Fatalf("%s: ValidateToken on access token failed: %v", name, err)
+		}
+		refreshClaims, err := mgr.ValidateToken(pair.RefreshToken)
+		if err != nil {
+			t.Fatalf("%s: ValidateToken on refresh token failed: %v", name, err)
+		}
+		if accessClaims.ID == "" {
+			t.Errorf("%s: access token carries an empty jti", name)
+		}
+		if refreshClaims.ID == "" {
+			t.Errorf("%s: refresh token carries an empty jti", name)
+		}
+		if accessClaims.ID == refreshClaims.ID {
+			t.Errorf("%s: access and refresh share jti '%s'", name, accessClaims.ID)
+		}
+	}
+}

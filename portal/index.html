@@ -147,6 +147,14 @@
     background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
   }
   .field { margin-bottom: 16px; }
+  /* Checkbox rows opt out of the full-width input styling above. */
+  label.check {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    margin-bottom: 0; font-weight: 400; color: var(--text-muted);
+  }
+  label.check input[type="checkbox"] {
+    width: auto; margin: 0; padding: 0; accent-color: var(--primary);
+  }
 
   #login-view {
     background: var(--surface); border: 1px solid var(--border);
@@ -159,6 +167,21 @@
     border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
     border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
   }
+  /* Remembered accounts, offered above the form when more than one is stored
+     and the tab cannot pick between them on its own. */
+  #accounts-view {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px 32px; box-shadow: var(--shadow);
+    margin-bottom: 20px;
+  }
+  #accounts-view h2 { margin: 0 0 6px; font-size: 1.15rem; }
+  #accounts-view p.sub { color: var(--text-muted); margin: 0 0 18px; font-size: 0.88rem; line-height: 1.5; }
+  .account-row { display: flex; align-items: stretch; gap: 8px; margin-bottom: 8px; }
+  .account-pick { flex: 1; text-align: left; line-height: 1.35; }
+  .account-pick .who { display: block; font-weight: 500; }
+  .account-pick .meta { display: block; color: var(--text-muted); font-size: 0.78rem; margin-top: 2px; }
+  .account-forget { flex-shrink: 0; padding: 10px 12px; font-size: 0.8rem; color: var(--text-muted); }
+  p.helper { color: var(--text-muted); font-size: 0.78rem; line-height: 1.6; margin: 16px 0 0; }
   /* Shown while an existing session is being routed to its home page. */
   #dispatch-view {
     background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
@@ -231,6 +254,13 @@
     <span class="spinner"></span>正在进入…
   </section>
 
+  <section id="accounts-view" hidden>
+    <h2>已保存的账号</h2>
+    <p class="sub">选择一个账号继续，或在下方用其他账号登录。</p>
+    <div id="account-list"></div>
+    <p class="helper">从已登录的页面右键「在新标签页中打开」，新标签页会沿用原标签页的账号；要换账号，请手动新开一个标签页并粘贴地址。</p>
+  </section>
+
   <section id="login-view" hidden>
     <h2>登录</h2>
     <p class="sub">登录后按账号类型进入对应工作区：管理员进入平台管理，租户用户进入自己的工作台。</p>
@@ -243,6 +273,12 @@
       <div class="field">
         <label for="password">密码</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <div class="field">
+        <label class="check" for="remember">
+          <input id="remember" name="remember" type="checkbox" />
+          <span>记住我（7 天内免登录）</span>
+        </label>
       </div>
       <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
     </form>
@@ -260,11 +296,12 @@
 
 <footer>UNICA 统一管理门户</footer>
 
+<script src="./auth.js?v=1"></script>
 <script>
 (function () {
   "use strict";
 
-  var TOKEN_KEY = "unica_access_token";
+  var auth = window.UnicaAuth;
   // Where each kind of account belongs. The server is the authority on what an
   // account may reach; this map only decides which page to open first.
   var HOME_BY_ROLE = { admin: "./admin.html", user: "./home.html" };
@@ -272,10 +309,13 @@
   var els = {
     clock: document.getElementById("clock"),
     dispatchView: document.getElementById("dispatch-view"),
+    accountsView: document.getElementById("accounts-view"),
+    accountList: document.getElementById("account-list"),
     loginView: document.getElementById("login-view"),
     loginForm: document.getElementById("login-form"),
     loginError: document.getElementById("login-error"),
     loginSubmit: document.getElementById("login-submit"),
+    remember: document.getElementById("remember"),
     statusAdmin: document.getElementById("status-admin")
   };
 
@@ -284,36 +324,6 @@
   }
   tick();
   setInterval(tick, 1000);
-
-  // ---------- Token ----------
-  // Storage access can throw under restrictive privacy settings, so every read
-  // and write is guarded and a failure simply means "not signed in".
-  function getToken() {
-    try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
-  }
-  function setToken(t) {
-    try { sessionStorage.setItem(TOKEN_KEY, t); } catch (e) { /* session-only sign-in */ }
-  }
-  function clearToken() {
-    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* nothing to clear */ }
-  }
-
-  // Read-only decode of the access token payload. The server remains the
-  // authority; a token that cannot be decoded yields null and sends the visitor
-  // back to the login form rather than to a page it cannot use.
-  function decodeClaims(token) {
-    if (!token || typeof token !== "string") return null;
-    var parts = token.split(".");
-    if (parts.length !== 3) return null;
-    try {
-      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      while (b64.length % 4 !== 0) b64 += "=";
-      var claims = JSON.parse(atob(b64));
-      return claims && typeof claims === "object" ? claims : null;
-    } catch (e) {
-      return null;
-    }
-  }
 
   // ---------- Dispatch ----------
   // The token carries exactly one role and, for a tenant user, the tenant it
@@ -330,11 +340,14 @@
   function dispatch(claims) {
     var target = homeFor(claims);
     if (!target) {
-      clearToken();
+      // Only this tab is cleared: an account that cannot be routed is still an
+      // account the visitor asked to be remembered.
+      auth.dropTab();
       showLogin("账号未配置有效的角色或所属租户，请联系管理员");
       return false;
     }
     els.loginView.hidden = true;
+    els.accountsView.hidden = true;
     els.dispatchView.hidden = false;
     // replace() keeps the login page out of the history, so Back from a
     // workspace does not land on a form that immediately bounces forward again.
@@ -353,6 +366,72 @@
     }
   }
 
+  // ---------- Saved accounts ----------
+  // Second line of a row: what distinguishes one stored account from another
+  // once the address is shown. Only the claims travel in the vault, so a tenant
+  // is named by its id.
+  function describe(entry) {
+    if (entry.role === "admin") return "平台管理员";
+    if (entry.role === "user") return entry.tenant_id ? "租户 " + entry.tenant_id : "租户用户";
+    return entry.role || "";
+  }
+
+  // Built from data through textContent, never through innerHTML: an address
+  // comes from the vault and must not be able to carry markup into the page.
+  function accountRow(entry) {
+    var row = document.createElement("div");
+    row.className = "account-row";
+
+    var pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "account-pick";
+
+    var who = document.createElement("span");
+    who.className = "who";
+    who.textContent = entry.email || entry.user_id;
+    pick.appendChild(who);
+
+    var meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = describe(entry);
+    pick.appendChild(meta);
+
+    // The entry is already in the vault, so adopting it copies the pair into
+    // this tab without changing what is remembered.
+    pick.addEventListener("click", function () {
+      dispatch(auth.adoptPair(entry));
+    });
+
+    var forget = document.createElement("button");
+    forget.type = "button";
+    forget.className = "account-forget";
+    forget.textContent = "忘记";
+    forget.setAttribute("aria-label", "忘记 " + (entry.email || entry.user_id));
+    forget.addEventListener("click", function () {
+      auth.forgetAccount(entry.user_id);
+      renderAccounts(auth.savedAccounts());
+    });
+
+    row.appendChild(pick);
+    row.appendChild(forget);
+    return row;
+  }
+
+  // An emptied list hides the whole section; a list of one is still worth
+  // offering, because the alternative is retyping a password for an account
+  // this browser already holds.
+  function renderAccounts(list) {
+    els.accountList.textContent = "";
+    if (!list.length) {
+      els.accountsView.hidden = true;
+      return;
+    }
+    for (var i = 0; i < list.length; i++) {
+      els.accountList.appendChild(accountRow(list[i]));
+    }
+    els.accountsView.hidden = false;
+  }
+
   // ---------- Login ----------
   els.loginForm.addEventListener("submit", function (e) {
     e.preventDefault();
@@ -363,23 +442,9 @@
     var email = document.getElementById("email").value.trim();
     var password = document.getElementById("password").value;
 
-    fetch("/api/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email, password: password })
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          var data = null;
-          try { data = text ? JSON.parse(text) : null; } catch (e) { /* non-JSON response */ }
-          if (!res.ok) throw new Error((data && data.error) || "邮箱或密码错误");
-          return data;
-        });
-      })
-      .then(function (data) {
-        if (!data || !data.access_token) throw new Error("登录响应异常");
-        setToken(data.access_token);
-        dispatch(decodeClaims(data.access_token));
+    auth.login(email, password, els.remember.checked)
+      .then(function (claims) {
+        dispatch(claims);
       })
       .catch(function (err) {
         els.loginError.textContent = err.message || "登录失败，请检查网络";
@@ -409,10 +474,22 @@
   });
 
   // ---------- Init ----------
-  var existing = getToken();
-  if (existing) {
-    if (!dispatch(decodeClaims(existing))) return;
+  // bootstrapTab adopts a single remembered account on its own; it returns
+  // nothing when there are none, when there are several and picking one would
+  // be a guess, or when this tab has just been thrown out of a session — a tab
+  // that arrived here that way must be offered the choice rather than sent
+  // back into the workspace it was refused by. The list below is for all three.
+  // A visitor who followed the switch-account link is asking for the door, not
+  // for the workspace behind it. Without this a single remembered account is
+  // adopted by every new tab and sent straight on, so the login form becomes
+  // unreachable and a second account can never be added.
+  var wantsSwitch = /[?&]switch=1(&|$)/.test(window.location.search);
+  var claims = wantsSwitch ? null : auth.bootstrapTab();
+  if (claims) {
+    if (!dispatch(claims)) return;
   } else {
+    var saved = auth.savedAccounts();
+    if (saved.length >= 2 || (saved.length && (auth.wasSessionLost() || wantsSwitch))) renderAccounts(saved);
     showLogin();
   }
 })();

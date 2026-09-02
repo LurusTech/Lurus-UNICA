@@ -152,6 +152,9 @@
     border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
     border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
   }
+  #login-view .remember { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  #login-view .remember input { width: auto; }
+  #login-view .remember label { margin-bottom: 0; font-weight: 400; color: var(--text-muted); }
 
   /* App view */
   .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 20px; }
@@ -296,6 +299,10 @@
       <div class="field">
         <label for="password">密码</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <div class="remember">
+        <input id="remember" type="checkbox" />
+        <label for="remember">记住我（7 天内免登录）</label>
       </div>
       <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
     </form>
@@ -463,11 +470,10 @@
 
 <div id="toast-host" aria-live="polite"></div>
 
+<script src="./auth.js?v=1"></script>
 <script>
 (function () {
   "use strict";
-
-  var TOKEN_KEY = "unica_access_token";
 
   var state = {
     tenants: [],
@@ -483,6 +489,7 @@
     loginForm: document.getElementById("login-form"),
     loginError: document.getElementById("login-error"),
     loginSubmit: document.getElementById("login-submit"),
+    remember: document.getElementById("remember"),
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
@@ -541,27 +548,8 @@
   }
 
   // ---------- Auth / API ----------
-  function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
-  function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
-  function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
-
-  // ---------- Account claims ----------
-  // Read-only decode of the access token payload. The server remains the
-  // authority on scoping; a token that cannot be decoded yields null so the
-  // page keeps its unscoped behaviour instead of failing.
-  function decodeClaims(token) {
-    if (!token || typeof token !== "string") return null;
-    var parts = token.split(".");
-    if (parts.length !== 3) return null;
-    try {
-      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      while (b64.length % 4 !== 0) b64 += "=";
-      var claims = JSON.parse(atob(b64));
-      return claims && typeof claims === "object" ? claims : null;
-    } catch (e) {
-      return null;
-    }
-  }
+  // Token storage, claim decoding, the fetch wrapper and silent token renewal
+  // all live in auth.js; this page only reacts to what they report.
 
   // ---------- Tenant scope ----------
   // Every tenant resource hangs under /api/v1/tenants/{id}/. A user belongs to
@@ -571,7 +559,7 @@
   var TENANT_ME = "me";
 
   function accountRole() {
-    var claims = decodeClaims(getToken());
+    var claims = UnicaAuth.decodeClaims(UnicaAuth.accessToken());
     return claims && typeof claims.role === "string" ? claims.role : "";
   }
 
@@ -595,8 +583,11 @@
     return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
   }
 
+  // Drops this tab's pair only. A remembered account stays in the vault: a
+  // renewal that failed once must not undo "remember me". The logout button
+  // is the one place that forgets an account, and it calls logout() first.
   function showLogin(message) {
-    clearToken();
+    UnicaAuth.dropTab();
     els.appView.hidden = true;
     els.userInfo.hidden = true;
     els.loginView.hidden = false;
@@ -612,42 +603,18 @@
     els.userInfo.hidden = false;
   }
 
-  // Wraps fetch with Authorization header, JSON parsing, and 401/403 handling.
-  function api(path, options) {
-    options = options || {};
-    var headers = Object.assign({}, options.headers || {});
-    var token = getToken();
-    if (token) headers["Authorization"] = "Bearer " + token;
-    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-
-    return fetch(path, Object.assign({}, options, { headers: headers }))
-      .then(function (res) {
-        if (res.status === 401) {
-          showLogin("登录已过期，请重新登录");
-          throw new Error("unauthorized");
-        }
-        return res.text().then(function (text) {
-          var data = null;
-          if (text) {
-            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
-          }
-          if (!res.ok) {
-            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
-            if (res.status === 403) {
-              msg = "无权限：" + ((data && data.error) || "当前账号不能管理领域本体");
-            }
-            var err = new Error(msg);
-            err.status = res.status;
-            throw err;
-          }
-          return data;
-        });
-      });
+  // A refusal names the permission this page needed; the shared client only
+  // carries the server's wording, so the page supplies its own here.
+  function errorText(err) {
+    if (err && err.status === 403) {
+      return "无权限：" + ((err.data && err.data.error) || "当前账号不能管理领域本体");
+    }
+    return (err && err.message) || "请求失败";
   }
 
   function reportError(prefix, err) {
     if (err.message === "unauthorized") return;
-    toast(prefix + ": " + err.message, "error");
+    toast(prefix + ": " + errorText(err), "error");
   }
 
   // ---------- Login ----------
@@ -659,26 +626,10 @@
 
     var email = document.getElementById("email").value.trim();
     var password = document.getElementById("password").value;
+    var remember = els.remember.checked;
 
-    fetch("/api/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email, password: password })
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          var data = null;
-          try { data = text ? JSON.parse(text) : null; } catch (e) {}
-          if (!res.ok) {
-            var msg = (data && data.error) || "邮箱或密码错误";
-            throw new Error(msg);
-          }
-          return data;
-        });
-      })
-      .then(function (data) {
-        if (!data || !data.access_token) throw new Error("登录响应异常");
-        setToken(data.access_token);
+    UnicaAuth.login(email, password, remember)
+      .then(function () {
         els.userEmail.textContent = email;
         showApp();
         bootstrap();
@@ -693,7 +644,10 @@
       });
   });
 
+  // Signing out means being forgotten: the account also leaves the remembered
+  // list. A session that merely expired takes the onSessionLost path instead.
   els.logoutBtn.addEventListener("click", function () {
+    UnicaAuth.logout();
     showLogin();
   });
 
@@ -715,14 +669,14 @@
   // through the "me" alias, which is why the two roles load different addresses.
   function loadTenants() {
     if (!isAdmin()) {
-      return api("/api/v1/tenants/" + TENANT_ME)
+      return UnicaAuth.api("/api/v1/tenants/" + TENANT_ME)
         .then(function (tenant) {
           state.tenants = tenant ? [tenant] : [];
           renderTenantOptions();
         })
         .catch(function (err) { reportError("加载租户失败", err); });
     }
-    return api("/api/v1/tenants")
+    return UnicaAuth.api("/api/v1/tenants")
       .then(function (data) {
         state.tenants = Array.isArray(data) ? data : [];
         renderTenantOptions();
@@ -795,7 +749,7 @@
     els.editorBody.hidden = true;
     els.versionTbody.innerHTML = '<tr><td colspan="5" class="loading-text">加载中…</td></tr>';
 
-    return api(factsPath(""))
+    return UnicaAuth.api(factsPath(""))
       .then(function (data) {
         state.ontology = data || {};
         state.lastValidYaml = null;
@@ -808,9 +762,9 @@
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
-        els.editorLoading.textContent = "加载失败: " + err.message;
+        els.editorLoading.textContent = "加载失败: " + errorText(err);
         els.versionTbody.innerHTML =
-          '<tr><td colspan="5" class="empty-state">' + escapeHtml(err.message) + "</td></tr>";
+          '<tr><td colspan="5" class="empty-state">' + escapeHtml(errorText(err)) + "</td></tr>";
         reportError("加载本体失败", err);
       });
   }
@@ -892,7 +846,7 @@
     els.validateBtn.disabled = true;
     els.validateBtn.textContent = "校验中…";
 
-    api(factsPath("/validate"), { method: "POST", body: JSON.stringify({ yaml: yaml }) })
+    UnicaAuth.api(factsPath("/validate"), { method: "POST", body: JSON.stringify({ yaml: yaml }) })
       .then(function (data) {
         data = data || {};
         if (data.valid) {
@@ -915,7 +869,7 @@
       .catch(function (err) {
         if (err.message === "unauthorized") return;
         els.validateResult.className = "result-box bad";
-        els.validateResult.textContent = err.message;
+        els.validateResult.textContent = errorText(err);
         els.validateResult.hidden = false;
         reportError("校验失败", err);
       })
@@ -944,7 +898,7 @@
     els.publishBtn.disabled = true;
     els.publishBtn.textContent = "发布中…";
 
-    api(factsPath("/publish"), {
+    UnicaAuth.api(factsPath("/publish"), {
       method: "POST",
       body: JSON.stringify({ yaml: yaml, note: els.publishNote.value.trim() })
     })
@@ -955,7 +909,7 @@
       .catch(function (err) {
         if (err.message === "unauthorized") return;
         els.validateResult.className = "result-box bad";
-        els.validateResult.textContent = err.message;
+        els.validateResult.textContent = errorText(err);
         els.validateResult.hidden = false;
         els.previewBlock.hidden = true;
         reportError("发布失败", err);
@@ -974,7 +928,7 @@
       : "回滚到 v" + v.version + "？该版本将立即生效。";
     if (!confirm(message)) return;
 
-    api(factsPath("/rollback"), { method: "POST", body: JSON.stringify({ version: v.version }) })
+    UnicaAuth.api(factsPath("/rollback"), { method: "POST", body: JSON.stringify({ version: v.version }) })
       .then(function (data) {
         toast("已回滚到 v" + ((data && data.version) || v.version), "success");
         loadOntology();
@@ -990,7 +944,7 @@
     els.configLoading.textContent = "加载中…";
     els.configForm.hidden = true;
 
-    return api(factsPath("/config"))
+    return UnicaAuth.api(factsPath("/config"))
       .then(function (cfg) {
         cfg = cfg || {};
         var breaker = cfg.breaker || {};
@@ -1008,7 +962,7 @@
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
-        els.configLoading.textContent = "加载失败: " + err.message;
+        els.configLoading.textContent = "加载失败: " + errorText(err);
         reportError("加载开关失败", err);
       });
   }
@@ -1075,7 +1029,7 @@
     els.configSubmit.disabled = true;
     els.configSubmit.textContent = "保存中…";
 
-    api(factsPath("/config"), { method: "PUT", body: JSON.stringify(payload) })
+    UnicaAuth.api(factsPath("/config"), { method: "PUT", body: JSON.stringify(payload) })
       .then(function () {
         toast("开关已保存", "success");
         loadConfig();
@@ -1119,7 +1073,13 @@
   }
 
   // ---------- Init ----------
-  if (getToken()) {
+  // Fires once per lost-session episode, however many requests failed together,
+  // and only after renewal has been tried and refused.
+  UnicaAuth.onSessionLost(function () {
+    showLogin("登录已过期，请重新登录");
+  });
+
+  if (UnicaAuth.bootstrapTab()) {
     showApp();
     bootstrap();
   } else {

@@ -633,7 +633,7 @@ D18 的修复（`pkg/domain.IsBlankAnswer`）能兜住"剥离后为空"的情形
 修法不是给每个变量加必填校验（有些本来就该可选），而是让门户能说出
 "本部署没有启用哪些能力、因为什么"。方案见 `doc/plan-workbench-settings.md` 第五条。
 
-## D22 同一秒内两次登录拿到完全相同的 token
+## D22 同一秒内两次登录拿到完全相同的 token（已解，2026-09-02）
 
 JWT 载荷里没有随机标识（`admin/internal/auth/jwt.go:51` `GenerateTokenPair`），
 同一用户在同一秒内登录两次，`iat` 与 `exp` 都相同，签出来的 access token 与 refresh token
@@ -647,3 +647,38 @@ JWT 载荷里没有随机标识（`admin/internal/auth/jwt.go:51` `GenerateToken
 现在影响很小——要在同一秒内登两次同一账号才会撞上。但一旦前端接上自动续期
 （`doc/plan-workbench-settings.md` 第六条），并发刷新就可能踩到。
 根治是签发时加一个随机标识，让每次签发必然唯一。
+
+**已解（2026-09-02）**：`GenerateTokenPair` 现在给 access 与 refresh 两组 claims 各填一个
+独立的 `jti`，值取 `crypto/rand` 的 16 字节转 hex。随机源失败时返回错误而不是退化成空串——
+一个空的或可预测的 `jti` 就是这条缺陷换了件衣服。单测 `TestGenerateTokenPair_UniquePerIssue`
+断言连续两次签发的两个 token 均不同、`jti` 非空、且同一对里 access 与 refresh 的 `jti` 互异。
+
+实机复现验证（换二进制后）：连续两次登录，access 与 refresh 全不同，
+三个 `jti` 两两不同。此前预判的"前端接上自动续期后并发刷新会踩到"没有发生——
+D 组的续期上线时这条已经先修掉了。
+
+---
+
+## D23 refresh token 能当 Bearer 用（低危，未修）
+
+`AuthMiddleware`（`admin/internal/auth/middleware.go:80-106`）只校验签名，不区分
+token 类型。refresh token 与 access token 用同一把密钥签发、载荷结构相同，
+于是把 refresh token 放进 `Authorization: Bearer` 里能通过鉴权。
+
+2026-09-02 实测（rehearsal 管理员与 AJYJ 租户用户各一次）：
+
+| 路由 | access token | refresh token 当 Bearer |
+|---|---|---|
+| `/api/v1/tenants` | 200 | **403**（`RequireAdmin` 挡下） |
+| `/api/v1/platform/settings` | 200 | **403** |
+| `/api/v1/audit-logs` | 200，119 条 | **200，但 `{"entries":[],"total":0}`** |
+
+**没有数据泄露**：refresh token 的 `role` 与 `tenant_id` 都是空串，
+只挂 `AuthMiddleware` 的 `/api/v1/audit-logs` 按空租户过滤，结果是零行而不是全部。
+所以这是类型卫生问题，不是机密性问题——这也是它被判低危的理由。
+
+**为什么仍然该修**：D 组之后 refresh token 会在勾了「记住我」时进 `localStorage`
+并存活 7 天，比 access token 长得多。它现在多出一份"能通过鉴权"的能力，
+是没有任何地方需要、却随时可能被下一条路由的默认行为放大的多余权限。
+根治是签发时加一个 `typ` claim（access / refresh），`AuthMiddleware` 只认 access，
+`/auth/refresh` 只认 refresh。

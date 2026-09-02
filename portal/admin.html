@@ -376,6 +376,7 @@
   </div>
   <div id="user-info">
     <span id="user-email"></span>
+    <a class="switch-account" href="./index.html?switch=1">切换账号</a>
     <button id="logout-btn">退出登录</button>
   </div>
 </header>
@@ -824,11 +825,11 @@
 
 <div id="toast-host" aria-live="polite"></div>
 
+<script src="./auth.js?v=1"></script>
 <script>
 (function () {
   "use strict";
 
-  var TOKEN_KEY = "unica_access_token";
   var LOGIN_PAGE = "./index.html";
   var TENANT_HOME = "./home.html";
   // Dify runs as its own deployment on this host's console port. A literal
@@ -993,71 +994,35 @@
     }, 3200);
   }
 
-  // ---------- Token / API ----------
-  // Storage access can throw under restrictive privacy settings; a failure
-  // simply means there is no session and the visitor goes back to the door.
-  function getToken() {
-    try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
-  }
-  function clearToken() {
-    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* nothing to clear */ }
-  }
+  // ---------- Session / API ----------
+  // Token storage, claim decoding, silent renewal and the fetch wrapper all
+  // live in the shared session module. What stays here is this page's own
+  // part: where someone without a session is sent.
+  var api = UnicaAuth.api;
 
-  // Read-only decode of the access token payload. The server remains the
-  // authority on what this account may reach; this only decides which page it
-  // starts on.
-  function decodeClaims(token) {
-    if (!token || typeof token !== "string") return null;
-    var parts = token.split(".");
-    if (parts.length !== 3) return null;
-    try {
-      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      while (b64.length % 4 !== 0) b64 += "=";
-      var claims = JSON.parse(atob(b64));
-      return claims && typeof claims === "object" ? claims : null;
-    } catch (e) {
-      return null;
-    }
-  }
-
+  // The logout button is a decision: this tab is cleared and the account is
+  // dropped from the remembered list.
   function goLogin() {
-    clearToken();
+    UnicaAuth.logout();
     window.location.replace(LOGIN_PAGE);
   }
 
-  // Wraps fetch with the Authorization header, JSON parsing, and 401 handling.
-  function api(path, options) {
-    options = options || {};
-    var headers = Object.assign({}, options.headers || {});
-    var token = getToken();
-    if (token) headers["Authorization"] = "Bearer " + token;
-    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-
-    return fetch(path, Object.assign({}, options, { headers: headers }))
-      .then(function (res) {
-        if (res.status === 401) {
-          goLogin();
-          throw new Error("unauthorized");
-        }
-        return res.text().then(function (text) {
-          var data = null;
-          if (text) {
-            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
-          }
-          if (!res.ok) {
-            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
-            var err = new Error(msg);
-            err.status = res.status;
-            // A refusal can carry more than a sentence — the prompt push names
-            // which requirements the template is missing — and rebuilding that
-            // from the message is not possible.
-            err.data = data;
-            throw err;
-          }
-          return data;
-        });
-      });
+  // An init-time refusal is not a logout. The visitor never asked to be
+  // forgotten, so a remembered account stays in the vault; only this tab is
+  // cleared. The logout button keeps using goLogin.
+  function bounceToLogin() {
+    UnicaAuth.dropTab();
+    window.location.replace(LOGIN_PAGE);
   }
+
+  // An expired session is not a decision. Only this tab is cleared, so the
+  // accounts the visitor asked to be remembered survive a failed renewal. The
+  // module announces this once per episode, however many requests failed
+  // together, so replacing the page here is safe.
+  UnicaAuth.onSessionLost(function () {
+    UnicaAuth.dropTab();
+    window.location.replace(LOGIN_PAGE);
+  });
 
   els.logoutBtn.addEventListener("click", goLogin);
 
@@ -2996,9 +2961,9 @@
   // anyone else, so the check below is only about not showing a workspace the
   // account cannot use — an expired or missing token goes back to the door, and
   // a tenant user goes to its own home.
-  var claims = decodeClaims(getToken());
+  var claims = UnicaAuth.bootstrapTab();
   if (!claims) {
-    goLogin();
+    bounceToLogin();
     return;
   }
   if (claims.role !== "admin") {

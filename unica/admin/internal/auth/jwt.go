@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -46,11 +47,30 @@ func NewJWTManager(secret string, accessTTL, refreshTTL time.Duration) *JWTManag
 	}
 }
 
+// newTokenID returns a random 128-bit identifier, hex encoded, for use as a
+// token's jti. A failing random source is reported, never papered over: an
+// empty or predictable jti would reintroduce the collision this guards against.
+func newTokenID() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("failed to generate token id: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
 // GenerateTokenPair creates a new access + refresh token pair for a user.
 // tenantID is empty for an admin, which belongs to no tenant.
+//
+// Each token carries its own random jti, so two pairs issued within the same
+// second are distinct strings and one cannot be mistaken for the other.
 func (m *JWTManager) GenerateTokenPair(userID, email, role, tenantID string) (*TokenPair, error) {
 	now := time.Now()
 	accessExp := now.Add(m.accessTokenTTL)
+
+	accessID, err := newTokenID()
+	if err != nil {
+		return nil, err
+	}
 
 	accessClaims := &Claims{
 		UserID:   userID,
@@ -58,6 +78,7 @@ func (m *JWTManager) GenerateTokenPair(userID, email, role, tenantID string) (*T
 		Role:     role,
 		TenantID: tenantID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        accessID,
 			ExpiresAt: jwt.NewNumericDate(accessExp),
 			IssuedAt:  jwt.NewNumericDate(now),
 			Issuer:    "unica-admin",
@@ -72,10 +93,17 @@ func (m *JWTManager) GenerateTokenPair(userID, email, role, tenantID string) (*T
 	}
 
 	refreshExp := now.Add(m.refreshTokenTTL)
+
+	refreshID, err := newTokenID()
+	if err != nil {
+		return nil, err
+	}
+
 	refreshClaims := &Claims{
 		UserID: userID,
 		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        refreshID,
 			ExpiresAt: jwt.NewNumericDate(refreshExp),
 			IssuedAt:  jwt.NewNumericDate(now),
 			Issuer:    "unica-admin",

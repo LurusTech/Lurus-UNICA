@@ -152,6 +152,9 @@
     border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
     border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
   }
+  #login-view .remember { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  #login-view .remember input { width: auto; }
+  #login-view .remember label { margin-bottom: 0; font-weight: 400; color: var(--text-muted); }
 
   /* App view */
   .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 8px; }
@@ -264,6 +267,10 @@
         <label for="password">密码</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required />
       </div>
+      <div class="remember">
+        <input id="remember" type="checkbox" />
+        <label for="remember">记住我（7 天内免登录）</label>
+      </div>
       <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
     </form>
   </section>
@@ -342,11 +349,11 @@
 
 <div id="toast-host" aria-live="polite"></div>
 
+<script src="./auth.js?v=1"></script>
 <script>
 (function () {
   "use strict";
 
-  var TOKEN_KEY = "unica_access_token";
   var PAGE_SIZE = 20;
   // Mirrors MaxKnowledgeUploadBytes on the server. The check here only spares the
   // operator a doomed upload; the server enforces the same limit with a 413.
@@ -390,6 +397,7 @@
     loginForm: document.getElementById("login-form"),
     loginError: document.getElementById("login-error"),
     loginSubmit: document.getElementById("login-submit"),
+    remember: document.getElementById("remember"),
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
@@ -432,27 +440,8 @@
   }
 
   // ---------- Auth / API ----------
-  function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
-  function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); }
-  function clearToken() { sessionStorage.removeItem(TOKEN_KEY); }
-
-  // ---------- Account claims ----------
-  // Read-only decode of the access token payload. The server remains the
-  // authority on scoping; a token that cannot be decoded yields null so the
-  // page keeps its unscoped behaviour instead of failing.
-  function decodeClaims(token) {
-    if (!token || typeof token !== "string") return null;
-    var parts = token.split(".");
-    if (parts.length !== 3) return null;
-    try {
-      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      while (b64.length % 4 !== 0) b64 += "=";
-      var claims = JSON.parse(atob(b64));
-      return claims && typeof claims === "object" ? claims : null;
-    } catch (e) {
-      return null;
-    }
-  }
+  // Token storage, claim decoding, the fetch wrapper and silent token renewal
+  // all live in auth.js; this page only reacts to what they report.
 
   // ---------- Tenant scope ----------
   // Every tenant resource hangs under /api/v1/tenants/{id}/. A user belongs to
@@ -462,7 +451,7 @@
   var TENANT_ME = "me";
 
   function accountRole() {
-    var claims = decodeClaims(getToken());
+    var claims = UnicaAuth.decodeClaims(UnicaAuth.accessToken());
     return claims && typeof claims.role === "string" ? claims.role : "";
   }
 
@@ -493,7 +482,7 @@
   }
 
   function showLogin(message) {
-    clearToken();
+    UnicaAuth.dropTab();
     cancelPolling();
     els.appView.hidden = true;
     els.userInfo.hidden = true;
@@ -510,42 +499,6 @@
     els.userInfo.hidden = false;
   }
 
-  // Wraps fetch with Authorization header, JSON parsing, and 401 handling.
-  // The HTTP status travels on the error so callers can tell a misconfigured
-  // service (503) from an ordinary failure.
-  function api(path, options) {
-    options = options || {};
-    var headers = Object.assign({}, options.headers || {});
-    var token = getToken();
-    if (token) headers["Authorization"] = "Bearer " + token;
-    // FormData must set its own multipart boundary, so it is never labelled JSON.
-    var isForm = (typeof FormData !== "undefined") && (options.body instanceof FormData);
-    if (options.body && !isForm && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-
-    return fetch(path, Object.assign({}, options, { headers: headers }))
-      .then(function (res) {
-        if (res.status === 401) {
-          showLogin("登录已过期，请重新登录");
-          var authErr = new Error("unauthorized");
-          authErr.status = 401;
-          throw authErr;
-        }
-        return res.text().then(function (text) {
-          var data = null;
-          if (text) {
-            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
-          }
-          if (!res.ok) {
-            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
-            var err = new Error(msg);
-            err.status = res.status;
-            throw err;
-          }
-          return data;
-        });
-      });
-  }
-
   // ---------- Login ----------
   els.loginForm.addEventListener("submit", function (e) {
     e.preventDefault();
@@ -555,26 +508,10 @@
 
     var email = document.getElementById("email").value.trim();
     var password = document.getElementById("password").value;
+    var remember = els.remember.checked;
 
-    fetch("/api/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email, password: password })
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          var data = null;
-          try { data = text ? JSON.parse(text) : null; } catch (e) {}
-          if (!res.ok) {
-            var msg = (data && data.error) || "邮箱或密码错误";
-            throw new Error(msg);
-          }
-          return data;
-        });
-      })
-      .then(function (data) {
-        if (!data || !data.access_token) throw new Error("登录响应异常");
-        setToken(data.access_token);
+    UnicaAuth.login(email, password, remember)
+      .then(function () {
         els.userEmail.textContent = email;
         showApp();
         bootstrap();
@@ -589,7 +526,10 @@
       });
   });
 
+  // Signing out means being forgotten: the account also leaves the remembered
+  // list. A session that merely expired takes the onSessionLost path instead.
   els.logoutBtn.addEventListener("click", function () {
+    UnicaAuth.logout();
     showLogin();
   });
 
@@ -602,14 +542,14 @@
   // through the "me" alias, which is why the two roles load different addresses.
   function loadTenants() {
     if (!isAdmin()) {
-      return api("/api/v1/tenants/" + TENANT_ME)
+      return UnicaAuth.api("/api/v1/tenants/" + TENANT_ME)
         .then(function (tenant) {
           state.tenants = tenant ? [tenant] : [];
           renderTenantOptions();
         })
         .catch(reportTenantLoadError);
     }
-    return api("/api/v1/tenants")
+    return UnicaAuth.api("/api/v1/tenants")
       .then(function (data) {
         state.tenants = Array.isArray(data) ? data : [];
         renderTenantOptions();
@@ -708,7 +648,7 @@
     els.tbody.innerHTML = '<tr><td colspan="5" class="loading-text">加载中…</td></tr>';
     els.pager.hidden = true;
 
-    return api(knowledgePath("", { page: state.page, limit: PAGE_SIZE, keyword: state.keyword }))
+    return UnicaAuth.api(knowledgePath("", { page: state.page, limit: PAGE_SIZE, keyword: state.keyword }))
       .then(function (data) {
         if (gen !== state.gen) return; // the product line changed under a slow response
         data = data || {};
@@ -906,7 +846,7 @@
     if (!docID || !state.currentTenant) return;
     if (!confirm("确认删除文档「" + (name || docID) + "」吗？该文档及其索引分段会一并移除，此操作不可撤销。")) return;
     dropPending(docID);
-    api(knowledgePath("/documents/" + encodeURIComponent(docID)), { method: "DELETE" })
+    UnicaAuth.api(knowledgePath("/documents/" + encodeURIComponent(docID)), { method: "DELETE" })
       .then(function () {
         toast("文档已删除", "success");
         loadDocs();
@@ -949,7 +889,7 @@
     // A large upload can outlive a product-line switch; the response must not
     // touch whatever line the operator is looking at by then.
     var gen = state.gen;
-    api(knowledgePath("/documents"), { method: "POST", body: form })
+    UnicaAuth.api(knowledgePath("/documents"), { method: "POST", body: form })
       .then(function (data) { onUploaded(data, gen); })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
@@ -1001,7 +941,7 @@
     els.modalSubmit.disabled = true;
     els.modalSubmit.textContent = "提交中…";
     var gen = state.gen;
-    api(knowledgePath("/documents"), { method: "POST", body: body })
+    UnicaAuth.api(knowledgePath("/documents"), { method: "POST", body: body })
       .then(function (data) {
         closeModal();
         onUploaded(data, gen);
@@ -1078,7 +1018,7 @@
 
     function tick() {
       if (!alive() || !state.currentTenant) return;
-      api(knowledgePath("/status/" + encodeURIComponent(entry.batch)))
+      UnicaAuth.api(knowledgePath("/status/" + encodeURIComponent(entry.batch)))
         .then(function (data) {
           if (!alive()) return;
           var st = pickBatchStatus(data, docID);
@@ -1196,8 +1136,14 @@
   function escapeAttr(str) { return escapeHtml(str); }
 
   // ---------- Init ----------
+  // Fires once per lost-session episode, however many requests failed together,
+  // and only after renewal has been tried and refused.
+  UnicaAuth.onSessionLost(function () {
+    showLogin("登录已过期，请重新登录");
+  });
+
   setUploadEnabled(false);
-  if (getToken()) {
+  if (UnicaAuth.bootstrapTab()) {
     showApp();
     bootstrap();
   } else {

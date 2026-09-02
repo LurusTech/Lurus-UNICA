@@ -692,11 +692,11 @@
 
 <div id="toast-host" aria-live="polite"></div>
 
+<script src="./auth.js?v=1"></script>
 <script>
 (function () {
   "use strict";
 
-  var TOKEN_KEY = "unica_access_token";
   var LOGIN_PAGE = "./index.html";
   // Every tenant resource hangs under this root. "me" is the alias the server
   // resolves from the caller's own claims, so a tenant's people never name their
@@ -839,38 +839,35 @@
     }, 4200);
   }
 
-  // ---------- Token / claims ----------
-  // Storage access can throw under restrictive privacy settings; a failure
-  // simply means there is no session and the visitor goes back to the door.
-  function getToken() {
-    try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
-  }
-  function clearToken() {
-    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* nothing to clear */ }
-  }
-
-  // Read-only decode of the access token payload. The server remains the
-  // authority on what this account may reach; this only decides what to show.
-  function decodeClaims(token) {
-    if (!token || typeof token !== "string") return null;
-    var parts = token.split(".");
-    if (parts.length !== 3) return null;
-    try {
-      var b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      while (b64.length % 4 !== 0) b64 += "=";
-      var claims = JSON.parse(atob(b64));
-      return claims && typeof claims === "object" ? claims : null;
-    } catch (e) {
-      return null;
-    }
-  }
-
+  // ---------- Session ----------
+  // Token storage, claim decoding and silent renewal live in the shared
+  // session module; what stays here is where this page sends someone who no
+  // longer has a session.
   function isAdmin() { return !!state.claims && state.claims.role === "admin"; }
 
+  // The logout button is a decision: this tab is cleared and the account is
+  // dropped from the remembered list.
   function goLogin() {
-    clearToken();
+    UnicaAuth.logout();
     window.location.replace(LOGIN_PAGE);
   }
+
+  // An init-time refusal is not a logout. The visitor never asked to be
+  // forgotten, so a remembered account stays in the vault; only this tab is
+  // cleared. The logout button keeps using goLogin.
+  function bounceToLogin() {
+    UnicaAuth.dropTab();
+    window.location.replace(LOGIN_PAGE);
+  }
+
+  // An expired session is not a decision. Only this tab is cleared, so the
+  // accounts the visitor asked to be remembered survive a failed renewal. The
+  // module announces this once per episode, however many requests failed
+  // together, so replacing the page here is safe.
+  UnicaAuth.onSessionLost(function () {
+    UnicaAuth.dropTab();
+    window.location.replace(LOGIN_PAGE);
+  });
 
   // The tenant named on the address. Only an administrator can act on a tenant
   // other than its own, so for anyone else the parameter means nothing.
@@ -891,43 +888,11 @@
   }
 
   // ---------- API ----------
-  // Wraps fetch with the Authorization header, JSON parsing, and 401 handling.
-  // The HTTP status travels on the error so a caller can tell a refusal (403)
-  // from an ordinary failure.
-  function api(path, options) {
-    options = options || {};
-    var headers = Object.assign({}, options.headers || {});
-    var token = getToken();
-    if (token) headers["Authorization"] = "Bearer " + token;
-    if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-
-    return fetch(path, Object.assign({}, options, { headers: headers }))
-      .then(function (res) {
-        if (res.status === 401) {
-          goLogin();
-          throw new Error("unauthorized");
-        }
-        return res.text().then(function (text) {
-          var data = null;
-          if (text) {
-            try { data = JSON.parse(text); } catch (e) { /* non-JSON response */ }
-          }
-          if (!res.ok) {
-            var msg = (data && (data.error || data.message)) || ("请求失败 (" + res.status + ")");
-            var err = new Error(msg);
-            err.status = res.status;
-            // The parsed body travels with the error. A failure can carry more
-            // than one sentence — a write that had to be undone and could not
-            // be reports both what failed and what state that left behind —
-            // and a caller that only ever sees .message would drop the half
-            // that says the line was changed anyway.
-            err.data = data;
-            throw err;
-          }
-          return data;
-        });
-      });
-  }
+  // The shared session module's wrapper: Authorization header, JSON parsing,
+  // and a silent access token renewal on 401 before the request is resent. The
+  // parsed body travels on the error as .data, so a failure that carries more
+  // than one sentence still reaches the caller whole.
+  var api = UnicaAuth.api;
 
   function reportError(prefix, err) {
     if (err.message === "unauthorized") return;
@@ -3227,15 +3192,15 @@
   }
 
   // ---------- Init ----------
-  state.claims = decodeClaims(getToken());
+  state.claims = UnicaAuth.bootstrapTab();
   if (!state.claims) {
-    goLogin();
+    bounceToLogin();
     return;
   }
   els.userEmail.textContent = state.claims.email || "";
   if (state.claims.role !== "admin" && !state.claims.tenant_id) {
     // A user with no tenant cannot be scoped by this page.
-    goLogin();
+    bounceToLogin();
     return;
   }
 
