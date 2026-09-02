@@ -314,10 +314,15 @@ MaxTokens    4096
 
 **C 组 · 动线闭合（第二、三条）**
 
-- [ ] C1. 实机验证 Dify 前端能否在 nginx 子路径下运行（决定 C2 走哪条路）
-- [ ] C2. Dify 入口：同源反代 + 后端换 token 种入；验证不通过则退回直接给链接
-- [ ] C3. admin 侧新增文档分段只读接口，转发 Dify 分段查询
-- [ ] C4. 「我的知识库」文档条目加"查看分段"，只读展示
+- [x] C1. 实机验证 Dify 前端能否在 nginx 子路径下运行（决定 C2 走哪条路）
+      **结论（2026-09-02）：子路径不可行。** Dify 0.15.3 的 web 是 Next.js，无 `basePath`，
+      `/` 是 `307 → /apps`、资源全为绝对的 `/_next/...`，且顶层路由与门户撞车。
+      改走「Dify 自己 nginx 供出的同源种子页写 localStorage」——前提已验：
+      控制台登录 API 返回 access+refresh，Dify 前端从 `console_token` / `refresh_token` 读取。
+- [ ] C2. Dify 入口：改为「同源种子页」形态，**只给 admin**（共享管理员钥匙即全平台权限，
+      且租户在 Dify 改的设置会被权威源判为漂移后静默冲掉）。下一增量，设计见 `doc/active_task.md` 的 Deferred。
+- [x] C3. admin 侧新增文档分段只读接口，转发 Dify 分段查询
+- [x] C4. 「我的知识库」文档条目加"查看分段"，只读展示
 
 **D 组 · 会话（第六条）**
 

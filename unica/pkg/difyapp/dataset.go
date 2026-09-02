@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -115,6 +116,36 @@ type DocumentIndexingStatus struct {
 	CompletedSegments int     `json:"completed_segments"`
 	TotalSegments     int     `json:"total_segments"`
 	Error             *string `json:"error"`
+}
+
+// Segment is one chunk a document was split into.
+//
+// Dify returns more per segment than this — index node identifiers, the
+// timestamps of every indexing pass, and 0.15.3's child_chunks for parent-child
+// chunking. None of it is shown, so none of it is decoded.
+type Segment struct {
+	ID        string   `json:"id"`
+	Position  int      `json:"position"`
+	Content   string   `json:"content"`
+	Answer    string   `json:"answer"`
+	WordCount int      `json:"word_count"`
+	Tokens    int      `json:"tokens"`
+	HitCount  int      `json:"hit_count"`
+	Enabled   bool     `json:"enabled"`
+	Status    string   `json:"status"`
+	Keywords  []string `json:"keywords"`
+}
+
+// SegmentList is every segment of one document.
+//
+// There is no page here because the endpoint has none: it takes only status and
+// keyword filters and returns the whole matching set, however large. Total is
+// Dify's own count of that set rather than len(Data), because Dify computes it
+// from the query and is the one entitled to say.
+type SegmentList struct {
+	Data    []Segment `json:"data"`
+	DocForm string    `json:"doc_form"`
+	Total   int       `json:"total"`
 }
 
 // DocumentOptions are the indexing settings that travel with a document.
@@ -347,6 +378,35 @@ func (c *DatasetClient) IndexingStatus(ctx context.Context, datasetID, batch str
 		return nil, err
 	}
 	return out.Data, nil
+}
+
+// ListSegments returns every segment of one document, ordered by position.
+//
+// The endpoint does not paginate: it accepts status and keyword filters and
+// answers with the entire matching set. A caller that cannot draw thousands of
+// segments has to limit itself, because this will hand it all of them.
+//
+// The order is imposed here rather than trusted: position is what the segments
+// mean by their own numbering, and nothing in the API promises the array
+// arrives in it.
+func (c *DatasetClient) ListSegments(ctx context.Context, datasetID, documentID string) (*SegmentList, error) {
+	if datasetID == "" || documentID == "" {
+		return nil, errors.New("dify dataset api: dataset ID and document ID are required")
+	}
+	path := "/datasets/" + url.PathEscape(datasetID) + "/documents/" + url.PathEscape(documentID) + "/segments"
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out SegmentList
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	if out.Data == nil {
+		out.Data = []Segment{}
+	}
+	sort.SliceStable(out.Data, func(i, j int) bool { return out.Data[i].Position < out.Data[j].Position })
+	return &out, nil
 }
 
 // uploadDocument posts the multipart form the create/update file endpoints

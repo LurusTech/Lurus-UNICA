@@ -388,6 +388,128 @@ func TestHandler_IndexingStatus(t *testing.T) {
 
 // A caller scoped to another tenant must not reach this tenant's knowledge base
 // through any of the verbs.
+func TestHandler_Segments(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"data":[
+			{"id":"seg-2","position":2,"content":"second","answer":null,"word_count":9,
+			 "tokens":6,"hit_count":2,"enabled":false,"status":"completed","keywords":[]},
+			{"id":"seg-1","position":1,"content":"first","answer":null,"word_count":33,
+			 "tokens":21,"hit_count":7,"enabled":true,"status":"completed","keywords":["退款"]}
+		],"doc_form":"text_model","total":2}`)
+	})
+
+	w := do(t, h, http.MethodGet, "/api/v1/tenants/pl-1/knowledge/documents/doc-1/segments", "", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if path := fake.last(t).Path; path != "/v1/datasets/ds-1/documents/doc-1/segments" {
+		t.Errorf("upstream path = %s", path)
+	}
+
+	var resp struct {
+		ProductLineID string `json:"product_line_id"`
+		DocumentID    string `json:"document_id"`
+		DocForm       string `json:"doc_form"`
+		Total         int    `json:"total"`
+		Segments      []struct {
+			ID        string   `json:"id"`
+			Position  int      `json:"position"`
+			Content   string   `json:"content"`
+			WordCount int      `json:"word_count"`
+			HitCount  int      `json:"hit_count"`
+			Enabled   bool     `json:"enabled"`
+			Keywords  []string `json:"keywords"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ProductLineID != "pl-1" || resp.DocumentID != "doc-1" || resp.DocForm != "text_model" || resp.Total != 2 {
+		t.Errorf("envelope = %+v", resp)
+	}
+	if len(resp.Segments) != 2 {
+		t.Fatalf("got %d segments, want 2", len(resp.Segments))
+	}
+	// The upstream reply was out of order; the response must not be.
+	if resp.Segments[0].Position != 1 || resp.Segments[1].Position != 2 {
+		t.Errorf("segments arrived out of order: %d then %d",
+			resp.Segments[0].Position, resp.Segments[1].Position)
+	}
+	if resp.Segments[0].Content != "first" || resp.Segments[0].HitCount != 7 ||
+		resp.Segments[0].WordCount != 33 || !resp.Segments[0].Enabled {
+		t.Errorf("first segment = %+v", resp.Segments[0])
+	}
+	if resp.Segments[1].Enabled {
+		t.Error("second segment reads as enabled; upstream disabled it")
+	}
+}
+
+func TestHandler_SegmentsIgnoresRequestDataset(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"data":[],"doc_form":"text_model","total":0}`)
+	})
+
+	w := do(t, h, http.MethodGet,
+		"/api/v1/tenants/pl-1/knowledge/documents/doc-1/segments?dataset_id=ds-someone-else&dataset=ds-someone-else",
+		"", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if path := fake.last(t).Path; path != "/v1/datasets/ds-1/documents/doc-1/segments" {
+		t.Errorf("request-supplied dataset reached Dify: %s", path)
+	}
+}
+
+// A document belonging to another tenant is not in this tenant's dataset, so
+// Dify answers 404 and that is what the caller must see - not a gateway fault,
+// and nothing about the document itself.
+func TestHandler_SegmentsUpstream404(t *testing.T) {
+	h, _, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"code":"not_found","message":"Document not found.","status":404}`)
+	})
+
+	w := do(t, h, http.MethodGet,
+		"/api/v1/tenants/pl-1/knowledge/documents/doc-of-another-tenant/segments", "", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body = %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"segments"`) {
+		t.Errorf("a refused lookup leaked a segments payload: %s", w.Body.String())
+	}
+}
+
+func TestHandler_SegmentsWithoutDataset(t *testing.T) {
+	h, fake, pls := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a tenant with no dataset must never reach Dify")
+	})
+	pls.pl.DifyDatasetID = nil
+
+	w := do(t, h, http.MethodGet, "/api/v1/tenants/pl-1/knowledge/documents/doc-1/segments", "", nil)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404, body = %s", w.Code, w.Body.String())
+	}
+	if fake.count() != 0 {
+		t.Errorf("Dify called %d times without a dataset", fake.count())
+	}
+}
+
+func TestHandler_SegmentsMethodNotAllowed(t *testing.T) {
+	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a non-GET on segments must never reach Dify")
+	})
+
+	for _, method := range []string{http.MethodPost, http.MethodDelete, http.MethodPut} {
+		w := do(t, h, method, "/api/v1/tenants/pl-1/knowledge/documents/doc-1/segments", "", nil)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s: status = %d, want 405", method, w.Code)
+		}
+	}
+	if fake.count() != 0 {
+		t.Errorf("Dify called %d times", fake.count())
+	}
+}
+
 func TestHandler_ScopeForbidden(t *testing.T) {
 	h, fake, _ := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("an out-of-scope request must never reach Dify")
@@ -397,6 +519,7 @@ func TestHandler_ScopeForbidden(t *testing.T) {
 		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge"},
 		{http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents"},
 		{http.MethodDelete, "/api/v1/tenants/pl-1/knowledge/documents/doc-9"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/documents/doc-9/segments"},
 		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/status/batch-77"},
 	}
 	for _, c := range cases {

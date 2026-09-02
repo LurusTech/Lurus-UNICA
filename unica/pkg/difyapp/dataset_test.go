@@ -333,6 +333,121 @@ func TestIndexingStatusAddressesTheBatch(t *testing.T) {
 	}
 }
 
+func TestListSegmentsRequestAndDecode(t *testing.T) {
+	captured := make(chan capturedRequest, 1)
+	// Deliberately out of order, and with the nulls Dify really sends: answer is
+	// null outside Q&A datasets, and a segment indexed without keywords has none.
+	const response = `{"data":[
+		{"id":"seg-3","position":3,"content":"third","answer":null,"word_count":5,
+		 "tokens":4,"hit_count":0,"enabled":false,"status":"completed","keywords":null},
+		{"id":"seg-1","position":1,"content":"first","answer":null,"word_count":33,
+		 "tokens":21,"hit_count":7,"enabled":true,"status":"completed","keywords":["退款","运费"]},
+		{"id":"seg-2","position":2,"content":"second","answer":"an answer","word_count":9,
+		 "tokens":6,"hit_count":2,"enabled":true,"status":"completed","keywords":[]}
+	],"doc_form":"text_model","total":9}`
+	client := newTestClient(t, recordingHandler(captured, http.StatusOK, response))
+
+	list, err := client.ListSegments(context.Background(), "ds-1", "doc-1")
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+
+	got := <-captured
+	if want := "/v1/datasets/ds-1/documents/doc-1/segments"; got.path != want {
+		t.Errorf("path = %q, want %q", got.path, want)
+	}
+	if got.method != http.MethodGet {
+		t.Errorf("method = %q, want GET", got.method)
+	}
+	if want := "Bearer " + testKey; got.auth != want {
+		t.Errorf("Authorization = %q, want %q", got.auth, want)
+	}
+	// The endpoint takes no pagination, so none may be invented for it.
+	if len(got.query) != 0 {
+		t.Errorf("query = %v, want none", got.query)
+	}
+
+	if list.DocForm != "text_model" {
+		t.Errorf("DocForm = %q, want text_model", list.DocForm)
+	}
+	// Total is Dify's count of the matching set, not len(Data); the response
+	// says 9 while carrying 3, so a len() would be caught here.
+	if list.Total != 9 {
+		t.Errorf("Total = %d, want 9 (the value Dify reported)", list.Total)
+	}
+	if len(list.Data) != 3 {
+		t.Fatalf("got %d segments, want 3", len(list.Data))
+	}
+	for i, want := range []int{1, 2, 3} {
+		if list.Data[i].Position != want {
+			t.Errorf("segment %d has position %d, want %d — the reply was not reordered",
+				i, list.Data[i].Position, want)
+		}
+	}
+	first := list.Data[0]
+	if first.ID != "seg-1" || first.Content != "first" || first.WordCount != 33 ||
+		first.Tokens != 21 || first.HitCount != 7 || !first.Enabled || first.Status != "completed" {
+		t.Errorf("first segment = %+v", first)
+	}
+	if !reflect.DeepEqual(first.Keywords, []string{"退款", "运费"}) {
+		t.Errorf("first keywords = %v", first.Keywords)
+	}
+	if list.Data[1].Answer != "an answer" {
+		t.Errorf("second answer = %q, want %q", list.Data[1].Answer, "an answer")
+	}
+	// A null answer is an absent answer, not an error.
+	if first.Answer != "" {
+		t.Errorf("first answer = %q, want empty for a null", first.Answer)
+	}
+	if list.Data[2].Enabled {
+		t.Error("third segment reads as enabled; the reply disabled it")
+	}
+}
+
+func TestListSegmentsEmptyDataIsASlice(t *testing.T) {
+	captured := make(chan capturedRequest, 1)
+	client := newTestClient(t, recordingHandler(captured, http.StatusOK,
+		`{"data":null,"doc_form":"text_model","total":0}`))
+
+	list, err := client.ListSegments(context.Background(), "ds-1", "doc-1")
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	<-captured
+	// A caller ranging over this must not have to nil-check first.
+	if list.Data == nil {
+		t.Error("Data is nil, want an empty slice")
+	}
+	if len(list.Data) != 0 {
+		t.Errorf("got %d segments, want 0", len(list.Data))
+	}
+}
+
+// The handler maps a missing document onto a 404 of its own, so the error this
+// path produces has to arrive as an *APIError carrying Dify's own status.
+func TestListSegmentsUpstreamErrorIsAnAPIError(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"code":"not_found","message":"Document not found.","status":404}`)
+	}))
+
+	_, err := client.ListSegments(context.Background(), "ds-1", "doc-missing")
+	if err == nil {
+		t.Fatal("ListSegments succeeded, want an error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error %v is not an *APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d, want 404", apiErr.StatusCode)
+	}
+	if apiErr.Code != "not_found" || apiErr.Message != "Document not found." {
+		t.Errorf("Code = %q, Message = %q", apiErr.Code, apiErr.Message)
+	}
+}
+
 func TestAPIErrorMapping(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -468,6 +583,12 @@ func TestArgumentValidationSkipsTheNetwork(t *testing.T) {
 	}
 	if _, err := client.IndexingStatus(ctx, "ds-1", ""); err == nil {
 		t.Error("IndexingStatus with an empty batch succeeded")
+	}
+	if _, err := client.ListSegments(ctx, "", "doc-1"); err == nil {
+		t.Error("ListSegments with an empty dataset ID succeeded")
+	}
+	if _, err := client.ListSegments(ctx, "ds-1", ""); err == nil {
+		t.Error("ListSegments with an empty document ID succeeded")
 	}
 }
 

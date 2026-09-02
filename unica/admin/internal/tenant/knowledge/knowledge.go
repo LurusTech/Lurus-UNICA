@@ -110,6 +110,7 @@ func NewHandler(pls productLines, datasetAPIBaseURL, datasetAPIKey, indexingTech
 //	GET    knowledge                     list documents
 //	POST   knowledge/documents           upload (multipart file or JSON text)
 //	DELETE knowledge/documents/{docID}   delete
+//	GET    knowledge/documents/{docID}/segments   the chunks it was split into
 //	GET    knowledge/status/{batch}      indexing progress of an upload
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	segments := pathSegments(r.URL.Path, tenantRoutePrefix)
@@ -158,6 +159,12 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.deleteDocument(w, r, pl, rest[1])
+	case rest[0] == "documents" && len(rest) == 3 && rest[2] == "segments":
+		if r.Method != http.MethodGet {
+			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.segments(w, r, pl, rest[1])
 	case rest[0] == "status" && len(rest) == 2:
 		if r.Method != http.MethodGet {
 			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -433,6 +440,45 @@ func (h *Handler) deleteDocument(w http.ResponseWriter, r *http.Request, pl *rep
 }
 
 // indexingStatus reports how far Dify has got with the batch an upload returned.
+// segments returns the chunks one document was split into.
+//
+// The dataset comes from the tenant on the path and from nowhere else; a
+// document ID belonging to another tenant is simply not in this dataset, and
+// Dify answers 404, which is the answer this endpoint passes on. That is the
+// whole of the isolation here, and it is why no dataset identifier is ever read
+// off the request.
+//
+// The upstream endpoint does not paginate — it returns every segment of the
+// document — so this one does not offer a page either rather than pretend to a
+// window it cannot ask for.
+func (h *Handler) segments(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine, docID string) {
+	datasetID, ok := h.datasetFor(w, pl, true)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(docID) == "" {
+		errorJSON(w, http.StatusBadRequest, "document id required")
+		return
+	}
+
+	list, err := h.dataset.ListSegments(r.Context(), datasetID, docID)
+	if err != nil {
+		log.Printf("[knowledge] list segments error: %v", err)
+		writeDatasetError(w, "failed to list document segments", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"product_line_id": pl.ID,
+		"document_id":     docID,
+		"doc_form":        list.DocForm,
+		// Dify counts the matching set itself; len(segments) would agree today
+		// and stop agreeing the moment that endpoint learns to filter.
+		"total":    list.Total,
+		"segments": list.Data,
+	})
+}
+
 func (h *Handler) indexingStatus(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine, batch string) {
 	datasetID, ok := h.datasetFor(w, pl, true)
 	if !ok {

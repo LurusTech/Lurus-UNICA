@@ -1,231 +1,259 @@
-# Active Task: 配置面重构 阶段 4 · D 组（会话）—— 前端接 refresh、按账号索引的「记住我」、D22 签发唯一性
+# Active Task: 配置面重构 阶段 4 · C 组（动线闭合）— 第一增量：文档分段只读（C3 + C4）
 
 ## Context
 
-门户「老要重登」是两件事叠加：access token 2 小时到期，以及 token 只存 `sessionStorage`、
-关标签页即丢。后端 `POST /auth/refresh` 早已实现（一次性、可撤销、哈希存 Redis），
-门户从未调用过。本增量让前端接上这条流程并提供「记住我」，同时修掉 D22
-（同秒签发的 token 字节级相同）——自动续期一旦上线，D22 会从「理论问题」变成真实的续期互废。
+「我的知识库」缺"看某篇文档被切成了什么样"这一步，租户因此仍有一件事必须打开 Dify。
+补上 admin 侧分段只读接口与门户「查看分段」后，租户日常动线在门户内闭合（验收第 2 条）。
 
-预期结果：验收第 5、6 条成立——两个标签页各登各的账号互不干扰、关浏览器重开两个账号都在；
-会话空放 3 小时后继续操作不被踢回登录页。
+C1 已实测定案（见下），**C2 拆为下一增量**：它要改运行中的 Dify nginx，并新增一条
+平台级鉴权旁路，性质与 C3/C4 完全不同。C2 的设计结论已在本文 Deferred 一节定稿，
+立项时直接照此执行，不必重议。
 
-**执行前必读的五个判断：**
+### C1 实测结论（2026-09-02，不必再验）
 
-1. **抽公共 `portal/auth.js`，不再八份内联。** 八个页面里 `getToken/clearToken/decodeClaims/api`
-   已经是逐字复制的四份代码（`admin.html:999-1060`、`home.html:275-355`、`knowledge.html:435-547` 等），
-   refresh 逻辑再抄八遍就是 D8/D16 的形态——修一处漏七处。`auth.js` 用 ES5 IIFE 挂
-   `window.UnicaAuth`（与现有页面风格一致，不用 module），页面通过 `<script src="./auth.js?v=1">`
-   引入，用 query 串做缓存失效。代价：每页多一次静态请求（门户 nginx 已开 gzip、
-   `portal/` 整目录只读挂载，无部署改动）；页面级差异（401 后是跳 `index.html`
-   还是显示内嵌登录表单）通过 `UnicaAuth.onSessionLost(fn)` 回调保留在页内，
-   `auth.js` 不碰任何页面 DOM。**不**顺手把四个带内嵌登录表单的旧页改成跳转——那是另一个增量。
+**子路径反代不可行。** Dify 0.15.3 的 web 是 Next.js，无 `basePath`。
+`GET /` 返回 `307 → /apps`（绝对路径），HTML 里资源全是绝对的 `/_next/static/chunks/*.js`，
+且 `/apps` `/datasets` `/signin` 等顶层路由会与门户自己的路由撞车。
+除非重建 Dify 前端，否则这条路是死的——原 C2「同源反代」正是建在它上面。
 
-2. **并发 401 用模块级单飞 Promise 串行化。** `auth.js` 内维护 `refreshInFlight`：
-   第一个 401 发起 `POST /auth/refresh` 并把 Promise 存下，同一时间窗内其余 401 全部
-   await 这同一个 Promise，成功后各自用新 access token 重试**一次**
-   （`options.__retried` 标记防死循环），失败则全部以 `unauthorized` 抛出并触发 `onSessionLost`。
-   跨标签页同账号的竞态（两个标签页持同一个一次性 refresh token）用「先读表再刷、刷败再读表」处理：
-   发 refresh 前先读 localStorage 会话表，若该账号条目里的 refresh token 已与本标签页手里的不同，
-   说明别的标签页刚换过——直接采用表里的新对，不再调 refresh；refresh 返回 401 时再读一次表
-   做同样判断，仍然相同才判定会话失效。
+**替代路径的三个前提均已验证：**
+- Dify 自己那套 nginx 的配置在我们手里（`/data/unica-dify/nginx.conf`），
+  现有 location 仅 `/console/api`、`/api`、`/v1`、`/files` 四条反代到 `api:5001`
+  外加 `location /` 反代到 `web:3000`，可加新 location。
+- `POST /console/api/login`（平台 Dify 管理员账号）实测返回
+  `{"result":"success","data":{"access_token":"...","refresh_token":"..."}}`。
+- Dify 前端从 **`localStorage` 的 `console_token` / `refresh_token`** 读凭据
+  （web 容器 `/app/web/.next/static/chunks` 内直接搜到 `getItem("console_token")`，
+  登出路径是 `removeItem("console_token")`）。
 
-3. **D2 的存储边界：两层，各管一事。**
-   - **标签页层（`sessionStorage`，不变）**：`unica_access_token`（沿用现有键名，所有读者不用改）
-     加新增 `unica_refresh_token`。每个标签页各持一对，这一层就是今天「多账号互不干扰」的来源，
-     本增量**原样保留**。当前标签页用的是哪个账号，由本页 access token 的 `user_id` claim 推出，
-     不另设键。
-   - **记住层（`localStorage["unica_sessions"]`）**：一张按 `user_id` 索引的表
-     `{ "<user_id>": { email, role, tenant_id, access_token, refresh_token, saved_at } }`。
-     **只在登录时勾了「记住我」才写入**；未勾的账号永远不进这张表，关标签页即消失，与今天完全一致。
-     每次 refresh 成功后，若表里存在该 `user_id` 的条目就同步更新它
-     （保证表里永远是最新的、未被消费的 refresh token）。
-   - **选用规则**（`UnicaAuth.bootstrapTab()`，所有页面共用）：标签页已有 token 则用它；
-     没有则读表并剔除 refresh token 已过期（解 `exp`）的条目；表里**恰好一个**账号则
-     静默采用到本标签页；**两个以上**则返回空，页面按现有逻辑落到 `index.html`，
-     `index.html` 在登录表单上方列出「已保存的账号」（邮箱 + 角色/租户）供点选，
-     点选即把该条目复制进本标签页的 `sessionStorage` 再分流。
-     因此 localStorage 不会破坏隔离：它只是账号仓库，标签页从不直接从它读 token 去发请求，
-     永远先落到自己的 `sessionStorage`。
-   - **登出**：清本标签页两个键，加删表中该 `user_id` 条目（登出即忘记）。
-     服务端无 revoke 端点，不在本增量加。
-   - 「在新标签页中打开」复制 sessionStorage 的浏览器行为不修；在 `index.html` 账号选择区加一行说明文字。
+### 分段接口实测形状（本增量的地基）
 
-4. **`AccessTokenTTL` 不改成可配。** 理由三条：原方案第六条已明确否决「调长 access token」，
-   加环境变量等于给这条否决留后门；D1 做完后这个数值对体验完全无感，没有任何消费者需要调它；
-   阶段 4 的方向是配置从 env 走向库与门户（B 组），此时新增一个 env 开关是方向性倒退。
-   2 小时作为安全常量硬编码是正确的。测试「到期后自动续期」不需要缩短 TTL——
-   往 `sessionStorage` 塞一个格式合法但签名无效的 token，中间件走的是同一行 401
-   （`middleware.go:96-99`），效果等价。
+读 `unica-dify-api` 容器内 `controllers/service_api/dataset/segment.py` 的 `SegmentApi.get` 定案：
 
-5. **验证分工**：D3 走 Go 单测（同秒两次签发必不同、access 与 refresh 的 `jti` 互异、旧测试全绿）；
-   D1/D2 全部实机点，理由是它们的正确性完全在浏览器存储与网络时序里，Go 侧一行没改。
+- **不分页。** 只接受 `status`（可重复）与 `keyword` 两个 query 参数，
+  没有 `limit` / `page` / `offset`；`total = query.count()` 之后把符合条件的段**全部返回**。
+  所以一次请求拿到整篇文档的全部分段，前端必须自己控制渲染量。
+- 响应顶层是 `{"data": [...], "doc_form": "text_model", "total": N}`——**三个键，`total` 不能漏**。
+- 单段字段实测：`id, position, document_id, content, answer, word_count, tokens,
+  keywords, index_node_id, index_node_hash, hit_count, enabled, disabled_at, disabled_by,
+  status, created_by, created_at, updated_at, updated_by, indexing_at, completed_at, child_chunks`。
+  `child_chunks` 是 0.15.3 的父子分块，当前数据里为空数组，本增量不展示但类型里要容得下。
+- 服务端**已支持** `keyword` 过滤。本增量仍做客户端筛选：既然一次就取回全部，
+  再为筛选发一轮请求只是多一次往返；但这是个选择而非唯一解，
+  文档量级变大到单篇上千段时可以改走服务端。
 
 ## Critical Files
 
-- `portal/auth.js`（新建）
-- `portal/index.html`
-- `portal/admin.html`
-- `portal/home.html`
-- `portal/ai-settings.html`
-- `portal/knowledge.html`
-- `portal/channels.html`
-- `portal/ontology.html`
-- `portal/violations.html`
-- `unica/admin/internal/auth/jwt.go`
-- `unica/admin/internal/auth/jwt_test.go`
-- `doc/known-defects.md`（D22 结案）
-- `doc/plan-workbench-settings.md`（D1-D3 打勾）
-- `doc/测试信息.md`（补「记住我」与新标签页复制坑）
+- `unica/pkg/difyapp/dataset.go`（新增 `Segment` / `SegmentList` 与 `ListSegments`）
+- `unica/pkg/difyapp/dataset_test.go`
+- `unica/admin/internal/tenant/knowledge/knowledge.go`（新增 `documents/{doc}/segments` 分支）
+- `unica/admin/internal/tenant/knowledge/knowledge_test.go`
+- `unica/admin/cmd/admin/router_test.go`（路由表加一行；`main.go` 的 `case "knowledge"`
+  不设闭合清单，**无需改动**）
+- `portal/knowledge.html`（行内「查看分段」按钮 + 分段弹窗）
+- `doc/测试信息.md`（API 速查加一行）
+- `doc/plan-workbench-settings.md`（C 组状态与 C1 结论回填）
 
 ## Step-by-Step Plan
 
-- [x] 1. **D3 后端**：`unica/admin/internal/auth/jwt.go` 的 `GenerateTokenPair` 中，为 access 与 refresh
-      两组 `RegisteredClaims` 各填一个独立的 `ID`（`jti`），值由 `crypto/rand` 取 16 字节转 hex
-      （不引入新依赖）；抽一个 `newTokenID() (string, error)` 辅助函数，随机源失败时返回错误
-      而非退化为空串。
-- [x] 2. **D3 单测**：`jwt_test.go` 新增 `TestGenerateTokenPair_UniquePerIssue`——同一 manager、
-      同一入参连续调用两次，断言两次的 `AccessToken`、`RefreshToken` 均不同，且解出的 `claims.ID`
-      非空、access 与 refresh 的 `ID` 互异。运行 `go test ./internal/auth/...`（在 `unica/admin` 下），
-      要求全绿。
-- [x] 3. **新建 `portal/auth.js`**，ES5 IIFE 挂 `window.UnicaAuth`，导出：
-      - 存储原语：`accessToken()` / `refreshToken()`（读 `sessionStorage`，try/catch 包裹）、
-        `decodeClaims(token)`（从现有页面原样搬入）、`adoptPair(pair, {remember})`
-        （写本标签页两键；`remember` 为真、或表中已有该 `user_id` 条目时，同步写 `localStorage["unica_sessions"]`）。
-      - 会话表：`savedAccounts()`（读表、剔除 refresh token `exp` 已过的条目并回写）、`forgetAccount(userId)`。
-      - `bootstrapTab()`：按判断 3 的选用规则返回 claims 或 `null`。
-      - `login(email, password, remember)`：POST `/api/v1/auth/login`，成功后 `adoptPair`，返回 claims；
-        错误信息沿用现有「邮箱或密码错误」兜底。
-      - `logout()`：清两键，加 `forgetAccount(当前 user_id)`。
-      - `onSessionLost(fn)`：注册页面级回调。
-      - `api(path, options)`：现有八份 `api` 的**超集**——`FormData` 不加 JSON 头（`knowledge.html:522`）、
-        错误对象带 `status` 与 `data`（`admin.html:1049-1054`）；401 分支改为：`options.__retried`
-        为真则直接判失效；否则调 `refreshAccess()`（步骤 4），成功后以 `__retried=true` 重发原请求，
-        失败则调 `onSessionLost` 回调并抛 `Error("unauthorized")`（`status=401`，
-        保证各页 `err.message === "unauthorized"` 的静默分支继续成立）。
-- [x] 4. **在 `auth.js` 内实现 `refreshAccess()`**（判断 2）：模块级 `refreshInFlight`；
-      进入时先 `reconcileFromTable()`——读表中本账号条目，若其 refresh token 与本标签页不同
-      则采用并 resolve，不发请求；否则若 `refreshInFlight` 已存在直接返回它；
-      否则发起 `POST /api/v1/auth/refresh`，200 则 `adoptPair(新对)` 并 resolve；
-      401 则再 `reconcileFromTable()` 一次，仍无新对才 reject；
-      任何分支结束都把 `refreshInFlight` 置 `null`。
-- [x] 5. **改 `portal/index.html`**：引入 `auth.js`；删本页 `getToken/setToken/clearToken/decodeClaims`；
-      登录表单加「记住我（7 天内免登录）」复选框；
-      提交改调 `UnicaAuth.login(email, password, remember)` 后 `dispatch(claims)`；
-      Init 改为 `var claims = UnicaAuth.bootstrapTab()`：有则 `dispatch`；
-      无且 `savedAccounts()` 不少于 2 个时，在登录表单上方渲染账号列表（邮箱 + 角色/租户名，
-      每项一个按钮，点选后 `adoptPair(该条目)` 并 `dispatch`，附一个「忘记」小按钮调 `forgetAccount`），
-      并加一行说明：从已登录页面右键「在新标签页中打开」会沿用原标签页账号，
-      要切换账号请手动新开标签页粘地址；无且表空则 `showLogin()`。
-- [x] 6. **改 `admin.html` / `home.html` / `ai-settings.html`**（跳转型页）：引入 `auth.js`；
-      删本页四个重复函数，改为委托 `UnicaAuth.api` / `UnicaAuth.decodeClaims` / `UnicaAuth.accessToken`；
-      `goLogin` 改为先 `UnicaAuth.logout()` 再 `window.location.replace(LOGIN_PAGE)`；
-      页面启动处的 `getToken()` 判空改为 `UnicaAuth.bootstrapTab()` 判空；
-      注册 `UnicaAuth.onSessionLost(...)`。
-      **注意登出按钮与会话失效要区分**：登出按钮走 `logout()`（删表条目），
-      会话失效回调只清本标签页两键再跳转，不删表——否则一次 refresh 失败会把「记住我」一起抹掉。
-      为此 `auth.js` 额外导出 `dropTab()`（只清本标签页），`onSessionLost` 的页面回调用它。
-- [x] 7. **改 `knowledge.html` / `channels.html` / `ontology.html` / `violations.html`**（内嵌登录型页）：
-      引入 `auth.js`；同步骤 6 替换四个函数与 `getToken`；登录表单加同款「记住我」复选框，
-      提交改调 `UnicaAuth.login(...)` 后沿用各页 `showApp(); bootstrap()`；
-      `showLogin()` 内的 `clearToken()` 改为 `UnicaAuth.dropTab()`；
-      登出按钮改调 `UnicaAuth.logout()` 再 `showLogin()`；
-      注册 `onSessionLost` 回调显示「登录已过期，请重新登录」；
-      Init 处 `getToken()` 判空改为 `UnicaAuth.bootstrapTab()`。
-- [x] 8. **全仓核对**：`rg -n "sessionStorage|localStorage" portal/` 的命中应只剩 `portal/auth.js`；
-      `rg -n "function api\(|function decodeClaims\(" portal/*.html` 应为零命中。
-- [x] 9. **部署与实机验证 D3**：重编 admin（在 `unica/admin` 下 `go build ./cmd/admin`），
-      按 `doc/测试信息.md` 第四节「先 kill 再 cp」换二进制（用端口取 PID，等 `kill -0` 失败再 cp）；
-      `curl` 连续两次登录 `rehearsal@unica.local`，断言两次 `access_token` 与 `refresh_token` 均不同。
-- [x] 10. **实机验证 D1**（浏览器门户地址与账号见 `doc/测试信息.md` 第三节）：
-      - 不勾记住我登录 AJYJ 用户进 `home.html`；DevTools Console 里把 `unica_access_token`
-        改成一个格式合法但签名无效的串；刷新页面。Network 面板断言：**恰好一次**
-        `POST /auth/refresh` 200，随后各业务请求 200，页面不跳登录（并发 401 只刷一次）。
-      - 再把 access 与 refresh 两个键都置坏，刷新：断言 refresh 401 后落回 `index.html`，
-        且 `localStorage.unica_sessions` 未被写入（未勾记住我从不进表）。
-      - `knowledge.html` 重复第一条，确认 `FormData` 上传路径在续期重试后仍成功。
-- [x] 11. **实机验证 D2**（验收第 5 条）：标签页 A 勾记住我登录 AJYJ 用户，
-      标签页 B 勾记住我登录 `rehearsal@unica.local`（admin）；各自操作（A 改阈值、B 看租户列表）
-      互不干扰；`localStorage.unica_sessions` 含两个 `user_id` 键。
-      关闭整个浏览器重开 `index.html`：出现两个账号的选择列表；分别在两个新标签页里点选，
-      各自进入对应工作区。在 A 里手动把 access token 置坏触发续期，
-      随后在 B 的 Console 读 `localStorage.unica_sessions`，断言 AJYJ 条目的 `refresh_token`
-      已变而 admin 条目未变（表按账号隔离更新）。在 A 点登出：表中 AJYJ 条目消失、
-      admin 条目保留；B 不受影响。
-- [x] 12. **实机验证同账号双标签页竞态**：勾记住我登录 AJYJ 后，从该页右键「在新标签页中打开」
-      任一链接（复制 sessionStorage），两个标签页都把 access token 置坏后先后刷新：
-      第二个标签页不得被踢回登录（它应通过 `reconcileFromTable` 采用第一个标签页换到的新对）。
-- [x] 13. **文档收尾**：`doc/known-defects.md` 的 D22 标题加「（已解，YYYY-MM-DD）」并写一句根因与修法；
-      `doc/plan-workbench-settings.md` 的 D1-D3 打勾、「当前状态」更新；
-      `doc/测试信息.md` 第九节坑表加「在新标签页中打开沿用原账号」一行，
-      第三节账号表下补一句「记住我」存在 `localStorage.unica_sessions`、登出即删。
-- [x] 14. **最终验证**：在 `unica/admin` 下 `go test ./...` 全绿；步骤 8 的两条 `rg` 为预期结果；
-      步骤 10-12 全部通过后，把步骤 9-12 的结论逐条写回本文件 Current Status。
+- [x] 1. **客户端类型**：`pkg/difyapp/dataset.go` 新增 `Segment`
+      （`ID, Position int, Content, Answer, WordCount, Tokens, HitCount int, Enabled bool,
+      Status string, Keywords []string`，`answer` 可为 null，用指针或空串处理）
+      与 `SegmentList{Data []Segment; DocForm string; Total int}`。
+      JSON 标签对齐实测响应；多余字段（`index_node_*`、`child_chunks`、各时间戳）忽略，
+      与既有 `Document` 同一风格。
+- [x] 2. **客户端方法**：`func (c *DatasetClient) ListSegments(ctx, datasetID, documentID string) (*SegmentList, error)`。
+      空参数走 `errors.New` 不发网络（同 `IndexingStatus`）；路径
+      `/datasets/{ds}/documents/{doc}/segments`，两段都 `url.PathEscape`；经 `newRequest`/`do`。
+      返回前按 `Position` 升序稳定排序（不依赖 Dify 的顺序）；`Data` 为 nil 时置空切片。
+- [x] 3. **客户端测试**：`dataset_test.go` 加 `TestListSegmentsRequestAndDecode`
+      （断言路径、Bearer、解码含 `hit_count`/`enabled=false`/`keywords`/`total`、乱序输入按
+      position 排好）与 `TestListSegmentsArgumentValidation`（空 ID 不发请求）。
+      `TestAPIErrorMapping` 补一条 404 分支覆盖该路径。
+- [x] 4. **处理器路由**：`knowledge.go` 的 `Handle` switch 加分支——
+      `rest[0]=="documents" && len(rest)==3 && rest[2]=="segments"`，仅 `GET`，
+      调 `h.segments(w, r, pl, rest[1])`。文件头部注释的路由表同步加
+      `GET knowledge/documents/{docID}/segments` 一行。
+- [x] 5. **处理器实现**：`datasetFor(w, pl, true)`（未绑库 → 404 `noDatasetMessage`；
+      无 key → 503，沿用现有语义）；docID 空白 → 400；调 `h.dataset.ListSegments`；
+      上游错误经 `writeDatasetError`（Dify 对「文档不属于该数据集」回 404，原样映射为 404）。
+      **租户隔离的最后一道**：dataset ID **只**来自路径租户的 `pl.DifyDatasetID`，
+      请求里任何 dataset 参数一律不读。
+      响应 `{product_line_id, document_id, doc_form, total, segments}`
+      （`total` 用 Dify 返回的值而非 `len`——两者当前一致，但那边是 `query.count()`，
+      让它自己说了算）。
+- [x] 6. **处理器测试**：`knowledge_test.go` 加 `TestHandler_Segments`（路径
+      `/v1/datasets/ds-1/documents/doc-1/segments`、字段回传、total）、
+      `TestHandler_SegmentsIgnoresRequestDataset`（照抄 `TestHandler_ListIgnoresRequestDataset`，
+      query 带别人的 dataset 仍打 `ds-1`）、`TestHandler_SegmentsUpstream404`（Dify 404 → 本端 404）、
+      `TestHandler_SegmentsWithoutDataset`（未绑库 → 404）、
+      `TestHandler_SegmentsMethodNotAllowed`（POST → 405）。
+      `TestHandler_ScopeForbidden` 加该路径一例（403）。
+- [x] 7. **路由表测试**：`cmd/admin/router_test.go` 加
+      `{GET, "/api/v1/tenants/pl-1/knowledge/documents/doc-9/segments", "knowledge", 同路径}`。
+      审计中间件对 GET 不记录（`audit/middleware_test.go:21`），无需处理。
+- [x] 8. **门户入口**：`rowHtml` 的 `row-actions` 在「删除」前加
+      `<button data-segments="<id>" data-name="<name>">查看分段</button>`；
+      `pendingRowHtml` **不加**（尚在索引，没有稳定分段）。
+      `tbody` 的 click 监听增加 `button[data-segments]` 分支。
+- [x] 9. **分段弹窗**：新增 `#segments-modal`，复用现有 `.modal-backdrop`/`.modal` 样式，
+      加 `.modal.wide`（宽度 `min(960px, 92vw)`、内容区 `max-height:70vh; overflow:auto`）。
+      **弹窗而非行内展开**：单段最长 1000 token，一篇文档几十到上千段，
+      展开在 5 列表格里会把其余文档推出视口，并与 `table-wrap` 自己的滚动打架。
+      结构：标题行（文档名 · 共 N 段 · 字数合计）、客户端筛选框（按内容子串过滤，不再发请求）、
+      列表区、关闭按钮；`Esc` 与点遮罩关闭，沿用现有 keydown 处理。
+- [x] 10. **列表项渲染**：`#序号`（`position`）、正文（`white-space: pre-wrap` + `escapeHtml`）、
+      右侧元信息「N 字 · 命中 M 次」；`enabled=false` 加 `pill muted 已停用`；
+      `doc_form==="qa_model"` 时正文下另起「答：」行显示 `answer`。
+      **分批渲染**：先 100 条，底部「显示更多」按钮追加 100——接口不分页，
+      一次就把整篇文档的段全给了，不控制渲染量会在大文档上卡死。
+      空结果按状态区分文案：文档 `indexing_status!=="completed"` → 「索引尚未完成，分段稍后可见」；
+      已完成但为空 → 「该文档没有产出分段」。
+- [x] 11. **请求接线**：走
+      `UnicaAuth.api(knowledgePath("/documents/" + encodeURIComponent(id) + "/segments"))`；
+      加载中弹窗先开、显示「加载中…」；`err.status===404` 用后端 `error` 文案；
+      `unauthorized` 静默（与 `deleteDoc` 一致）。
+- [x] 12. **文档**：`doc/测试信息.md` 第七节 API 速查「知识库」一行补
+      `GET .../knowledge/documents/{doc}/segments`；
+      `doc/plan-workbench-settings.md` 把 C1 标 `[x]` 并附结论（子路径不可行，改 Dify 同源种子页）、
+      C3/C4 标 `[x]`、C2 标「下一增量，设计见本文 Deferred」。
+- [x] 13. **Go 单测**：`unica/pkg` 下 `go test ./difyapp/`；
+      `unica/admin` 下 `go test ./internal/tenant/knowledge/ ./cmd/admin/`。
+      三包全绿，`go vet` 无告警。（注意 Go 没有 `-q`。）
+- [x] 14. **实机验收**（WSL IP 用 `wsl hostname -I` 现查；换 admin 二进制先按端口取 PID kill、
+      等 `kill -0` 失败再 cp）：
+      1. `ajyj-admin@unica.local` 登门户 → 知识库 → 任一已完成文档「查看分段」：
+         段数、首段正文与 Dify 控制台（`:3402`）该文档详情页**逐一对上**；
+      2. **隔离**：用 AJYJ 的 access token 直接
+         `GET /api/v1/tenants/me/knowledge/documents/<XDYX 的某个 doc id>/segments` → **404**，
+         body 不含任何分段；用 XDYX token 打 `/tenants/<AJYJ id>/...` → 403；
+      3. admin 账号带 `?tenant=<AJYJ id>` 打开 knowledge.html，同一按钮可用；
+      4. 传一篇新文档，索引未完成时点「查看分段」看到「索引尚未完成」文案，完成后刷新可见分段。
+      以上通过后清空本文件。
 
-## Deferred（不在本增量）
+## Deferred（下一增量：C2 · Dify 入口，设计已定，可直接立项）
 
-- 服务端登出端点（撤销 refresh token）：目前登出只忘客户端，服务端 7 天内该 refresh token 仍可用。
-- 四个内嵌登录页统一改为跳转 `index.html`，以及 `?next=` 登录后回到原页。
-- **待登记的观察**：refresh token 无 `role` / `tenant_id`，却能通过 `AuthMiddleware` 的签名校验
-  被当作 Bearer 使用；现有 `RequireAdmin` / `TenantAuth` 会 403，但只挂 `AuthMiddleware` 的路由
-  （如 `/api/v1/audit-logs` 的用户自动租户过滤）在 `TenantID` 为空时的行为需要单独核实。
-  建议登记为新缺陷，不在此修。
+### 给谁：**只给 admin**
+
+Dify 社区版只有一把共享管理员钥匙，拿到即全平台管理员：能读改**所有**租户的应用、
+知识库正文与模型供应商凭据，能删掉别的产线的 app（`dify_agent_id` 悬空、该租户路由即断）。
+而且在 Dify 里改提示词/模型/top_k 会被 UNICA 的权威源判为漂移、下次回推**静默冲掉**——
+租户在那边做的任何事都是白做。「私用」消掉的是"恶意租户"，消不掉"共享钥匙没有个人留痕"。
+
+所以 **C2 不是「工作台加入口」，而是「`portal/admin.html` 平台运维卡片里的 Dify 控制台
+从裸外链升级为免密直达」**，`home.html` 不动；租户靠本增量的 C3/C4 做到"不用去"。
+
+> 若决定仍要放给租户，改动本身很小（中间件从 `requireAdmin` 换成 `authMW`，
+> home 加一张卡片），但**必须先**在 `plan-workbench-settings.md` 第一条
+> 把上述后果写成一条已接受的决定，而不是默默放开。
+
+### token 怎么到种子页：**URL fragment，一次性，只用于这一跳**
+
+fragment 不上送服务器（nginx access log 不记）、不进 Referer；
+种子页读完立刻 `history.replaceState(null,"",location.pathname)` 再 `location.replace("/apps")`，
+带 token 的 URL 不留在历史栈。
+
+不做「一次性 ticket 二次交换」：种子页在 `:3402`，回调 admin `:8081` 是跨源，
+要么 admin 加 CORS 白名单和 preflight，要么 Dify nginx 加一条反代到宿主 admin
+（容器到宿主的地址随 WSL IP 变，`extra_hosts: host-gateway` 需重建容器）——
+两套新活动件，防的却是 fragment 已经不具备的泄露面；
+token 最终本来就落在 localStorage 里，交换制不改变这一点。
+
+### 后端
+
+`bridge.DifyBridge.Login` 现在丢掉了 `refresh_token`（只解 `access_token`），
+新增 `LoginPair` 返回两者。新端点 `GET /api/v1/platform/dify-console/session`
+（`authMW(requireAdmin(...))`，与 `/platform/model` 同级），**每次新登录**而不是复用
+30 分钟缓存（`consoleToken` 是服务自己的工作凭证，不把同一串交给浏览器），
+响应 `{access_token, refresh_token}`，写审计 `resource=dify_console action=login`。
+
+`DIFY_ADMIN_EMAIL/PASSWORD` 为空时 503 并说明原因（D21 口径）；
+只配了静态 `DIFY_ADMIN_TOKEN` 也拒绝——那是长命凭证，不外发。
+**D23 在此不放大**：refresh token 当 Bearer 时 role 为空，`RequireAdmin` 直接 403。
+
+Dify 侧：新登录只写新键不删旧键，admin 自己的定期登录不会作废浏览器那份 refresh token；
+浏览器在 Dify 点登出只删它自己那对。
+
+### 前端（`admin.html`）
+
+`#dify-link` 改为按钮：先 `window.open("about:blank")`（弹窗规则，同 `home.html` 的 SSO 卡片），
+再取 session，再 `win.location.replace(DIFY_CONSOLE_BASE + "/unica/console-entry#a=<access>&r=<refresh>")`。
+
+### Dify nginx
+
+仓库副本 `deploy/dify-preview/nginx.conf`，运行副本 `/data/unica-dify/nginx.conf`
+以 `:ro` 文件级 bind mount 进容器。在 `location /` **之前**加：
+
+```
+location = /unica/console-entry {
+    default_type text/html;
+    add_header Cache-Control "no-store";
+    add_header Referrer-Policy "no-referrer";
+    return 200 '<!doctype html>…内联不超过 20 行脚本：读 hash → 写 localStorage 的
+                console_token / refresh_token → replaceState → location.replace("/apps")；
+                hash 为空则显示"请从平台管理页进入"并链到 /signin…';
+}
+```
+
+路径带 `/unica/` 前缀，与 `/apps` `/datasets` `/signin` 等 Next.js 顶层路由不撞。
+
+**改法**：先 `cp nginx.conf nginx.conf.bak-<日期>`，两份副本同改；
+写入运行副本必须 `cp` 或 `cat >` **覆盖原 inode**——`sed -i` 与编辑器的原子改名会生成新文件，
+容器里看到的还是旧内容，改了等于没改；然后 `docker exec unica-dify-nginx nginx -t`
+通过后 `nginx -s reload`。
+
+**改坏了会怎样**：`nginx -t` 不通过则 reload 被拒、旧配置继续服务，Dify 不受影响；
+reload 成功但 location 写错，只影响这一条新路径，`location /` 未动。
+**回滚**：`cp nginx.conf.bak-<日期> nginx.conf && nginx -s reload`，一分钟内。
+
+### C2 的验证
+
+全部实机——admin 点卡片新窗口直落 `/apps` 且已登录；
+地址栏与浏览器历史里搜不到 `console_token` 值；
+`docker logs unica-dify-nginx` 里该请求行无 token；
+用租户 token 打 session 端点 → 403；用 refresh token 当 Bearer → 403；
+`audit_logs` 有 `dify_console/login` 一行；
+把 `.env` 里 `DIFY_ADMIN_PASSWORD` 清空重启 admin → 卡片给出 503 文案而非静默失败。
 
 ## Current Status
 
-- [x] **步骤 1-14 全部完成，实机验收通过。未提交。**
+- [x] **步骤 1-14 完成，实机验收通过（一项未能观察到，见下）。未提交。**
 
 ### 实机验收结果（2026-09-02）
 
-环境：本地 WSL（UbuntuE），WSL IP 172.17.158.157，门户 :3401，admin :8081。
-admin 二进制从 Windows 交叉编译（WSL 里没装 Go），按坑表用端口取 PID、
-等 `kill -0` 失败再 cp，旧二进制留在 `~/unica-run/admin-scene-bin.bak` 可回滚。
-浏览器验证用 Playwright（Chrome 扩展未连）。
+`go vet` 与 `go test ./...` 在 `unica/pkg` 与 `unica/admin` 两个模块全绿；
+`knowledge.html` 内联脚本通过 `node --check`，页面里 `getElementById` 引用的 id 全部存在。
+admin 二进制已换（旧的留在 `~/unica-run/admin-scene-bin.bak`）。
 
-**步骤 9 · D3** — 连续两次登录，access 与 refresh 全不同；三个 `jti` 两两不同。
+**接口与隔离（curl 直打 :8081）**
+- 自己的文档 → 200，字段齐（`doc_form` / `total` / `segments`）。
+- **AJYJ 用自己的租户路径请求 XDYX 的文档 ID → 404**，响应体不含 `segments` 字段。
+- XDYX 用户打 AJYJ 的租户路径 → 403。
+- `POST` 该路径 → 405；不存在的文档 ID → 404。
+- 同一文档，门户读到的段数与直读 Dify 一致。
 
-**步骤 10 · D1**
-- access token 签名毁掉、refresh 完好：**恰好一次** `POST /auth/refresh` 200，
-  `tenants/me` 走 `[401, 200]`，页面留在 `home.html`。
-- 两个 token 都毁掉：refresh 401，落回 `index.html`，登录表单真的在屏幕上；
-  未勾记住我的账号**没有**进金库；标签页带上了会话丢失标记。
-- **六路并发 401**（`home.html` 只发一个业务请求，压不到并发，故直接发六个）：
-  仍然只有**一次**续期，六个请求全部成功。
-- multipart：`POST 401 → POST 201`，续期重试后边界没被破坏。
+**门户（Playwright，Chrome 扩展未连）**
+- 文档行出现「查看分段」；弹窗标题显示「文档名 · 共 N 段 · M 字」；分段按 `#position` 编号。
+- 筛选：命中词保留分段，未命中清空并给出「没有匹配…」。
+- `Esc` 关闭并清空列表内容（在途响应落不到已关闭的视图上）。
+- admin 带 `?tenant=<AJYJ>` 打开同一页，看到同样的分段。
+- 一篇 **59 段**文档：59 项全部渲染、`position` 严格升序、字数 2,174 与筛选均正确、
+  `显示更多` 正确隐藏（59 < 100）。全程零页面错误。
 
-**步骤 11 · D2** — 两账号并存、各自工作区、金库两条按 `user_id` 索引；
-A 续期后只有 A 的条目变、B 的没动；关掉整个浏览器重开，选择器列出两个账号，
-分别点选各进各的工作区；A 登出只删 A 的条目，B 不受影响且仍能调 API。
+### 未能验证的一项（如实记录）
 
-**步骤 12 · 同账号双标签页竞态** — B 持已被 A 花掉的 refresh token 时
-**一次续期请求都没发**，直接从金库取到 A 轮换出的新对；三个并发请求同样如此。
+计划第 14 步第 4 条「索引未完成时点查看分段，应显示『索引尚未完成，分段稍后可见』」
+**没能在实机观察到**。这台环境的索引比一次页面刷新还快：上传一篇 59 段的文本后，
+第一次刷新时 `indexing_status` 已是 `completed`，窗口关闭。现有 30 篇文档也全部 completed。
+该分支是纯客户端判断（`state.docs` 里该文档的 `indexing_status !== "completed"`），
+错了的后果只是空状态文案不准，不涉及数据或权限。**记作未验证，不记作通过。**
 
-### 验收中发现并修掉的计划外缺口
+### 遗留的测试数据（两份，删除请人工执行）
 
-计划假设「能攒出两个被记住的账号」，实机上这个前提不成立：只要有一个账号被记住，
-任何新标签页打开 `index.html` 都会静默采用它并跳进工作台，登录表单到不了；
-唯一出路「登出」又会忘掉这个账号。于是第二个账号永远加不进来，
-账号选择器在真实使用中触发不到——而「一个人管两个账号」正是这一条最初的来由。
-修法：`index.html` 认 `?switch=1` 时不做静默采用；`home.html` / `admin.html`
-页眉加「切换账号」链接。静默采用本身没错，错在没留出口。
-
-### 顺带定性的一条新缺陷
-
-**D23（低危，未修）**：refresh token 能当 Bearer 用。`AuthMiddleware` 只验签名、
-不区分 token 类型。实测 `/api/v1/tenants` 与 `/api/v1/platform/settings` 被
-`RequireAdmin` 挡成 403，而只挂 `AuthMiddleware` 的 `/api/v1/audit-logs` 返回
-**200 但零行**（refresh token 的 `tenant_id` 为空，按空租户过滤的结果是空而不是全部）。
-**没有数据泄露**，是类型卫生问题。已登记进 `known-defects.md`。
-
-### 遗留
-
-- **AJYJ 知识库里留了一个探针文档** `refresh-retry-probe.txt`
-  （`document_id` `7aa7c16e-c628-456f-95b9-19f5c2aa4c41`），是步骤 10 的 multipart
-  验证产物。删除是不可逆操作，留给人工在知识库页处理。
-- `adoptPair` 整表读改写在跨标签页下理论上可互相覆盖（低危）。读写是相邻语句、
-  中间无 await，窗口已等于同步块本身，单键 localStorage 下无法再收窄。
-- Deferred 三条不在本增量内。
+AJYJ 知识库里有两个探针文档，都是验收产物：
+- `refresh-retry-probe.txt`（`7aa7c16e-c628-456f-95b9-19f5c2aa4c41`，D 组 multipart 验证留下）
+- `indexing-state-probe.txt`（`7ced67c1-c27a-469d-9441-23732b36f4e6`，本次为抢索引窗口上传，59 段）
 
 ### 下一步
 
-代码与文档均已就绪，等待提交。B / C 两组见 `doc/plan-workbench-settings.md`。
+代码与文档就绪，等待提交。C2（Dify 免密入口）见上面的 Deferred，可直接立项。

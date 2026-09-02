@@ -220,6 +220,25 @@
   }
   .modal h3 { margin: 0 0 18px; font-size: 1.1rem; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+  /* A document's segments need width to be readable and their own scroll: the
+     modal must not grow past the viewport, and the page behind it must not
+     scroll instead. */
+  .modal.wide { max-width: min(960px, 92vw); }
+  .seg-meta { color: var(--text-muted); font-size: 0.84rem; margin: -8px 0 14px; word-break: break-all; }
+  .seg-toolbar { margin-bottom: 12px; }
+  .seg-toolbar input { width: 100%; }
+  .seg-list { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow-y: auto; }
+  .seg-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .seg-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    font-size: 0.78rem; color: var(--text-muted); margin-bottom: 8px;
+  }
+  /* Segment text carries its own line breaks and can hold long unbroken runs. */
+  .seg-body { white-space: pre-wrap; font-size: 0.86rem; line-height: 1.7; word-break: break-word; }
+  .seg-answer {
+    margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border);
+    white-space: pre-wrap; font-size: 0.86rem; line-height: 1.7; word-break: break-word;
+  }
 
   /* Toasts */
   #toast-host {
@@ -347,6 +366,22 @@
   </div>
 </div>
 
+<!-- Segments modal -->
+<div class="modal-backdrop" id="segments-backdrop">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="segments-title">
+    <h3 id="segments-title">文档分段</h3>
+    <div class="seg-meta" id="segments-meta"></div>
+    <div class="seg-toolbar">
+      <input id="segments-filter" placeholder="在分段内容中筛选…" autocomplete="off" />
+    </div>
+    <div class="seg-list" id="segments-list"></div>
+    <div class="modal-actions">
+      <button type="button" id="segments-more" hidden></button>
+      <button type="button" id="segments-close">关闭</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast-host" aria-live="polite"></div>
 
 <script src="./auth.js?v=1"></script>
@@ -420,6 +455,12 @@
     modalBackdrop: document.getElementById("modal-backdrop"),
     textForm: document.getElementById("text-form"),
     modalCancel: document.getElementById("modal-cancel"),
+    segmentsBackdrop: document.getElementById("segments-backdrop"),
+    segmentsMeta: document.getElementById("segments-meta"),
+    segmentsFilter: document.getElementById("segments-filter"),
+    segmentsList: document.getElementById("segments-list"),
+    segmentsMore: document.getElementById("segments-more"),
+    segmentsClose: document.getElementById("segments-close"),
     modalSubmit: document.getElementById("modal-submit"),
     fName: document.getElementById("f-name"),
     fText: document.getElementById("f-text"),
@@ -748,6 +789,7 @@
       "<td>" + escapeHtml(formatCount(doc.word_count)) + "</td>" +
       "<td>" + escapeHtml(formatUnixSeconds(doc.created_at)) + "</td>" +
       '<td class="actions-cell"><div class="row-actions">' +
+      '<button data-segments="' + escapeAttr(doc.id) + '" data-name="' + escapeAttr(name) + '">查看分段</button>' +
       '<button class="danger" data-del="' + escapeAttr(doc.id) + '" data-name="' + escapeAttr(name) + '">删除</button>' +
       "</div></td>" +
       "</tr>"
@@ -858,6 +900,131 @@
       });
   }
 
+  // ---------- Segments ----------
+  // The endpoint does not paginate: one request brings back every segment of
+  // the document, which for a long one is thousands. They are held here and
+  // handed to the DOM a screenful at a time, because drawing them all at once
+  // is what turns a large document into a frozen tab.
+  var SEG_PAGE = 100;
+  var segState = { docID: "", name: "", all: [], shown: 0, docForm: "text_model" };
+
+  els.tbody.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-segments]");
+    if (!btn) return;
+    openSegments(btn.getAttribute("data-segments"), btn.getAttribute("data-name") || "");
+  });
+
+  function openSegments(docID, name) {
+    if (!docID || !state.currentTenant) return;
+    segState = { docID: docID, name: name, all: [], shown: 0, docForm: "text_model" };
+    els.segmentsMeta.textContent = name || docID;
+    els.segmentsFilter.value = "";
+    els.segmentsFilter.disabled = true;
+    els.segmentsList.innerHTML = '<div class="empty-state">加载中…</div>';
+    els.segmentsMore.hidden = true;
+    els.segmentsBackdrop.classList.add("open");
+
+    UnicaAuth.api(knowledgePath("/documents/" + encodeURIComponent(docID) + "/segments"))
+      .then(function (data) {
+        // The operator may have closed this one and opened another while the
+        // request was out; a late reply must not overwrite the newer view.
+        if (segState.docID !== docID) return;
+        segState.all = (data && data.segments) || [];
+        segState.docForm = (data && data.doc_form) || "text_model";
+        var total = data && typeof data.total === "number" ? data.total : segState.all.length;
+        var words = 0;
+        for (var i = 0; i < segState.all.length; i++) words += Number(segState.all[i].word_count) || 0;
+        els.segmentsMeta.textContent = (name || docID) + " · 共 " + total + " 段 · " + formatCount(words) + " 字";
+        els.segmentsFilter.disabled = segState.all.length === 0;
+        renderSegments();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        if (segState.docID !== docID) return;
+        els.segmentsList.innerHTML = '<div class="empty-state">' + escapeHtml(err.message) + "</div>";
+        els.segmentsMore.hidden = true;
+      });
+  }
+
+  // Which segments the filter box currently admits.
+  function visibleSegments() {
+    var q = els.segmentsFilter.value.trim().toLowerCase();
+    if (!q) return segState.all;
+    return segState.all.filter(function (seg) {
+      return String(seg.content || "").toLowerCase().indexOf(q) !== -1 ||
+        String(seg.answer || "").toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  function renderSegments() {
+    var list = visibleSegments();
+    if (!list.length) {
+      els.segmentsList.innerHTML = '<div class="empty-state">' + escapeHtml(emptySegmentsMessage()) + "</div>";
+      els.segmentsMore.hidden = true;
+      return;
+    }
+    if (segState.shown < SEG_PAGE) segState.shown = SEG_PAGE;
+    var slice = list.slice(0, segState.shown);
+    els.segmentsList.innerHTML = slice.map(segmentHtml).join("");
+    var remaining = list.length - slice.length;
+    els.segmentsMore.hidden = remaining <= 0;
+    els.segmentsMore.textContent = "显示更多（还有 " + remaining + " 段）";
+  }
+
+  function emptySegmentsMessage() {
+    if (els.segmentsFilter.value.trim() && segState.all.length) {
+      return "没有匹配「" + els.segmentsFilter.value.trim() + "」的分段";
+    }
+    // A document still being indexed has no segments yet, which is a different
+    // thing from a document that produced none.
+    var doc = null;
+    for (var i = 0; i < state.docs.length; i++) {
+      if (String(state.docs[i].id) === segState.docID) { doc = state.docs[i]; break; }
+    }
+    if (doc && doc.indexing_status !== "completed") return "索引尚未完成，分段稍后可见";
+    return "该文档没有产出分段";
+  }
+
+  function segmentHtml(seg) {
+    var meta = formatCount(seg.word_count) + " 字";
+    if (Number(seg.hit_count) > 0) meta += " · 命中 " + seg.hit_count + " 次";
+    var disabled = seg.enabled === false ? ' <span class="pill muted">已停用</span>' : "";
+    var answer = "";
+    if (segState.docForm === "qa_model" && seg.answer) {
+      answer = '<div class="seg-answer">答：' + escapeHtml(seg.answer) + "</div>";
+    }
+    return (
+      '<div class="seg-item">' +
+      '<div class="seg-head"><span>#' + escapeHtml(seg.position) + disabled + "</span>" +
+      "<span>" + escapeHtml(meta) + "</span></div>" +
+      '<div class="seg-body">' + escapeHtml(seg.content) + "</div>" +
+      answer +
+      "</div>"
+    );
+  }
+
+  els.segmentsMore.addEventListener("click", function () {
+    segState.shown += SEG_PAGE;
+    renderSegments();
+  });
+
+  els.segmentsFilter.addEventListener("input", function () {
+    segState.shown = SEG_PAGE;
+    renderSegments();
+  });
+
+  els.segmentsClose.addEventListener("click", closeSegments);
+  els.segmentsBackdrop.addEventListener("click", function (e) {
+    if (e.target === els.segmentsBackdrop) closeSegments();
+  });
+
+  function closeSegments() {
+    els.segmentsBackdrop.classList.remove("open");
+    // Dropping the identity is what makes an in-flight reply land nowhere.
+    segState = { docID: "", name: "", all: [], shown: 0, docForm: "text_model" };
+    els.segmentsList.innerHTML = "";
+  }
+
   // ---------- Upload: file ----------
   els.uploadBtn.addEventListener("click", function () {
     if (!state.canUpload) return;
@@ -915,7 +1082,9 @@
     if (e.target === els.modalBackdrop) closeModal();
   });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && els.modalBackdrop.classList.contains("open")) closeModal();
+    if (e.key !== "Escape") return;
+    if (els.segmentsBackdrop.classList.contains("open")) closeSegments();
+    else if (els.modalBackdrop.classList.contains("open")) closeModal();
   });
 
   function closeModal() {

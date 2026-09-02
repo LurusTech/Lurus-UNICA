@@ -61,6 +61,7 @@ func TestTenantRouter_Mapping(t *testing.T) {
 		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge", "knowledge", "/api/v1/tenants/pl-1/knowledge"},
 		{http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents", "knowledge", "/api/v1/tenants/pl-1/knowledge/documents"},
 		{http.MethodDelete, "/api/v1/tenants/pl-1/knowledge/documents/doc-9", "knowledge", "/api/v1/tenants/pl-1/knowledge/documents/doc-9"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/documents/doc-9/segments", "knowledge", "/api/v1/tenants/pl-1/knowledge/documents/doc-9/segments"},
 		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge/status/batch-7", "knowledge", "/api/v1/tenants/pl-1/knowledge/status/batch-7"},
 
 		{http.MethodGet, "/api/v1/tenants/pl-1/ai-settings", "ai-settings", "/api/v1/tenants/pl-1/ai-settings"},
