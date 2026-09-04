@@ -707,7 +707,7 @@
           // would refuse them.
           showNotice("warn", "该租户还没有绑定知识库", data.message,
             isAdmin()
-              ? ' <a href="./ai-settings.html' + tenantQuery() + '">前往 AI 设置修复绑定 →</a>'
+              ? ' <a href="./ai-settings.html' + tenantQuery() + '">前往设置页修复绑定 →</a>'
               : " 请联系管理员完成知识库绑定。");
           render();
           return;

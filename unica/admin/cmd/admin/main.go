@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/kefu/unica/admin/internal/audit"
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
+	"github.com/kefu/unica/admin/internal/capability"
 	"github.com/kefu/unica/admin/internal/config"
 	"github.com/kefu/unica/admin/internal/crypto"
 	"github.com/kefu/unica/admin/internal/handler"
@@ -35,7 +38,75 @@ import (
 	"github.com/kefu/unica/admin/internal/tenant/workbench"
 	"github.com/kefu/unica/pkg/difyapp"
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/platformsettings"
 )
+
+// seedIndexingTechnique gives DIFY_INDEXING_TECHNIQUE its single say.
+//
+// A deployment that has never stored the value keeps behaving exactly as it did
+// before this table existed, because the variable it was already configured
+// with becomes the stored row. From then on the console owns the value and the
+// variable is inert — but an inert variable that still says something different
+// is how an operator ends up debugging a deployment file that stopped being
+// read months ago, so a disagreement is named here at startup rather than left
+// to be discovered.
+func seedIndexingTechnique(ctx context.Context, store *platformsettings.Store, fromEnv string) {
+	inserted, err := store.Seed(ctx, platformsettings.KeyIndexingTechnique, fromEnv)
+	switch {
+	case errors.Is(err, platformsettings.ErrNoStore):
+		return
+	case err != nil:
+		log.Printf("[admin] WARNING: could not store DIFY_INDEXING_TECHNIQUE=%q: %v; "+
+			"new datasets will use the environment value until the table is reachable", fromEnv, err)
+		return
+	case inserted:
+		log.Printf("[admin] indexing technique was not stored yet; seeded it with %q from DIFY_INDEXING_TECHNIQUE", fromEnv)
+		return
+	}
+
+	rows, err := store.Load(ctx, platformsettings.KeyIndexingTechnique)
+	if err != nil {
+		return
+	}
+	if row, ok := rows[platformsettings.KeyIndexingTechnique]; ok && row.Value != fromEnv {
+		log.Printf("[admin] WARNING: DIFY_INDEXING_TECHNIQUE=%q in this process's environment is being ignored; "+
+			"the stored value %q (source %s) is what new datasets are created with. "+
+			"Remove it from the deployment config to stop the disagreement", fromEnv, row.Value, row.Source)
+	}
+}
+
+// storedIndexingTechnique resolves the technique in force, per call.
+//
+// The environment value is the fallback, not the authority: it is what this
+// deployment was configured with before the table could be read, so it is the
+// closest thing to the truth available when the read fails. Falling back is
+// logged, because a deployment quietly creating datasets one way while the
+// console reports the other is the exact failure this whole change is against.
+func storedIndexingTechnique(store *platformsettings.Store, fromEnv string) func(context.Context) string {
+	var lastReported string
+	var mu sync.Mutex
+
+	return func(ctx context.Context) string {
+		rows, err := store.Load(ctx, platformsettings.KeyIndexingTechnique)
+		if err != nil {
+			if !errors.Is(err, platformsettings.ErrNoStore) {
+				// Logged once per distinct message: this runs on every upload,
+				// and a per-upload line would bury the rest of the log.
+				mu.Lock()
+				if msg := err.Error(); msg != lastReported {
+					lastReported = msg
+					log.Printf("[admin] indexing technique unreadable (%v); using the environment value %q", err, fromEnv)
+				}
+				mu.Unlock()
+			}
+			return fromEnv
+		}
+		if row, ok := rows[platformsettings.KeyIndexingTechnique]; ok {
+			return row.Value
+		}
+		return fromEnv
+	}
+}
 
 // tenantPrefix is the root of the tenant-scoped route family. Every resource a
 // tenant owns hangs below it, which is what makes one middleware enough to
@@ -119,6 +190,24 @@ func main() {
 		copy(aesKey, []byte("dev-only-key-not-for-production!"))
 	}
 
+	// The stored authority for the platform settings. Kept as the concrete
+	// pointer: NewStore(nil) is a nil *Store, and a nil pointer placed in an
+	// interface field is not a nil interface — a deployment with no database
+	// would then report its switches as writable and fail at the write instead
+	// of saying up front that it cannot save.
+	settingsStore := platformsettings.NewStore(db)
+
+	// DIFY_INDEXING_TECHNIQUE gets its one say here, on a deployment that has
+	// never stored the value. A row that already disagrees with the variable is
+	// named rather than overwritten: the deployment file and the table are then
+	// allowed to differ, but never in silence.
+	seedIndexingTechnique(ctx, settingsStore, cfg.DifyIndexingTechnique)
+
+	// Resolved per call rather than captured once, because an administrator can
+	// now change it from the console and a value read at startup would describe
+	// the deployment as it was rather than as it is.
+	indexingTechnique := storedIndexingTechnique(settingsStore, cfg.DifyIndexingTechnique)
+
 	// Initialize the Dify bridge
 	difyBridge := bridge.NewDifyBridge(bridge.DifyBridgeConfig{
 		AdminURL:      cfg.DifyAdminURL,
@@ -129,7 +218,7 @@ func main() {
 		// Datasets are provisioned here but filled by the knowledge module, so
 		// both have to be told the same indexing technique or the knowledge base
 		// is created to be searched one way and populated to be searched another.
-		IndexingTechnique: cfg.DifyIndexingTechnique,
+		IndexingTechnique: indexingTechnique,
 	})
 
 	// Chatwoot tenant provisioning needs the platform token, which is issued by
@@ -173,7 +262,7 @@ func main() {
 	})
 	channelHandler := channels.NewHandler(channelRepo, aesKey, cfg.GatewayHost, rdb)
 	knowledgeHandler := knowledge.NewHandler(plRepo,
-		cfg.DifyAPIBaseURL, cfg.DifyDatasetAPIKey, cfg.DifyIndexingTechnique)
+		cfg.DifyAPIBaseURL, cfg.DifyDatasetAPIKey, indexingTechnique)
 	if cfg.DifyDatasetAPIKey == "" {
 		log.Println("[admin] WARNING: DIFY_DATASET_API_KEY not set, knowledge base management disabled")
 	}
@@ -183,6 +272,11 @@ func main() {
 	// One bridge shared by the console page and the platform endpoint, so both
 	// read the same short-lived cache rather than each polling the router.
 	routerBridge := bridge.NewRouterBridge(cfg.RouterInternalURL)
+
+	// One probe for both pages, so the platform console and a tenant's
+	// settings page can never disagree about what this deployment has
+	// switched off.
+	capabilityProbe := capability.NewProbe(cfg.DifyDatasetAPIKey, cfg.RouterInternalURL, routerBridge)
 
 	aiSettingsHandler := aisettings.NewHandler(aisettings.Config{
 		ProductLines:   plRepo,
@@ -198,6 +292,10 @@ func main() {
 		// dataset is exactly the split this deployment already spent a decision
 		// closing.
 		Provisioner: tenantHandler,
+		// So a tenant sees the technique its next upload will use beside the
+		// one its dataset already has, and what this deployment has turned off.
+		IndexingTechnique: indexingTechnique,
+		Capabilities:      capabilityProbe,
 	})
 
 	// One product line's model, the deliberate exception to the platform's one
@@ -428,14 +526,22 @@ func main() {
 	// neighbours; it is now a stored value the write below changes without a
 	// release, which is why the page can report which tier the live value came
 	// from instead of asserting that it cannot change.
-	platformHandler := platform.NewSettingsHandler(platform.SettingsConfig{
-		Router:       routerBridge,
-		Models:       modelVersionRepo,
-		ProductLines: plRepo,
-		Dify:         difyBridge,
-		Console:      difyBridge,
-		Audit:        auditLogger,
-	})
+	platformCfg := platform.SettingsConfig{
+		Router:            routerBridge,
+		Models:            modelVersionRepo,
+		ProductLines:      plRepo,
+		Dify:              difyBridge,
+		Console:           difyBridge,
+		Audit:             auditLogger,
+		IndexingTechnique: indexingTechnique,
+		Capabilities:      capabilityProbe,
+	}
+	// Assigned only when there is one, for the typed-nil reason given where
+	// settingsStore is created.
+	if settingsStore != nil {
+		platformCfg.Settings = settingsStore
+	}
+	platformHandler := platform.NewSettingsHandler(platformCfg)
 	mux.Handle("/api/v1/platform/settings", authMW(http.HandlerFunc(platformHandler.Handle)))
 
 	// The previous path kept, since it is what the runbook names.
@@ -447,6 +553,11 @@ func main() {
 	mux.Handle("/api/v1/platform/model", authMW(http.HandlerFunc(platformHandler.HandleModel)))
 	// Administrators only; the check lives in the handler, with its reason.
 	mux.Handle("/api/v1/platform/dify-console/session", authMW(http.HandlerFunc(platformHandler.HandleDifyConsoleSession)))
+
+	// The behaviour switches. Its own path for the same reason the model has
+	// one: everything on the settings route is read-only, and a PUT landing
+	// there would read as though the whole page could be written.
+	mux.Handle("/api/v1/platform/switches", authMW(http.HandlerFunc(platformHandler.HandleSwitches)))
 
 	// Which tenants are still on an older platform template, and the one
 	// control that acts on the answer. Both are platform-scoped: falling behind

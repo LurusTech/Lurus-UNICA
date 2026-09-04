@@ -26,10 +26,20 @@ type Config struct {
 	// key does not work here and a dataset key does not work for chat. Empty
 	// disables knowledge base management rather than failing at startup.
 	DifyDatasetAPIKey string
-	// DifyIndexingTechnique is the indexing mode sent with document creates.
+	// DifyIndexingTechnique seeds the stored indexing mode on a first run, and
+	// is not read as configuration after that.
+	//
 	// "high_quality" needs an embedding model configured in the Dify workspace;
 	// a deployment without one (the model provider offers no embeddings) must
 	// run "economy", or Dify rejects every upload with provider_not_initialize.
+	//
+	// The value in force now lives in platform_settings, where an administrator
+	// can change it from the console without a restart. This variable is
+	// written into that table only when the row does not exist yet, so a
+	// deployment that has never been through the console keeps behaving as its
+	// environment says. Once the row exists the database is the only authority:
+	// editing this variable afterwards changes nothing, and the platform page
+	// names it as shadowed rather than letting the two disagree in silence.
 	DifyIndexingTechnique string
 	// ChatwootBaseURL is the Chatwoot deployment root (e.g. "http://chatwoot:3000").
 	ChatwootBaseURL string

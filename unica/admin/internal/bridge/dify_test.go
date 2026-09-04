@@ -511,7 +511,7 @@ func TestDifyBridge_CreateDataset_AppliesThePlatformTopK(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: srv.URL, IndexingTechnique: "high_quality"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: srv.URL, IndexingTechnique: StaticIndexingTechnique("high_quality")})
 	if _, rErr, err := b.CreateDataset(context.Background(), "tok", "UNICA-Acme"); err != nil || rErr != nil {
 		t.Fatalf("create: err=%v retrieval=%v", err, rErr)
 	}
@@ -560,7 +560,7 @@ func TestDifyBridge_CreateDataset_Success(t *testing.T) {
 	server, stored := fakeDatasetServer(t, true)
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("high_quality")})
 
 	ds, retrievalErr, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme")
 	if err != nil {
@@ -587,7 +587,7 @@ func TestDifyBridge_CreateDataset_EconomyGetsKeywordSearch(t *testing.T) {
 	server, stored := fakeDatasetServer(t, true)
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("economy")})
 
 	if _, _, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -606,7 +606,7 @@ func TestDifyBridge_CreateDataset_ReportsAnIgnoredRetrievalWrite(t *testing.T) {
 	server, _ := fakeDatasetServer(t, false) // PATCH answers 200 and stores nothing
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("high_quality")})
 
 	ds, retrievalErr, err := b.CreateDataset(context.Background(), "console-token", "UNICA-Acme")
 	if err != nil {
@@ -712,7 +712,7 @@ func TestDifyBridge_SetDatasetRetrieval_RefusesIndexMismatch(t *testing.T) {
 	server, stored := datasetServerWithIndex(t, "economy", true)
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("high_quality")})
 
 	err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token")
 	if err == nil {
@@ -736,7 +736,7 @@ func TestDifyBridge_SetDatasetRetrieval_AppliesToAnUndecidedIndex(t *testing.T) 
 	server, stored := datasetServerWithIndex(t, "", true)
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "high_quality"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("high_quality")})
 
 	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err != nil {
 		t.Fatalf("a dataset with nothing indexed into it has no index to contradict: %v", err)
@@ -759,7 +759,7 @@ func TestDifyBridge_SetDatasetRetrieval_UndecidedIndexTakesTheDeploymentDefault(
 	server, stored := datasetServerWithIndex(t, "", true)
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("economy")})
 
 	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -773,7 +773,7 @@ func TestDifyBridge_SetDatasetRetrieval_AppliesWhenIndexMatches(t *testing.T) {
 	server, stored := datasetServerWithIndex(t, "economy", true)
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("economy")})
 
 	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err != nil {
 		t.Fatalf("a matching index must be accepted: %v", err)
@@ -816,7 +816,7 @@ func TestDifyBridge_SetDatasetRetrieval_CatchesAnIgnoredOverride(t *testing.T) {
 	}))
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("economy")})
 	err := b.SetDatasetRetrievalWith(context.Background(), "ds-001", "console-token",
 		RetrievalOverrides{TopK: 8})
 	if err == nil {
@@ -855,7 +855,7 @@ func TestDifyBridge_SetDatasetRetrieval_KeepsAnAdministratorsTopK(t *testing.T) 
 	}))
 	defer server.Close()
 
-	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: "economy"})
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL, IndexingTechnique: StaticIndexingTechnique("economy")})
 	if err := b.SetDatasetRetrieval(context.Background(), "ds-001", "console-token"); err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
@@ -1103,5 +1103,121 @@ func TestDifyBridge_PinPlatformModel_WritesTheBuiltInDefault(t *testing.T) {
 		if got != "Bearer provisioning-token" {
 			t.Errorf("the supplied console token was not used: %q", got)
 		}
+	}
+}
+
+// --- the indexing technique is read live, not fixed at startup ---
+
+// techniqueDatasetServer answers as a dataset that reports the given indexing
+// technique and stores whatever retrieval_model is PATCHed onto it, so a test
+// can see which technique the write was actually built from.
+func techniqueDatasetServer(t *testing.T, reports string) (*httptest.Server, *map[string]interface{}) {
+	t.Helper()
+	stored := map[string]interface{}{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/datasets/ds-1":
+			var body map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&body)
+			if rm, ok := body["retrieval_model"].(map[string]interface{}); ok {
+				stored = rm
+			}
+			w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/datasets/ds-1":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"indexing_technique":   reports,
+				"retrieval_model_dict": stored,
+			})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	return srv, &stored
+}
+
+// A console change to the indexing technique has to reach the next dataset
+// write without a restart. Before this, the bridge held the value its process
+// started with, so an administrator who switched the platform to economy went
+// on provisioning datasets configured for semantic search over a keyword index
+// — which retrieves nothing, for every query, without an error anywhere.
+func TestDifyBridge_SetDatasetRetrieval_ReadsTheTechniqueAtCallTime(t *testing.T) {
+	// Reported as undecided: nothing has been indexed, so neither technique is
+	// contradicted and both calls are allowed to write.
+	server, stored := techniqueDatasetServer(t, "")
+	defer server.Close()
+
+	technique := difyapp.IndexingHighQuality
+	b := NewDifyBridge(DifyBridgeConfig{
+		AdminURL:          server.URL,
+		IndexingTechnique: func(context.Context) string { return technique },
+	})
+
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-1", "tok"); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if got := (*stored)["search_method"]; got != "semantic_search" {
+		t.Fatalf("search_method = %v, want semantic_search for high_quality", got)
+	}
+
+	technique = difyapp.IndexingEconomy // the console moves the platform switch
+
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-1", "tok"); err != nil {
+		t.Fatalf("second write: %v", err)
+	}
+	if got := (*stored)["search_method"]; got != "keyword_search" {
+		t.Errorf("search_method = %v, want keyword_search — the bridge is still using the technique "+
+			"it was constructed with instead of the one now in force", got)
+	}
+}
+
+// The whole call must speak about one technique. A poll landing between the
+// agreement check and the write would otherwise let the bridge approve the
+// dataset against high_quality and then configure it for economy: keyword
+// search over an embedded index, which is the exact silent failure the check
+// above it exists to prevent.
+func TestDifyBridge_SetDatasetRetrieval_ResolvesTheTechniqueOncePerCall(t *testing.T) {
+	server, stored := techniqueDatasetServer(t, difyapp.IndexingHighQuality)
+	defer server.Close()
+
+	calls := 0
+	b := NewDifyBridge(DifyBridgeConfig{
+		AdminURL: server.URL,
+		IndexingTechnique: func(context.Context) string {
+			calls++
+			if calls == 1 {
+				return difyapp.IndexingHighQuality
+			}
+			return difyapp.IndexingEconomy
+		},
+	})
+
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-1", "tok"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("the technique was resolved %d times in one call; the comparison and the write "+
+			"can then disagree about which technique this deployment uses", calls)
+	}
+	if got := (*stored)["search_method"]; got != "semantic_search" {
+		t.Errorf("search_method = %v: the dataset was approved as high_quality and then "+
+			"configured for something else", got)
+	}
+}
+
+// A bridge with no resolver — a test, or a process wired before the settings
+// store is available — must behave as the platform's high-quality default
+// rather than as a deployment configured for the empty technique, which agrees
+// with no dataset and would refuse every one of them.
+func TestDifyBridge_SetDatasetRetrieval_NilTechniqueMeansHighQuality(t *testing.T) {
+	server, stored := techniqueDatasetServer(t, difyapp.IndexingHighQuality)
+	defer server.Close()
+
+	b := NewDifyBridge(DifyBridgeConfig{AdminURL: server.URL})
+
+	if err := b.SetDatasetRetrieval(context.Background(), "ds-1", "tok"); err != nil {
+		t.Fatalf("a nil resolver must not refuse a high_quality dataset: %v", err)
+	}
+	if got := (*stored)["search_method"]; got != "semantic_search" {
+		t.Errorf("search_method = %v, want semantic_search", got)
 	}
 }

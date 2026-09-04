@@ -81,6 +81,12 @@ const (
 
 	knowledgePlaceholderUnknownDetail = "读不到 Dify 应用当前的提示词，无法确认检索到的内容会不会送进模型"
 	knowledgePlaceholderNoApp         = "没有 Dify 应用，读不到提示词"
+
+	// Why a dataset can have no indexing technique at all. Dify assigns one
+	// when the first document is indexed, so this is the ordinary state of a
+	// knowledge base nobody has uploaded to — not a fault, and not a value to
+	// fill in with the platform's default.
+	knowledgeIndexingPendingReason = "数据集里还没有文档，索引方式要等第一篇文档索引后才确定"
 )
 
 // knowledgeProbeBudget is one line's share of the roster's Dify reads. A line
@@ -140,6 +146,39 @@ func NewKnowledgeHandler(cfg KnowledgeConfig) *KnowledgeHandler {
 // Known is separate from Total for the reason above: a dataset that could not
 // be read is not an empty dataset, and rendering the two the same way sends an
 // operator to upload documents to a line that already has them.
+// knowledgeIndexing is how one dataset's documents are actually indexed.
+//
+// It carries what the retrieval column already reads out of Dify, in a field
+// rather than only inside a sentence. The platform page has to compare the
+// technique new documents will be created with against the technique each
+// existing knowledge base was built with, and a console cannot compare Chinese
+// prose — while the disagreement it is looking for is exactly the one that
+// makes a knowledge base answer every query with nothing and report itself
+// healthy.
+//
+// Decided is separate from Technique because Dify fixes the technique when the
+// first document is indexed, not when the dataset is created. An empty
+// technique is therefore "not yet decided", and filling it in with the
+// platform's default would manufacture a disagreement — or hide one — for every
+// dataset that is merely still empty.
+type knowledgeIndexing struct {
+	// Known says the dataset's configuration was actually read. It is separate
+	// from Decided because the two blanks mean opposite things and a reader
+	// with one flag cannot tell them apart: an undecided technique is a healthy
+	// empty dataset waiting for its first document, while an unknown one is a
+	// question we failed to ask. Rendering the second as the first tells an
+	// operator their datasets are empty when Dify is simply unreachable.
+	// Named after knowledgeDocuments.Known below, which draws the same line.
+	Known        bool   `json:"known"`
+	Decided      bool   `json:"decided"`
+	Technique    string `json:"technique"`
+	SearchMethod string `json:"search_method"`
+	// Reason says why there is no technique to report, so a reader is never
+	// left to guess whether the blank means "this dataset is still empty" or
+	// "Dify could not be reached". Empty when Decided is true.
+	Reason string `json:"reason"`
+}
+
 type knowledgeDocuments struct {
 	Known bool `json:"known"`
 	Total int  `json:"total"`
@@ -174,6 +213,11 @@ type knowledgeRow struct {
 	// Documents is nil for a line with no dataset: there is no knowledge base
 	// to count, and a count of zero would suggest there is an empty one.
 	Documents *knowledgeDocuments `json:"documents,omitempty"`
+	// Indexing is nil for the same reason and only that reason: with no dataset
+	// there is nothing whose index could be described. A dataset that could not
+	// be read is present here with Decided false and a Reason, because "we did
+	// not manage to ask" is an answer this page has to be able to show.
+	Indexing *knowledgeIndexing `json:"indexing,omitempty"`
 }
 
 // knowledgeCounts is the answer to the question this page exists for.
@@ -279,12 +323,16 @@ func (h *KnowledgeHandler) rosterRow(ctx context.Context, pl *repository.Product
 		Steps:         make([]identity.DifyLineStep, 0, 4),
 	}
 
-	row.Steps = append(row.Steps,
-		datasetStep(datasetID),
-		h.attachStep(ctx, appID, datasetID),
-		h.retrievalStep(ctx, datasetID),
-		h.placeholderStep(ctx, appID),
-	)
+	// Asked in the repair's order, each answer bound to a name before the slice
+	// is built: the retrieval read now yields two things — the column, and the
+	// index it had to read in order to fill it in — and naming them keeps the
+	// order of the Dify calls exactly what it was.
+	dataset := datasetStep(datasetID)
+	attach := h.attachStep(ctx, appID, datasetID)
+	retrieval, indexing := h.retrievalStep(ctx, datasetID)
+	placeholder := h.placeholderStep(ctx, appID)
+	row.Steps = append(row.Steps, dataset, attach, retrieval, placeholder)
+	row.Indexing = indexing
 
 	row.Ready = true
 	for _, s := range row.Steps {
@@ -345,34 +393,62 @@ func (h *KnowledgeHandler) attachStep(ctx context.Context, appID, datasetID stri
 // and the tenant card renders, so this roster cannot call a line fine that the
 // repair would change. What is left here is only how each verdict reads in a
 // table cell.
-func (h *KnowledgeHandler) retrievalStep(ctx context.Context, datasetID string) identity.DifyLineStep {
+// It returns the index alongside the column because this is the one place that
+// reads it. Asking Dify a second time for the same dataset would double this
+// endpoint's console traffic across the whole fleet, and would let the sentence
+// and the field disagree whenever the two reads straddled a change.
+func (h *KnowledgeHandler) retrievalStep(ctx context.Context, datasetID string) (identity.DifyLineStep, *knowledgeIndexing) {
 	mk := func(state, detail, errText string) identity.DifyLineStep {
 		return step(identity.StepKeyRetrieval, knowledgeTitleRetrieval, state, detail, errText)
 	}
 	if datasetID == "" {
-		return mk(identity.StepFailed, knowledgeRetrievalNoDataset, "")
+		return mk(identity.StepFailed, knowledgeRetrievalNoDataset, ""), nil
 	}
 	if h.dify == nil {
-		return mk(identity.StepFailed, knowledgeRetrievalUnknownDetail, "Dify console is not configured")
+		return mk(identity.StepFailed, knowledgeRetrievalUnknownDetail, "Dify console is not configured"),
+			&knowledgeIndexing{Known: false, Reason: knowledgeRetrievalUnknownDetail}
 	}
 	cfg, err := h.dify.GetDatasetConfig(ctx, datasetID, "")
 	if err != nil {
 		log.Printf("[platform] knowledge roster: retrieval settings of dataset %s could not be read: %v", datasetID, err)
-		return mk(identity.StepFailed, knowledgeRetrievalUnknownDetail, err.Error())
+		return mk(identity.StepFailed, knowledgeRetrievalUnknownDetail, err.Error()),
+			&knowledgeIndexing{Known: false, Reason: knowledgeRetrievalUnknownDetail}
 	}
+	indexing := indexingOf(cfg)
 	switch difyapp.ClassifyRetrieval(cfg.IndexingTechnique, cfg.SearchMethod) {
 	case difyapp.RetrievalUnset:
-		return mk(identity.StepFailed, knowledgeRetrievalUnsetDetail, "")
+		return mk(identity.StepFailed, knowledgeRetrievalUnsetDetail, ""), indexing
 	case difyapp.RetrievalIndexPending:
 		return mk(identity.StepAlready,
-			"检索方式为 "+cfg.SearchMethod+"；索引方式要等第一篇文档索引后才确定", "")
+			"检索方式为 "+cfg.SearchMethod+"；索引方式要等第一篇文档索引后才确定", ""), indexing
 	case difyapp.RetrievalSound:
 		return mk(identity.StepAlready,
-			"检索方式 "+cfg.SearchMethod+" 与索引方式 "+cfg.IndexingTechnique+" 自洽", "")
+			"检索方式 "+cfg.SearchMethod+" 与索引方式 "+cfg.IndexingTechnique+" 自洽", ""), indexing
 	default:
 		return mk(identity.StepFailed,
 			"检索方式与索引方式不一致（索引 "+cfg.IndexingTechnique+"，检索 "+cfg.SearchMethod+
-				"），每次检索都会落空，而且不会报错", "")
+				"），每次检索都会落空，而且不会报错", ""), indexing
+	}
+}
+
+// indexingOf reads a dataset's own report of how it is indexed.
+//
+// It asks difyapp.IndexingUndecided rather than testing the string here, so
+// this field cannot reach a different conclusion about an empty technique than
+// the retrieval verdict standing beside it. The undecided dataset keeps its
+// blank technique: writing the platform default there would state, about a
+// knowledge base nobody has uploaded to, a fact Dify has not decided yet — and
+// comparing the platform's technique against each dataset's real one is the
+// entire reason this field exists.
+func indexingOf(cfg *bridge.DatasetConfig) *knowledgeIndexing {
+	if difyapp.IndexingUndecided(cfg.IndexingTechnique) {
+		return &knowledgeIndexing{Known: true, SearchMethod: cfg.SearchMethod, Reason: knowledgeIndexingPendingReason}
+	}
+	return &knowledgeIndexing{
+		Known:        true,
+		Decided:      true,
+		Technique:    cfg.IndexingTechnique,
+		SearchMethod: cfg.SearchMethod,
 	}
 }
 

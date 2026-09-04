@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -104,7 +105,8 @@ func newFixture(t *testing.T, respond http.HandlerFunc) (*Handler, *fakeDatasetS
 		DifyAgentID:   &agentID,
 		DifyDatasetID: &datasetID,
 	}}
-	return NewHandler(pls, fake.server.URL+"/v1", "dataset-key-123", "economy"), fake, pls
+	return NewHandler(pls, fake.server.URL+"/v1", "dataset-key-123",
+		func(context.Context) string { return "economy" }), fake, pls
 }
 
 func do(t *testing.T, h *Handler, method, path, contentType string, body io.Reader) *httptest.ResponseRecorder {
@@ -541,7 +543,7 @@ func TestHandler_ScopeForbidden(t *testing.T) {
 func TestHandler_WithoutDatasetKey(t *testing.T) {
 	datasetID := "ds-1"
 	pls := &fakeProductLines{pl: &repository.ProductLine{ID: "pl-1", Name: "TestLine", DifyDatasetID: &datasetID}}
-	h := NewHandler(pls, "http://dify.invalid/v1", "", "")
+	h := NewHandler(pls, "http://dify.invalid/v1", "", nil)
 
 	cases := []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/tenants/pl-1/knowledge"},
@@ -684,4 +686,113 @@ func parseMultipart(t *testing.T, call datasetCall) map[string]string {
 		}
 	}
 	return out
+}
+
+// --- the platform's indexing technique is read per upload ---
+
+// uploadText posts one document and fails the test if it was not accepted, so
+// the technique assertions below read as one line each.
+func uploadText(t *testing.T, h *Handler, name string) {
+	t.Helper()
+	w := do(t, h, http.MethodPost, "/api/v1/tenants/pl-1/knowledge/documents",
+		"application/json", strings.NewReader(`{"name":"`+name+`","text":"body"}`))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("upload %s: status = %d, body = %s", name, w.Code, w.Body.String())
+	}
+}
+
+// An administrator who switches the platform to economy must not have to
+// restart this service for the next upload to be indexed that way. Holding the
+// value from startup is invisible in every interface: the upload succeeds, the
+// indexing completes, and the document is simply built for the technique the
+// platform no longer uses.
+func TestHandler_UploadReadsTheIndexingTechniqueAtUploadTime(t *testing.T) {
+	fake := newFakeDatasetServer(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"document":{"id":"doc-1","name":"n"},"batch":"b-1"}`)
+	})
+	datasetID := "ds-1"
+	pls := &fakeProductLines{pl: &repository.ProductLine{
+		ID: "pl-1", Name: "TestLine", DisplayName: "TestLine", DifyDatasetID: &datasetID,
+	}}
+	technique := "high_quality"
+	h := NewHandler(pls, fake.server.URL+"/v1", "dataset-key-123",
+		func(context.Context) string { return technique })
+
+	uploadText(t, h, "first")
+	var sent map[string]interface{}
+	json.Unmarshal(fake.last(t).Body, &sent)
+	if sent["indexing_technique"] != "high_quality" {
+		t.Fatalf("indexing_technique = %v, want high_quality", sent["indexing_technique"])
+	}
+
+	technique = "economy" // the console moves the platform switch
+
+	uploadText(t, h, "second")
+	json.Unmarshal(fake.last(t).Body, &sent)
+	if sent["indexing_technique"] != "economy" {
+		t.Errorf("indexing_technique = %v, want economy — the handler is still using the value "+
+			"it was constructed with", sent["indexing_technique"])
+	}
+}
+
+// Dify accepts exactly two techniques. A resolver that has not been wired, or
+// one whose store could not be read and answered with nothing, must fall on the
+// high-quality default rather than send Dify a technique it will reject with an
+// error the tenant who pressed upload can do nothing about.
+func TestHandler_UploadWithoutATechniqueResolverUsesHighQuality(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resolver func(context.Context) string
+	}{
+		{"nil resolver", nil},
+		{"empty answer", func(context.Context) string { return "" }},
+		{"unknown value", func(context.Context) string { return "medium" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeDatasetServer(t, func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, `{"document":{"id":"doc-1","name":"n"},"batch":"b-1"}`)
+			})
+			datasetID := "ds-1"
+			pls := &fakeProductLines{pl: &repository.ProductLine{
+				ID: "pl-1", Name: "TestLine", DisplayName: "TestLine", DifyDatasetID: &datasetID,
+			}}
+			h := NewHandler(pls, fake.server.URL+"/v1", "dataset-key-123", tc.resolver)
+
+			uploadText(t, h, "doc")
+			var sent map[string]interface{}
+			json.Unmarshal(fake.last(t).Body, &sent)
+			if sent["indexing_technique"] != "high_quality" {
+				t.Errorf("indexing_technique = %v, want high_quality", sent["indexing_technique"])
+			}
+		})
+	}
+}
+
+// The economy warning states a consequence that only becomes true at the moment
+// the platform switches. Repeating it per upload is how it stopped being read,
+// so it is emitted on the change and not again until the value changes back.
+func TestHandler_EconomyWarningIsLoggedOncePerChange(t *testing.T) {
+	var logged strings.Builder
+	restore := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(restore) })
+
+	technique := "economy"
+	h := NewHandler(&fakeProductLines{}, "http://dify.invalid/v1", "",
+		func(context.Context) string { return technique })
+
+	ctx := context.Background()
+	h.resolveIndexingTechnique(ctx)
+	h.resolveIndexingTechnique(ctx)
+	if got := strings.Count(logged.String(), "economy"); got != 1 {
+		t.Errorf("the economy consequence was logged %d times for one unchanged value; "+
+			"per-upload repetition is what made it unreadable", got)
+	}
+
+	technique = "high_quality"
+	h.resolveIndexingTechnique(ctx)
+	if !strings.Contains(logged.String(), "now high_quality") {
+		t.Errorf("switching back was not logged, so an operator cannot confirm the fix landed: %s",
+			logged.String())
+	}
 }

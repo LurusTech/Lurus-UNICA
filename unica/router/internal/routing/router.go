@@ -39,15 +39,17 @@ type RouterConfig struct {
 	ConsumerName  string
 	Workers       int
 
-	// TriageMode controls pre-dispatch intent classification. The zero value is
-	// treated as guardrail.DefaultTriageMode so existing callers and tests keep
-	// working without opting in.
-	TriageMode guardrail.TriageMode
-
-	// SceneMode controls commercial-stage classification and response-strategy
-	// injection. The zero value is treated as DefaultSceneMode, mirroring
-	// TriageMode.
-	SceneMode SceneMode
+	// Switches supplies the platform behaviour modes — intent triage and
+	// commercial stage — and may change them while this process runs. A nil
+	// value means the built-in defaults, fixed; use StaticSwitches to fix them
+	// at something else.
+	//
+	// These arrive as one object rather than as two mode fields because they
+	// are no longer decided here: they are read from the platform_settings
+	// table, and a copy of the value held in this config would be a second
+	// authority that starts out right and goes stale the first time an
+	// operator moves a switch.
+	Switches *Switches
 }
 
 // Narrow views of the Router's heavyweight dependencies, so the message
@@ -94,8 +96,7 @@ type Router struct {
 	acest             *AcestIntegration
 	chatwootForwarder *ChatwootForwarder
 	evaluator         *guardrail.Evaluator
-	triageMode        guardrail.TriageMode
-	sceneMode         SceneMode
+	switches          *Switches
 	ontology          ontologySource
 	handoffLog        handoffRecorder
 	breaker           *domain.Breaker
@@ -152,13 +153,9 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		mktTracker = marketing.NewTracker(stateManager)
 	}
 
-	triageMode := config.TriageMode
-	if triageMode == "" {
-		triageMode = guardrail.DefaultTriageMode
-	}
-	sceneMode := config.SceneMode
-	if sceneMode == "" {
-		sceneMode = DefaultSceneMode
+	switches := config.Switches
+	if switches == nil {
+		switches = StaticSwitches(guardrail.DefaultTriageMode, DefaultSceneMode)
 	}
 
 	r := &Router{
@@ -166,8 +163,7 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		convLock:          NewConvLock(rdb),
 		chatwootForwarder: cwForwarder,
 		evaluator:         guardrail.NewEvaluator(),
-		triageMode:        triageMode,
-		sceneMode:         sceneMode,
+		switches:          switches,
 		breaker:           domain.NewBreaker(),
 		marketingTracker:  mktTracker,
 		surveyHandler:     surveyH,
@@ -539,12 +535,16 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	// Pre-dispatch triage: messages no AI answer can satisfy (account actions,
 	// personal-record lookups, escalations) are handed off before paying for a
 	// model round trip. Under shadow mode the classification is only recorded.
-	if r.triageMode.Classifies() {
+	// Read once and carry it: the mode can change under a running process, and
+	// a message classified under one mode and judged under another would be a
+	// decision no log could explain.
+	triageMode := r.switches.Triage()
+	if triageMode.Classifies() {
 		triage := intent.Classify(query)
 		metrics.IntentClassifiedTotal.WithLabelValues(
-			string(triage.Class), triage.Reason, string(r.triageMode)).Inc()
+			string(triage.Class), triage.Reason, string(triageMode)).Inc()
 
-		if r.triageMode.DecidesRouting() && triage.NeedsHuman() {
+		if triageMode.DecidesRouting() && triage.NeedsHuman() {
 			r.handoffBeforeAI(ctx, config, msg, convID, workerID, triage)
 			return
 		}
@@ -563,7 +563,7 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		Ontology:           ac.ontology,
 		OntologyCfg:        ac.ontologyCfg,
 		GuardrailCfg:       guardrailCfg,
-		TriageMode:         r.triageMode,
+		TriageMode:         triageMode,
 		FactsInjected:      ac.factsInjected,
 		ExperienceInjected: ac.experienceInjected,
 		ProductLineID:      config.ProductLineID,
@@ -613,7 +613,8 @@ func (r *Router) prepareAIContext(ctx context.Context, config *RouteConfig, msg 
 	// sticky stage (via recordJudgement's session write) but injects nothing,
 	// so the stage distribution of real traffic is measurable before any
 	// answer changes register.
-	if r.sceneMode.Classifies() {
+	sceneMode := r.switches.Scene()
+	if sceneMode.Classifies() {
 		stageResult := intent.ResolveStage(intent.Stage(session.Stage), query)
 		ac.stage = stageResult.Stage
 		source := "message"
@@ -621,8 +622,8 @@ func (r *Router) prepareAIContext(ctx context.Context, config *RouteConfig, msg 
 			source = "inherited"
 		}
 		metrics.SceneClassifiedTotal.WithLabelValues(
-			string(stageResult.Stage), stageResult.Reason, source, string(r.sceneMode)).Inc()
-		if r.sceneMode.Injects() {
+			string(stageResult.Stage), stageResult.Reason, source, string(sceneMode)).Inc()
+		if sceneMode.Injects() {
 			ac.inputs["scene_context"] = difyapp.StrategyFor(string(stageResult.Stage))
 		}
 	}

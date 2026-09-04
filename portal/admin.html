@@ -202,6 +202,68 @@
     font-size: 0.82rem; line-height: 1.6; border-radius: 0 8px 8px 0;
   }
 
+  /* ---- The groups above that are written, not only read --------------------
+     Three values in the list below are rows in a table now instead of
+     environment variables or constants, so they carry a form. The frame is the
+     answer to the question the model card raised when it moved out of this
+     list: how far does this save button reach. A framed group with its own
+     button reaches exactly the rows inside the frame, and the unframed groups
+     around it stay visibly what they always were. */
+  .pf-writable {
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; background: var(--surface);
+  }
+  .pf-ctl { padding: 12px 0; }
+  .pf-ctl + .pf-ctl { border-top: 1px dashed color-mix(in srgb, var(--border) 60%, transparent); }
+  .pf-ctl > label { margin-bottom: 6px; }
+  .pf-ctl select { max-width: 380px; }
+  .pf-ctl .hint { line-height: 1.65; }
+  /* What is stored and what the router says it is running by are two numbers,
+     not one. They genuinely differ for up to one poll interval after every
+     save, and for as long as the router cannot read the table at all — a
+     single value would have to pick one of them, and either choice is wrong
+     some of the time, silently. */
+  .pf-live {
+    margin-top: 8px; font-size: 0.8rem; display: flex; flex-wrap: wrap; gap: 4px 18px;
+    color: var(--text-muted);
+  }
+  .pf-live b {
+    color: var(--text); font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace;
+  }
+  .pf-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .pf-actions .spacer { flex: 1; }
+  .pf-check {
+    display: flex; align-items: flex-start; gap: 9px; margin-top: 14px;
+    font-size: 0.83rem; line-height: 1.65;
+  }
+  .pf-check input { width: auto; flex: none; margin: 4px 0 0; }
+  .pf-check label { margin: 0; font-weight: 400; }
+  /* Red rather than amber, and used only where the consequence is silent and
+     platform-wide: a switch that retires every tenant's keyword list, and an
+     index the retrieval settings will no longer match. Both change every
+     answer without failing anywhere. */
+  .pf-danger {
+    margin: 10px 0 0; padding: 10px 14px; border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent);
+    background: color-mix(in srgb, var(--bad) 10%, transparent);
+    font-size: 0.82rem; line-height: 1.7;
+  }
+  .pf-danger b { color: var(--bad); }
+  .pf-ok {
+    margin: 10px 0 0; padding: 10px 14px; border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+    background: color-mix(in srgb, var(--ok) 10%, transparent);
+    font-size: 0.82rem; line-height: 1.7;
+  }
+  /* One fact per row with its verdict in front of it: the per-line index
+     roster, and the capability list. */
+  .pf-list { margin: 10px 0 0; display: flex; flex-direction: column; gap: 9px; }
+  .pf-item { display: flex; gap: 10px; align-items: baseline; font-size: 0.84rem; }
+  .pf-item .pf-item-mark { flex: none; }
+  .pf-item .pf-item-body { min-width: 0; line-height: 1.6; }
+  .pf-item .pf-item-note { color: var(--text-muted); font-size: 0.8rem; margin-top: 2px; }
+
   /* ---- Editable platform model --------------------------------------------
      The one platform value on this page that is no longer compiled in, so it
      is the only one that gets a form. It sits in its own card rather than as
@@ -480,11 +542,12 @@
     <div class="panel-head" style="margin-top:32px">
       <h2>平台设定</h2>
       <p>
-        下面每一项都决定全平台每一条回答，而且都<b>不是本页能改的</b>：
-        一半是 router 的环境变量（改完要重启 router），一半是编译进程序的常量（改完要发版）。
+        下面每一项都决定全平台每一条回答，大多数<b>不是本页能改的</b>：
+        一部分是 router 的环境变量（改完要重启 router），一部分是编译进程序的常量（改完要发版）。
         列在这里，是为了不必登服务器、也不必翻代码，就能回答"现在到底是什么设定"。
         凭据一律不显示——不显示值，也不显示掩码。
-        唯一的例外是模型：它已经不再是编译期常量，收到了下面的「生效模型」里，改完不用发版。
+        <b>带边框的那几组是例外</b>：意图分诊、商业阶段策略与索引方式已经收进库里，本页可以直接改；
+        前两项连 router 都不用重启，保存后一个轮询间隔内自己生效。模型同样已经落库，在下面的「生效模型」里。
       </p>
     </div>
     <div id="platform-settings">
@@ -570,7 +633,7 @@
         或者应用里根本没有模型配置——不知道它在跑什么，重推是在赌；
         后者是两个值都读到了，就是不一样。Dify 一挂，整列都会变成「读不到」，那时候不该重推。
         重推推的是每条线<b>自己</b>应生效的那个值：标着「已偏离」的线推的是它自己的覆盖，
-        不会被拉回平台默认；要取消覆盖请到该租户的「AI 设置」页。
+        不会被拉回平台默认；要取消覆盖请到该租户的「设置」页。
         <b>默认一条都不选</b>。
       </p>
     </div>
@@ -654,7 +717,7 @@
         检索方式与文档的索引方式自洽、提示词里留着 <span class="mono">{{knowledge_context}}</span> 占位符。
         缺任何一件都<b>不会报错</b>——文档照常上传、索引照常完成、命中数照常统计，
         只是答复里一个字都用不上。文档数为 0 不算不就绪：没传过资料不是故障。
-        要补建或修复请到该租户的「AI 设置」页，本页只读。
+        要补建或修复请到该租户的「设置」页，本页只读。
       </p>
     </div>
     <div class="toolbar">
@@ -881,7 +944,40 @@
     models: null,
     modelsSelected: {},
     modelsLoaded: false,
-    knowledgeLoaded: false
+    knowledgeLoaded: false,
+    // The last settings payload, kept because everything the two writable
+    // groups below say is answered against it: what is stored, what the router
+    // reports it is running by, and whether the write path is wired at all.
+    // Reading those off the controls instead would answer "did anything
+    // change" against the operator's own typing.
+    platform: null,
+    // The knowledge roster, shared with the table further down the page. The
+    // index selector needs the per-line techniques to say what a change would
+    // break, and reading Dify twice for one page would double the wait for
+    // nothing. `{error: "…"}` when the read failed — never an empty roster,
+    // which would read as "no line disagrees".
+    knowledge: null,
+    // Handles into the two writable groups. They are rebuilt on every render
+    // rather than looked up once, so they live here instead of in els.
+    switchInputs: {},
+    switchNote: null,
+    switchSaveBtn: null,
+    switchStatusEl: null,
+    indexingInput: null,
+    indexingAck: null,
+    indexingNote: null,
+    indexingSaveBtn: null,
+    switchSaving: false,
+    // The wait for the router to pick a saved value up: {keys, deadline,
+    // timer}. Held so that a second save cannot leave two waits running
+    // against the same group, each about to overwrite the other's verdict.
+    switchPoll: null,
+    // The verdict of that wait, in state rather than only in the DOM: the
+    // group is rebuilt every two seconds while the wait runs.
+    switchStatus: null,
+    // Anything typed or picked but not yet saved, carried across those
+    // rebuilds. See capturePending.
+    pending: null
   };
 
   var els = {
@@ -1064,14 +1160,19 @@
   });
 
 
-  // ---------- Platform settings (read-only) ----------
+  // ---------- Platform settings ----------
   //
   // Grouped by source rather than by topic. A value's source is what decides
-  // how it changes — restart the router, or ship a release — and an operator
-  // reading a flat list would reasonably assume there is a form behind it.
+  // how it changes — save it here, restart the router, or ship a release — and
+  // an operator reading a flat list would reasonably assume there is a form
+  // behind all of it, or behind none of it. Both readings are wrong now that
+  // some of these are stored, so the framed groups are exactly the ones a save
+  // button reaches.
+  //
+  // intent_triage and scene_mode used to be the first two rows here. They are
+  // rows in a table now, written by SWITCH_CONTROLS below; what is left in
+  // this list is what still needs a router restart.
   var SWITCH_LABELS = [
-    ["intent_triage", "意图分诊", "on 时整份转人工关键词表停用，改由分诊模型判定"],
-    ["scene_mode", "商业阶段策略", "off 时提示词里的应答策略恒为空"],
     ["ontology_enabled", "本体总闸", "关闭时所有租户的确定性事实注入都不生效"],
     ["idle_timeout", "会话静默超时", "到时自动关闭会话，满意度调研就在那一刻发出"],
     ["dify_conv_ttl", "多轮上下文保留", "超过这个时长，客户再来时 AI 不记得之前说过什么"],
@@ -1081,10 +1182,89 @@
     ["workers", "并发消费者", ""]
   ];
 
+  // The two switches that are no longer environment variables: the value lives
+  // in the settings table and the router re-reads that table on a timer.
+  //
+  // Every state gets its own sentence, and the sentence is about traffic
+  // rather than about the flag — what happens to a customer message under this
+  // value. Three states are not three degrees of one thing: shadow runs the
+  // entire classifier and changes nothing, which is the state most easily
+  // misread as "half on".
+  var SWITCH_CONTROLS = [
+    {
+      key: "intent_triage",
+      title: "意图分诊",
+      values: [
+        ["off", "不分诊", "不判定意图。转人工完全由每个租户自己的那份关键词表决定。"],
+        ["shadow", "只判定，不改去向",
+          "分诊照跑、照进指标，但一条消息的去向都不改；关键词表照旧生效。"],
+        ["on", "由分诊模型决定转人工",
+          "判定为需要人工的消息，在调用模型之前就转走，这次模型调用连发都不发。"]
+      ],
+      // The one consequence on this page that is invisible after the fact: it
+      // retires a list every tenant maintains by hand, on every tenant at
+      // once, and their own pages will only say so the next time somebody
+      // opens them. Rendered unconditionally rather than when "on" is picked —
+      // a warning that appears after the choice has already been made is a
+      // warning that arrived too late to be one.
+      danger: "改成 on 会让每个租户的转人工关键词表整体失效——转人工全部改由分诊模型判定，" +
+        "关键词表还留在他们的页面上，但一条都不会再命中；屏蔽话题不受影响。" +
+        "这是本页唯一一个一次性改掉全部租户既有配置的开关。"
+    },
+    {
+      key: "scene_mode",
+      title: "商业阶段策略",
+      values: [
+        ["off", "不判定", "不判定商业阶段，提示词里的应答策略恒为空。"],
+        ["shadow", "只判定，不注入",
+          "判定并记住客户所处的阶段，但不注入提示词；答复的说法一个字都不会变。"],
+        ["on", "判定并注入提示词",
+          "把该阶段的策略正文注入提示词，改变答复的说法——可陈述的内容不变。"]
+      ]
+    }
+  ];
+
+  // Where a stored value came from, said as the thing that decides who gets to
+  // change it next.
+  var SETTING_SOURCE_LABELS = {
+    seed: "某次启动种入的环境变量",
+    console: "本页保存",
+    env_fallback: "回落到环境变量（当时读不到设置库）"
+  };
+
+  // "off" and "unknown" must not look alike. One says the feature is switched
+  // off, the other says we failed to find out — reusing the dashed, uncoloured
+  // pill the model roster already uses for exactly this distinction.
+  var CAPABILITY_STATE = {
+    on:      ["ok", "已启用"],
+    off:     ["bad", "未启用"],
+    unknown: ["muted dashed", "读不到"]
+  };
+
+  var CAPABILITY_OWNER = {
+    admin:  "由本控制台的配置决定",
+    router: "由 router 的配置决定"
+  };
+
+  // What each technique makes retrieval do. The server derives the real
+  // search_method from whatever is stored; this table exists only to say, in
+  // the moment before saving, what the value being picked would produce.
+  var INDEXING_VALUES = [
+    ["high_quality", "向量检索", "semantic_search"],
+    ["economy", "关键词检索", "keyword_search"]
+  ];
+
+  function indexingSearchMethod(technique) {
+    var method = "";
+    INDEXING_VALUES.forEach(function (v) { if (v[0] === technique) method = v[2]; });
+    return method;
+  }
+
   function loadPlatformSettings() {
     var host = document.getElementById("platform-settings");
     return api("/api/v1/platform/settings")
       .then(function (data) {
+        state.platform = data || {};
         renderPlatformSettings(host, data);
         // The model rides along on the same request but renders into its own
         // card: it is the one value here that is written rather than only read.
@@ -1092,6 +1272,7 @@
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
+        state.platform = null;
         host.textContent = "";
         var p = document.createElement("p");
         p.className = "pf-warn";
@@ -1160,13 +1341,27 @@
   }
 
   function renderPlatformSettings(host, data) {
+    // Whatever is half-picked or half-typed has to survive this rebuild: while
+    // the page waits for the router to pick a save up it re-renders every two
+    // seconds. Only unsaved input is carried over — the values printed beside
+    // each control always come from the server, so keeping a selection cannot
+    // hide a change somebody else made.
+    state.pending = capturePending();
     host.textContent = "";
     data = data || {};
     var runtime = data.runtime || {};
     var compiled = data.compiled || {};
 
-    // 1. What the router is running with.
-    var g = pfGroup(host, "运行开关", "router 环境变量 · 改完需重启 router",
+    // 1. The two switches that are stored, re-read by the router on a timer,
+    //    and written from here.
+    renderSwitchGroup(host, data);
+
+    // 1b. Everything else the router is running with, which is still compiled
+    //     into its environment and still needs a restart. Split from the group
+    //     above precisely because the two change differently now: one save
+    //     button spanning both would promise a hot reload it cannot deliver to
+    //     a single row down here.
+    var g = pfGroup(host, "运行开关 · router 环境变量", "改完需重启 router",
       "这些值只有 router 自己知道。控制台是向它问来的，不是读自己的环境变量——" +
       "那样会理直气壮地显示相反的值。");
     if (!runtime.available) {
@@ -1182,6 +1377,12 @@
         pfRow(g, item[1] + "（" + item[0] + "）", String(sw[item[0]]), item[2]);
       });
     }
+
+    // 1c. What this deployment can and cannot do at all. Placed with the
+    //     runtime groups rather than at the bottom: it answers the same
+    //     question they do — what is actually running here — and it is the
+    //     only group that can say "we could not find out".
+    renderCapabilityGroup(host, data.capabilities);
 
     // 2. Values a tenant inherits when it has configured nothing.
     var d = pfGroup(host, "默认取值", "编译期常量 · 改完需发版",
@@ -1200,14 +1401,16 @@
     // The model used to be group 3 here, described as a compiled-in constant.
     // It is stored now, so it renders as its own card above with a form on it;
     // leaving it in this list would have kept a "改完需发版" label on the one
-    // value on the page that no longer needs a release.
+    // value on the page that no longer needs a release. The indexing technique
+    // has since gone the same way, and it takes 检索方式 and top_k with it —
+    // those two are derived from it, so they cannot keep a "改完需发版" label
+    // either. What is genuinely still compiled in is the chunking rule, and it
+    // is the only thing left in the group below.
     var k = compiled.knowledge || {};
-    var kg = pfGroup(host, "知识库检索", "编译期常量 · 改完需发版",
-      "文档怎么切、怎么搜，决定了检索最多能返回什么。切分规则只对此后上传的文档生效——" +
-      "存量文档不会重切。");
-    pfRow(kg, "索引方式", k.indexing_technique || "");
-    pfRow(kg, "检索方式", k.search_method || "", "与索引方式必须匹配，否则检索恒空且不报错");
-    pfRow(kg, "召回条数 top_k", String(k.top_k));
+    renderIndexingGroup(host, data);
+
+    var kg = pfGroup(host, "文档切分规则", "编译期常量 · 改完需发版",
+      "只对此后上传的文档生效——存量文档不会重切。");
     var seg = ((k.process_rule || {}).rules || {}).segmentation || {};
     pfRow(kg, "切分规则", "按 " + JSON.stringify(seg.separator || "") + " 分段，每段上限 " +
       (seg.max_tokens || "-") + " tokens");
@@ -1215,7 +1418,7 @@
     // 4. The prompt every line starts from.
     var pg = pfGroup(host, "平台提示词模板", "编译期常量 · 改完需发版",
       "每条产线开户时拿到的就是这份，之后可以自己改。改了模板不会自动流向存量租户——" +
-      "他们的 AI 设置页会显示「平台模板已更新」，由他们自己点更新。");
+      "他们的设置页会显示「平台模板已更新」，由他们自己点更新。");
     pfText(pg, "展开模板全文（" + (compiled.prompt_template || "").length + " 字）",
       compiled.prompt_template || "");
     var reqs = compiled.prompt_requirements || [];
@@ -1245,6 +1448,837 @@
       "模型供应商 API Key、Dify 控制台账号、各租户的 Dify API Key 与 Chatwoot Token " +
       "都不在本页显示，也不显示掩码——掩码同样会出现在每一张截图里。" +
       "需要改动请到上面的 Dify 控制台。");
+  }
+
+  // ---------- Runtime switches: stored, and re-read by the router ------------
+  //
+  // These two used to sit in the read-only list above, labelled as router
+  // environment variables. They are rows in a table now, and the router
+  // re-reads that table every poll interval, so a change made here reaches
+  // live traffic without a restart.
+  //
+  // That is also why every control shows two values instead of one. Between a
+  // save and the router's next read they are genuinely different, and when the
+  // router cannot read the table at all they can stay different indefinitely.
+  // A single merged value would have to pick a side: the stored one reports a
+  // change as live while no message is following it yet, and the running one
+  // hides that a save landed. Both are shown, always.
+
+  function storedSwitchRow(key) {
+    var stored = (state.platform || {}).stored_switches || {};
+    return stored[key] || null;
+  }
+
+  // What the router says it is answering by, or null when we did not get to
+  // ask. Null is not "off" — keeping "we do not know" apart from "it is
+  // disabled" is the whole point of the pair.
+  function runningSwitchValue(key) {
+    var runtime = (state.platform || {}).runtime || {};
+    if (!runtime.available) return null;
+    var sw = runtime.switches || {};
+    return (key in sw) ? String(sw[key]) : null;
+  }
+
+  // The router's own account of how it is reading the table: sources, when it
+  // last succeeded, what failed, which environment variables it is ignoring.
+  // Empty when the router could not be reached, so every caller has to cope
+  // with knowing nothing rather than reading a zero as a fact.
+  function runtimeSwitchMeta() {
+    var runtime = (state.platform || {}).runtime || {};
+    if (!runtime.available) return {};
+    return runtime.switches || {};
+  }
+
+  // Go prints durations as "10s", "1m0s", "1.5s". Only enough of that is
+  // parsed here to say a number of seconds out loud and to stop waiting at the
+  // right moment; anything unrecognised comes back as 0, and every caller then
+  // says so rather than inventing an interval.
+  function parseGoDuration(text) {
+    if (!text) return 0;
+    var units = { ns: 1e-6, us: 1e-3, "\u00b5s": 1e-3, ms: 1, s: 1000, m: 60000, h: 3600000 };
+    var re = /(\d+(?:\.\d+)?)(ms|us|\u00b5s|ns|h|m|s)/g;
+    var total = 0;
+    var matched = false;
+    var m;
+    while ((m = re.exec(String(text))) !== null) {
+      matched = true;
+      total += parseFloat(m[1]) * units[m[2]];
+    }
+    return matched ? total : 0;
+  }
+
+  function agoText(iso) {
+    var then = new Date(iso);
+    if (isNaN(then.getTime())) return "";
+    var s = Math.max(0, Math.round((Date.now() - then.getTime()) / 1000));
+    if (s < 60) return s + " 秒";
+    if (s < 3600) return Math.round(s / 60) + " 分钟";
+    if (s < 86400) return Math.round(s / 3600) + " 小时";
+    return Math.round(s / 86400) + " 天";
+  }
+
+  // "库里：X　router 在用：Y" — built as elements so both values keep the
+  // monospace weight the rest of this list gives to a value.
+  function pfLive(box, parts) {
+    var live = document.createElement("div");
+    live.className = "pf-live";
+    parts.forEach(function (part) {
+      var span = document.createElement("span");
+      span.appendChild(document.createTextNode(part[0] + "："));
+      var b = document.createElement("b");
+      b.textContent = part[1];
+      span.appendChild(b);
+      if (part[2]) span.appendChild(document.createTextNode("　" + part[2]));
+      live.appendChild(span);
+    });
+    box.appendChild(live);
+  }
+
+  function pfPlain(group, text) {
+    var p = document.createElement("p");
+    p.className = "pf-note";
+    p.textContent = text;
+    group.appendChild(p);
+    return p;
+  }
+
+  function pfWarnText(group, text) {
+    var p = document.createElement("p");
+    p.className = "pf-warn";
+    p.textContent = text;
+    group.appendChild(p);
+    return p;
+  }
+
+  // A "本次改动说明" field, in both writable groups: one audit row per key is
+  // written either way, and the note is the only part of that row a human
+  // wrote on purpose.
+  function pfNoteField(group, id, enabled, initial, hint) {
+    var box = document.createElement("div");
+    box.className = "pf-ctl";
+    var lab = document.createElement("label");
+    lab.setAttribute("for", id);
+    lab.textContent = "本次改动说明";
+    var input = document.createElement("input");
+    input.id = id;
+    input.autocomplete = "off";
+    input.placeholder = "为什么改——留给下一个翻审计的人";
+    input.disabled = !enabled;
+    input.value = initial || "";
+    var h = document.createElement("div");
+    h.className = "hint";
+    h.textContent = hint;
+    box.appendChild(lab);
+    box.appendChild(input);
+    box.appendChild(h);
+    group.appendChild(box);
+    return input;
+  }
+
+  function pfActions(group, hintText, buttonText, enabled, onClick) {
+    var actions = document.createElement("div");
+    actions.className = "pf-actions";
+    var hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = hintText;
+    var spacer = document.createElement("div");
+    spacer.className = "spacer";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "primary";
+    btn.textContent = buttonText;
+    btn.disabled = !enabled;
+    btn.addEventListener("click", onClick);
+    actions.appendChild(hint);
+    actions.appendChild(spacer);
+    actions.appendChild(btn);
+    group.appendChild(actions);
+    return btn;
+  }
+
+  // Unsaved input, carried across the rebuild that every two-second re-read
+  // causes. Deliberately only the input: nothing the server said is preserved,
+  // so a value someone else changed always shows through on the next read.
+  function capturePending() {
+    var pending = { switches: {}, indexing: "", ack: false, switchNote: "", indexingNote: "" };
+    var inputs = state.switchInputs || {};
+    Object.keys(inputs).forEach(function (key) {
+      if (inputs[key] && inputs[key].value) pending.switches[key] = inputs[key].value;
+    });
+    if (state.indexingInput && state.indexingInput.value) pending.indexing = state.indexingInput.value;
+    if (state.indexingAck) pending.ack = state.indexingAck.checked;
+    if (state.switchNote) pending.switchNote = state.switchNote.value;
+    if (state.indexingNote) pending.indexingNote = state.indexingNote.value;
+    return pending;
+  }
+
+  function renderSwitchGroup(host, data) {
+    var pending = state.pending || { switches: {} };
+    var meta = runtimeSwitchMeta();
+    var runtime = data.runtime || {};
+    var editable = data.switches_editable === true;
+    var pollMs = parseGoDuration(meta.switch_poll_interval);
+    var pollSecs = pollMs ? Math.round(pollMs / 1000) : 0;
+
+    var g = pfGroup(host, "运行开关 · 平台设置",
+      pollSecs
+        ? "存在数据库 · 保存后最长 " + pollSecs + " 秒生效，不用重启 router"
+        : "存在数据库 · router 下一次轮询时生效，不用重启 router",
+      "这两项已经不在 router 的环境变量里了：值存在库里，router 每隔一个轮询间隔读一次。" +
+      "所以下面每一项都有两个值——库里存着的那个，和 router 说它此刻正按着跑的那个。" +
+      "保存只改前者；后者要等 router 自己读到，在两者一致之前，客户消息还是按旧值走的。");
+    g.className = "pf-group pf-writable";
+
+    state.switchInputs = {};
+    state.switchNote = null;
+    state.switchSaveBtn = null;
+    state.switchStatusEl = null;
+
+    if (!editable) {
+      pfWarnText(g, "本部署没有接通平台设置库，这两项只能看：要改仍然得回到 router 的环境变量并重启它。");
+    }
+
+    SWITCH_CONTROLS.forEach(function (ctl) {
+      var box = document.createElement("div");
+      box.className = "pf-ctl";
+
+      var lab = document.createElement("label");
+      lab.setAttribute("for", "f-switch-" + ctl.key);
+      lab.textContent = ctl.title + "（" + ctl.key + "）";
+      box.appendChild(lab);
+
+      var row = storedSwitchRow(ctl.key);
+      var running = runningSwitchValue(ctl.key);
+      var sel = document.createElement("select");
+      sel.id = "f-switch-" + ctl.key;
+      sel.disabled = !editable;
+      ctl.values.forEach(function (v) {
+        var opt = document.createElement("option");
+        opt.value = v[0];
+        opt.textContent = v[0] + "　" + v[1];
+        sel.appendChild(opt);
+      });
+      // Seeded from the stored row, then from what the router reports. Never
+      // from the first option: an unread configuration must not put a
+      // plausible value under the cursor and let it be saved as a choice.
+      var seed = pending.switches[ctl.key] || (row && row.value) || running || "";
+      if (!seed) {
+        var placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "（读不到当前值）";
+        sel.insertBefore(placeholder, sel.firstChild);
+      }
+      sel.value = seed;
+      box.appendChild(sel);
+      state.switchInputs[ctl.key] = sel;
+
+      var hint = document.createElement("div");
+      hint.className = "hint";
+      box.appendChild(hint);
+      var describe = function () {
+        var text = "";
+        ctl.values.forEach(function (v) { if (v[0] === sel.value) text = v[2]; });
+        hint.textContent = text ||
+          "读不到这一项现在的值。在这个状态下选一个保存等于凭空指定——先弄清楚 router 与设置库是不是都还在。";
+      };
+      describe();
+      sel.addEventListener("change", describe);
+
+      // "读不到" and "还没有落库" are different facts and must not print the
+      // same. A settings table that timed out, shown as "never stored", sends
+      // an operator looking for a setting they already made.
+      var unreadable = !row && !!((state.platform || {}).stored_switches_error);
+      var storedText = (row && row.value) || (unreadable ? "读不到" : "还没有落库");
+      var storedNote = "";
+      if (row) {
+        storedNote = SETTING_SOURCE_LABELS[row.source] || row.source || "";
+        if (row.updated_at) storedNote += " · " + formatDate(row.updated_at);
+        if (row.updated_by) storedNote += " · " + row.updated_by;
+      } else if (unreadable) {
+        storedNote = "设置库这一次没读出来（" + (state.platform || {}).stored_switches_error + "）"
+          + "——这不代表没设过，只代表此刻问不到。";
+      } else {
+        storedNote = "router 启动时应当种入这一行";
+      }
+      var runningText = running === null ? "读不到" : running;
+      var runningNote = "";
+      if (running === null) {
+        runningNote = "（" + (runtime.reason || "这一次没问到 router") + "）";
+      } else {
+        var srcKey = (meta.switch_sources || {})[ctl.key];
+        if (srcKey) runningNote = SETTING_SOURCE_LABELS[srcKey] || srcKey;
+      }
+      pfLive(box, [["库里", storedText, storedNote], ["router 在用", runningText, runningNote]]);
+
+      if (ctl.danger) {
+        var d = document.createElement("p");
+        d.className = "pf-danger";
+        d.textContent = ctl.danger;
+        box.appendChild(d);
+      }
+
+      g.appendChild(box);
+    });
+
+    // An environment variable that is still set and no longer decides
+    // anything. Named one at a time, with the fix, because the deployment
+    // config is the first place the next person will look and it now says the
+    // opposite of what is true.
+    var shadowed = meta.env_shadowed || {};
+    Object.keys(shadowed).forEach(function (name) {
+      pfWarnText(g, "部署配置里还有 " + name + "=" + String(shadowed[name]) +
+        "，它已经不起作用了：这一行在库里存在，生效的是库里的值，上面显示的也是库里的值。" +
+        "请把它从部署配置里删掉——留着它，下一个读部署配置的人会得出相反的结论，而且哪里都不会报错。");
+    });
+
+    // Staleness. A failed read leaves the router on its last good snapshot, so
+    // a value can go on being displayed long after it stopped being confirmed.
+    // How long ago it was last confirmed is the whole difference between a
+    // stale value and a wrong one.
+    if (runtime.available) {
+      var readAt = meta.switches_read_at || "";
+      var err = meta.switches_error || "";
+      var staleAfter = pollMs ? pollMs * 2 : 0;
+      var age = readAt ? (Date.now() - new Date(readAt).getTime()) : -1;
+      if (!readAt) {
+        pfWarnText(g, "router 从来没有成功读到过设置库" +
+          (err ? "（最近一次失败：" + err + "）" : "") +
+          "，它现在按的是启动时的环境变量。在这个状态下，本页保存会落库，但 router 不会拾取。");
+      } else if (err || (staleAfter && age > staleAfter)) {
+        pfWarnText(g, "router 上次成功读库是 " + agoText(readAt) + "前" +
+          (err ? "，之后一直失败（" + err + "）" : "") +
+          "。上面「router 在用」的值可能已经陈旧，这时候保存也可能迟迟不生效。");
+      }
+    }
+
+    state.switchNote = pfNoteField(g, "f-switch-note", editable, pending.switchNote,
+      "一次保存里改了几个 key 就写几条审计，这句说明会写进每一条。");
+
+    var busy = state.switchSaving || !!state.switchPoll;
+    state.switchSaveBtn = pfActions(g,
+      editable ? "只提交改动过的那几项。" : "",
+      "保存运行开关", editable && !busy, saveRuntimeSwitches);
+
+    // The wait for the router, and its verdict. The element is always created
+    // and usually hidden, so that setSwitchStatus can write into it without
+    // rebuilding the group under the operator's hands.
+    var status = document.createElement("p");
+    status.hidden = true;
+    g.appendChild(status);
+    state.switchStatusEl = status;
+    if (state.switchStatus) setSwitchStatus(state.switchStatus.kind, state.switchStatus.text);
+  }
+
+  function setSwitchStatus(kind, text) {
+    state.switchStatus = text ? { kind: kind, text: text } : null;
+    var el = state.switchStatusEl;
+    if (!el) return;
+    el.hidden = !text;
+    if (!text) return;
+    el.className = kind === "ok" ? "pf-ok" : (kind === "bad" ? "pf-danger" : "pf-warn");
+    el.textContent = text;
+  }
+
+  function saveRuntimeSwitches() {
+    var body = {};
+    var keys = [];
+    var lines = [];
+    var retiresKeywords = false;
+
+    // Only what actually moved is sent. A submit that carried both keys every
+    // time would write an audit row for a value nobody touched, and "who
+    // changed scene_mode" would stop having an answer.
+    SWITCH_CONTROLS.forEach(function (ctl) {
+      var sel = state.switchInputs[ctl.key];
+      if (!sel || sel.disabled || !sel.value) return;
+      var row = storedSwitchRow(ctl.key);
+      var was = (row && row.value) || runningSwitchValue(ctl.key) || "";
+      if (sel.value === was) return;
+      body[ctl.key] = sel.value;
+      keys.push(ctl.key);
+      lines.push(ctl.title + "：" + (was || "（读不到原值）") + " → " + sel.value);
+      if (ctl.key === "intent_triage" && sel.value === "on") retiresKeywords = true;
+    });
+
+    if (!keys.length) { toast("没有改动，没有提交", "warn"); return; }
+
+    var pollMs = parseGoDuration(runtimeSwitchMeta().switch_poll_interval);
+    var pollSecs = pollMs ? Math.round(pollMs / 1000) : 0;
+    var text = "确认保存吗？\n\n" + lines.join("\n") + "\n";
+    if (retiresKeywords) {
+      text += "\n意图分诊改成 on 之后，每个租户的转人工关键词表整体失效，转人工全部改由分诊模型判定。" +
+        "他们的页面要等自己刷新才会说明这件事。\n";
+    }
+    text += "\nrouter 不用重启" + (pollSecs ? "，最长 " + pollSecs + " 秒内按新值路由" : "") +
+      "；本页会一直等到它确实拾取，或者等到超时为止。";
+    if (!confirm(text)) return;
+
+    var note = state.switchNote ? state.switchNote.value.trim() : "";
+    if (note) body.note = note;
+
+    state.switchSaving = true;
+    if (state.switchSaveBtn) state.switchSaveBtn.disabled = true;
+    setSwitchStatus("", "保存中…");
+
+    api("/api/v1/platform/switches", { method: "PUT", body: JSON.stringify(body) })
+      .then(function (data) {
+        data = data || {};
+        state.switchSaving = false;
+        if (state.switchNote) state.switchNote.value = "";
+        var changed = Array.isArray(data.changed) && data.changed.length ? data.changed : keys;
+        toast("已落库：" + changed.join("、"), "success");
+        startPickupWait(data.poll_interval, keys);
+      })
+      .catch(function (err) {
+        state.switchSaving = false;
+        if (state.switchSaveBtn) state.switchSaveBtn.disabled = false;
+        if (err.message === "unauthorized") return;
+        setSwitchStatus("bad", "没有保存：" + settingsErrorText(err));
+        toast("保存失败", "error");
+      });
+  }
+
+  // A save is not finished when the row is written. The router reads the table
+  // on its own clock, so the page keeps asking until what it is running by
+  // matches what was stored — and when that has not happened one poll interval
+  // later, it says exactly that rather than showing a success it cannot see.
+  function startPickupWait(pollInterval, keys) {
+    stopPickupWait();
+    var waitMs = parseGoDuration(pollInterval) ||
+      parseGoDuration(runtimeSwitchMeta().switch_poll_interval) || 10000;
+    var secs = Math.round(waitMs / 1000);
+    state.switchPoll = { keys: keys, deadline: Date.now() + waitMs + 5000, timer: null };
+    setSwitchStatus("", "已落库。正在等 router 拾取——它每 " + secs + " 秒读一次库，最多等 " +
+      (secs + 5) + " 秒。");
+    loadPlatformSettings().then(checkPickup);
+  }
+
+  function stopPickupWait() {
+    if (state.switchPoll && state.switchPoll.timer) clearTimeout(state.switchPoll.timer);
+    state.switchPoll = null;
+  }
+
+  function checkPickup() {
+    var poll = state.switchPoll;
+    if (!poll) return;
+
+    if (!state.platform) {
+      // The settings read itself failed, so there is no group left on screen
+      // to write a verdict into — and no basis for one either.
+      stopPickupWait();
+      toast("已落库，但本页读不到平台设定，没法确认 router 有没有拾取", "warn");
+      return;
+    }
+
+    var agreed = true;
+    var running = [];
+    poll.keys.forEach(function (key) {
+      var row = storedSwitchRow(key);
+      var want = row && row.value;
+      var got = runningSwitchValue(key);
+      running.push(key + "=" + (got === null ? "读不到" : got));
+      if (!want || got === null || got !== want) agreed = false;
+    });
+
+    if (agreed) {
+      stopPickupWait();
+      if (state.switchSaveBtn) state.switchSaveBtn.disabled = false;
+      setSwitchStatus("ok", "router 已经按新值在跑了（" + running.join("、") + "）。");
+      return;
+    }
+
+    if (Date.now() >= poll.deadline) {
+      stopPickupWait();
+      if (state.switchSaveBtn) state.switchSaveBtn.disabled = false;
+      var runtime = (state.platform || {}).runtime || {};
+      if (!runtime.available) {
+        setSwitchStatus("warn", "已落库，但现在读不到 router（" + (runtime.reason || "原因未知") +
+          "），没法确认它有没有按新值在跑。库里已经是新值了，router 那一半这次没问出来——" +
+          "不要因为这条提示再保存一遍。");
+      } else {
+        setSwitchStatus("warn", "已落库，但 router 到现在还没有拾取：它仍然按 " + running.join("、") +
+          " 在跑。这不是保存失败——库里已经是新值了；是 router 没读到。" +
+          "上面「router 在用」那一行的来源与时效说明它读到了什么时候为止；" +
+          "常见的原因是它读库一直失败，或者连的根本不是同一个库。");
+      }
+      return;
+    }
+
+    poll.timer = setTimeout(function () {
+      loadPlatformSettings().then(checkPickup);
+    }, 2000);
+  }
+
+  // The server's refusals, said back in the words that name the fix. The
+  // allowed-value map is printed as it arrived rather than summarised: it is
+  // the list this page's select is supposed to match, and printing it is how a
+  // disagreement between the two becomes visible instead of becoming a 400
+  // nobody can explain.
+  function settingsErrorText(err) {
+    var data = (err && err.data) || {};
+    if (err && err.status === 403) return "只有管理员能改平台设置。";
+    if (err && err.status === 503) {
+      return "本部署没有接通平台设置库，改不了" + (data.error ? "：" + data.error : "") + "。";
+    }
+    if (err && err.status === 400 && data.allowed) {
+      var parts = Object.keys(data.allowed).map(function (key) {
+        return key + " 只能是 " + (data.allowed[key] || []).join(" / ");
+      });
+      return (data.error || "值不合法") + "（" + parts.join("；") + "）";
+    }
+    return data.error || (err && err.message) || "未知错误";
+  }
+
+  // ---------- Capabilities ----------
+  //
+  // The group exists for one distinction. A feature that was never configured
+  // is off everywhere and says so nowhere: the buttons are still there, the
+  // requests still return 200, and only the half of the product that would
+  // have used it is missing. Reporting that as a plain "no" would merge it
+  // with the case where the probe itself failed, and those two call for
+  // opposite actions — configure it, or go find out why we cannot see it.
+  function renderCapabilityGroup(host, caps) {
+    var g = pfGroup(host, "本部署的能力清单", "由本部署自己的配置决定",
+      "有几项功能是「配了就有、没配就没有」，而没有的时候界面上什么都不会说。这里逐条点名。" +
+      "「未启用」和「读不到」不是一回事——前者是确定关着，后者是这一次没问出结果；" +
+      "把两者混成同一个「否」，正是这一组要修的那个毛病。");
+
+    caps = Array.isArray(caps) ? caps : [];
+    if (!caps.length) {
+      pfWarnText(g, "没有拿到能力清单。这里不代之以「一切正常」：那正是本组要避免的那种说法。");
+      return;
+    }
+
+    var list = document.createElement("div");
+    list.className = "pf-list";
+    caps.forEach(function (cap) {
+      var st = CAPABILITY_STATE[cap.state] || CAPABILITY_STATE.unknown;
+      var item = document.createElement("div");
+      item.className = "pf-item";
+
+      var mark = pill(st[0], st[1]);
+      mark.className += " pf-item-mark";
+      item.appendChild(mark);
+
+      var body = document.createElement("div");
+      body.className = "pf-item-body";
+      var title = document.createElement("div");
+      title.className = "pf-item-title";
+      title.textContent = cap.title || cap.key || "";
+      body.appendChild(title);
+
+      var bits = [];
+      if (cap.reason) bits.push(cap.reason);
+      if (CAPABILITY_OWNER[cap.owner]) bits.push(CAPABILITY_OWNER[cap.owner]);
+      if (cap.key) bits.push(cap.key);
+      if (bits.length) {
+        var note = document.createElement("div");
+        note.className = "pf-item-note";
+        note.textContent = bits.join("　");
+        body.appendChild(note);
+      }
+
+      item.appendChild(body);
+      list.appendChild(item);
+    });
+    g.appendChild(list);
+  }
+
+  // ---------- Indexing technique ----------
+  //
+  // Stored like the two switches above, but nothing polls for it: it is read
+  // when this service creates a dataset or writes a dataset's retrieval
+  // settings, so a save takes effect on the next such write and there is
+  // nothing to wait for. What there is instead is a roster, because this is
+  // the one setting whose danger lives outside the value itself — a technique
+  // that disagrees with a dataset's existing index returns nothing for every
+  // query and reports no error anywhere.
+  function renderIndexingGroup(host, data) {
+    var pending = state.pending || {};
+    var k = (data.compiled || {}).knowledge || {};
+    var editable = data.switches_editable === true;
+    var effective = k.indexing_technique || "";
+    var storedIdx = k.indexing_stored || null;
+
+    var g = pfGroup(host, "知识库检索 · 平台设置", "存在数据库 · 只影响此后新建的库与新上传的文档",
+      "索引方式决定新文档怎么建索引，检索方式与召回条数都跟着它派生——两者必须一致，" +
+      "否则每次检索都返回空，而且不报错。存量文档不会重切，也不会重建索引：改了之后，" +
+      "已经建好的库仍然按原来的方式索引着。");
+    g.className = "pf-group pf-writable";
+
+    state.indexingInput = null;
+    state.indexingAck = null;
+    state.indexingNote = null;
+    state.indexingSaveBtn = null;
+
+    if (!editable) {
+      pfWarnText(g, "本部署没有接通平台设置库，索引方式只能看，不能改。");
+    }
+
+    var box = document.createElement("div");
+    box.className = "pf-ctl";
+    var lab = document.createElement("label");
+    lab.setAttribute("for", "f-indexing-technique");
+    lab.textContent = "索引方式（dify_indexing_technique）";
+    box.appendChild(lab);
+
+    var sel = document.createElement("select");
+    sel.id = "f-indexing-technique";
+    sel.disabled = !editable;
+    INDEXING_VALUES.forEach(function (v) {
+      var opt = document.createElement("option");
+      opt.value = v[0];
+      opt.textContent = v[0] + "　" + v[1] + "（" + v[2] + "）";
+      sel.appendChild(opt);
+    });
+    var seed = pending.indexing || effective || "";
+    if (!seed) {
+      var placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "（读不到当前值）";
+      sel.insertBefore(placeholder, sel.firstChild);
+    }
+    sel.value = seed;
+    box.appendChild(sel);
+    state.indexingInput = sel;
+
+    var hint = document.createElement("div");
+    hint.className = "hint";
+    box.appendChild(hint);
+    var describe = function () {
+      hint.textContent = sel.value
+        ? "选中 " + sel.value + "：此后新建的库与新上传的文档按 " + sel.value +
+          " 建索引，检索按 " + indexingSearchMethod(sel.value) + " 配置。"
+        : "读不到现在生效的索引方式。在这个状态下保存等于凭空指定一个值。";
+      // The roster next to it is coloured against this choice, so it is redrawn
+      // with it: the conflict warning is about the value being considered, not
+      // about the value already in force.
+      renderIndexingRoster();
+    };
+    describe();
+    sel.addEventListener("change", describe);
+    g.appendChild(box);
+
+    var storedText = (storedIdx && storedIdx.value) || "还没有落库";
+    var storedNote = "";
+    if (storedIdx) {
+      storedNote = SETTING_SOURCE_LABELS[storedIdx.source] || storedIdx.source || "";
+      if (storedIdx.updated_at) storedNote += " · " + formatDate(storedIdx.updated_at);
+    } else {
+      storedNote = "用的是启动时种进去的环境变量值";
+    }
+    pfLive(box, [["库里", storedText, storedNote], ["现在生效", effective || "读不到", ""]]);
+
+    pfRow(g, "检索方式（派生）", k.search_method || "", "跟着索引方式走，不单独配置");
+    pfRow(g, "召回条数 top_k（派生）", String(k.top_k));
+
+    pfPlain(g, "各产线的库现在实际按什么建的索引（读自 Dify，与下面的「知识库就绪度清单」同一次读）：");
+    var roster = document.createElement("div");
+    roster.id = "indexing-roster";
+    roster.className = "pf-list";
+    g.appendChild(roster);
+    var conflict = document.createElement("div");
+    conflict.id = "indexing-conflict";
+    g.appendChild(conflict);
+
+    var check = document.createElement("div");
+    check.className = "pf-check";
+    var ack = document.createElement("input");
+    ack.type = "checkbox";
+    ack.id = "f-indexing-ack";
+    ack.disabled = !editable;
+    ack.checked = !!pending.ack;
+    var ackLab = document.createElement("label");
+    ackLab.setAttribute("for", "f-indexing-ack");
+    ackLab.textContent = "我知道：存量文档不会自动迁移。已经建好的库还是按原来的索引方式存着，" +
+      "要让它们跟上只能重建——这个开关不会替我做这件事。";
+    check.appendChild(ack);
+    check.appendChild(ackLab);
+    g.appendChild(check);
+    state.indexingAck = ack;
+
+    state.indexingNote = pfNoteField(g, "f-indexing-note", editable, pending.indexingNote,
+      "写进这次改动的审计。");
+
+    state.indexingSaveBtn = pfActions(g,
+      editable ? "勾选上面那句之后才会提交。" : "",
+      "保存索引方式", editable, saveIndexingTechnique);
+
+    renderIndexingRoster();
+  }
+
+  // The per-line roster, summarised from the same read the 知识库就绪度清单
+  // below is built from — one read, one set of facts, so the two surfaces
+  // cannot end up disagreeing about what a line's dataset is indexed with. It
+  // sits next to the selector because the choice is made against these values:
+  // picking a technique without seeing which datasets are already fixed on the
+  // other one is picking blind.
+  function renderIndexingRoster() {
+    var host = document.getElementById("indexing-roster");
+    var warnHost = document.getElementById("indexing-conflict");
+    if (!host || !warnHost) return;
+    host.textContent = "";
+    warnHost.textContent = "";
+
+    var chosen = state.indexingInput ? state.indexingInput.value : "";
+    var data = state.knowledge;
+
+    if (!data) {
+      pfPlain(host, "正在读各产线的实际索引方式…");
+      return;
+    }
+    if (data.error) {
+      pfWarnText(host, "读不到各产线的实际索引方式（" + data.error + "）。" +
+        "这里不拿平台设定顶替：那会把「不知道」显示成「一致」，而不一致恰恰是不报错的那一种。");
+      return;
+    }
+
+    var lines = Array.isArray(data.lines) ? data.lines : [];
+    if (!lines.length) {
+      pfPlain(host, "还没有产线。");
+      return;
+    }
+
+    var conflicts = [];
+    var techniques = {};
+    lines.forEach(function (line) {
+      var idx = line.indexing || null;
+      var name = line.display_name || line.name || line.product_line_id || "";
+      var mark;
+      var note;
+
+      if (!idx) {
+        // No dataset is a different fact from an unreadable one, and both are
+        // different from a technique. None of the three may be printed as a
+        // technique name.
+        if (!line.dify_dataset_id) {
+          mark = pill("bad", "没有数据集");
+          note = "本产线没有库，索引方式无从谈起。";
+        } else {
+          mark = pill("muted dashed", "读不到");
+          note = "这一次没问出这个库的索引方式。";
+        }
+      } else if (idx.known === false) {
+        // Unreadable is not the same fact as undecided. Printing "还没有文档"
+        // here would tell an operator their datasets are empty when the
+        // truth is that Dify was not reachable this time round.
+        mark = pill("muted dashed", "读不到");
+        note = idx.reason || "这一次没问出这个库的索引方式。";
+      } else if (idx.decided === false) {
+        mark = pill("muted dashed", "尚未确定（还没有文档）");
+        note = idx.reason || "库里还没有文档：Dify 要到第一篇文档索引完，才会定下这个库的索引方式。";
+      } else if (!idx.technique) {
+        mark = pill("muted dashed", "读不到");
+        note = idx.reason || "Dify 没有报这个库的索引方式。";
+      } else {
+        // A dataset can disagree with itself, and that is worse than
+        // disagreeing with the value being chosen: it is already broken,
+        // today, with nothing selected. Retrieval on it returns nothing
+        // and reports no error, so this row is the only place it shows.
+        var wants = indexingSearchMethod(idx.technique);
+        var selfConsistent = !idx.search_method || !wants || idx.search_method === wants;
+        var agrees = !chosen || idx.technique === chosen;
+        mark = pill(selfConsistent ? (agrees ? "ok" : "warn") : "bad", idx.technique);
+        note = "检索按 " + (idx.search_method || "—") + "。";
+        if (!selfConsistent) {
+          note += "这个库现在就是坏的：索引按 " + idx.technique + " 建，检索却按 " +
+            idx.search_method + " 配——不用改任何设置，它此刻的检索就已经恒空，而且不报错。" +
+            "应当按 " + wants + " 修检索设置，或重建索引。";
+          // Deliberately not counted in `conflicts`: that list feeds the
+          // sentence about disagreeing with the value being chosen, and
+          // this line disagrees with itself no matter what is chosen.
+          // Folding the two together would describe neither.
+        }
+        if (!agrees) {
+          note += "与上面选的 " + chosen + " 不一致。";
+          conflicts.push(name);
+          techniques[idx.technique] = true;
+        }
+      }
+
+      var item = document.createElement("div");
+      item.className = "pf-item";
+      mark.className += " pf-item-mark";
+      item.appendChild(mark);
+
+      var body = document.createElement("div");
+      body.className = "pf-item-body";
+      var title = document.createElement("div");
+      title.className = "pf-item-title";
+      title.textContent = name;
+      body.appendChild(title);
+      var noteEl = document.createElement("div");
+      noteEl.className = "pf-item-note";
+      // The dataset id is named only when there is one — "库 —" beside a line
+      // that has no dataset reads as a dataset whose id we lost.
+      noteEl.textContent = note + (line.dify_dataset_id ? "　库 " + line.dify_dataset_id : "");
+      body.appendChild(noteEl);
+      item.appendChild(body);
+      host.appendChild(item);
+    });
+
+    if (!conflicts.length) return;
+
+    // Said in full, and in red, because this is the failure that reports
+    // nothing: no error, no empty-result warning, nothing in any log. The
+    // only place it can be seen is here, before the save.
+    var d = document.createElement("p");
+    d.className = "pf-danger";
+    d.textContent = "选的是 " + chosen + "，但有 " + conflicts.length + " 条产线的库已经按 " +
+      Object.keys(techniques).join(" / ") + " 建好了索引（" + conflicts.join("、") + "）。" +
+      "保存之后，新文档按 " + chosen + " 建索引，这些库的检索设置也会按 " + chosen + " 派生（" +
+      indexingSearchMethod(chosen) + "）——和库里已有的索引对不上：检索每次都返回空，而且不报错。" +
+      "上传照常、索引照常、命中数照常，只是答复里一个字都用不上。" +
+      "存量文档不会自动迁移：要么把这些库重建，要么别改这个值。";
+    warnHost.appendChild(d);
+  }
+
+  function saveIndexingTechnique() {
+    var sel = state.indexingInput;
+    if (!sel || !sel.value) { toast("读不到现在生效的索引方式，先弄清楚再改", "error"); return; }
+
+    var effective = (((state.platform || {}).compiled || {}).knowledge || {}).indexing_technique || "";
+    if (sel.value === effective) { toast("和现在生效的一样，没有提交", "warn"); return; }
+
+    // The tick is a gate here as well as on the server. The server's 400 is
+    // the backstop; this is the part that happens before anyone has decided
+    // they are finished.
+    var ack = state.indexingAck;
+    if (!ack || !ack.checked) {
+      toast("请先勾选「存量文档不会自动迁移」再保存", "error");
+      if (ack) ack.focus();
+      return;
+    }
+
+    var text = "确认把平台索引方式改成 " + sel.value + " 吗？\n\n" +
+      "此后新建的库与新上传的文档按 " + sel.value + " 建索引，检索按 " +
+      indexingSearchMethod(sel.value) + " 配置。\n" +
+      "存量文档不会自动迁移：已经按另一种方式建好索引的库，检索会恒空，而且不报错。";
+    if (!confirm(text)) return;
+
+    var body = { dify_indexing_technique: sel.value, acknowledge_existing_not_migrated: true };
+    var note = state.indexingNote ? state.indexingNote.value.trim() : "";
+    if (note) body.note = note;
+
+    if (state.indexingSaveBtn) state.indexingSaveBtn.disabled = true;
+    api("/api/v1/platform/switches", { method: "PUT", body: JSON.stringify(body) })
+      .then(function () {
+        toast("索引方式已保存", "success");
+        // Cleared before the reload so that the next render cannot carry the
+        // tick over: the next change has to be acknowledged on its own.
+        if (state.indexingAck) state.indexingAck.checked = false;
+        if (state.indexingNote) state.indexingNote.value = "";
+        // Nothing is polled for. The router does not read this value; this
+        // service does, on its next dataset write. The roster is re-read too:
+        // what each dataset is actually indexed with has not changed, but the
+        // agreement between it and the new setting has.
+        return loadPlatformSettings();
+      })
+      .catch(function (err) {
+        if (state.indexingSaveBtn) state.indexingSaveBtn.disabled = false;
+        if (err.message === "unauthorized") return;
+        toast("保存失败：" + settingsErrorText(err), "error");
+      });
   }
 
   // ---------- Platform model (the one setting here that is written) ----------
@@ -1457,7 +2491,7 @@
         text += "这条线有自己的覆盖，只是被借来验证，用完已经把它自己的配置推了回去，偏离没有被抹掉。";
       } else if (v.revert_error) {
         text += "注意：借它验证之后没能推回原配置（" + v.revert_error +
-          "），它现在停在平台默认上，请到该租户的「AI 设置」页确认。";
+          "），它现在停在平台默认上，请到该租户的「设置」页确认。";
       }
       text += "其余产线还停在原来的模型上，要在下面的漂移清单里勾选重推。";
       body.textContent = text;
@@ -2119,10 +3153,20 @@
       "加载中…（每条线都要读一次 Dify，可能要等几秒）</td></tr>";
     return api("/api/v1/platform/knowledge")
       .then(function (data) {
-        renderKnowledgeRoster(data || {});
+        // Held as well as rendered: the index selector in the settings block
+        // above summarises this same read, so that the two cannot disagree
+        // about what a line's dataset is indexed with.
+        state.knowledge = data || {};
+        renderKnowledgeRoster(state.knowledge);
+        renderIndexingRoster();
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
+        // Recorded as a failure rather than left as an empty roster: an empty
+        // roster reads as "no line disagrees with the platform setting", which
+        // is the one thing we did not find out.
+        state.knowledge = { error: err.message };
+        renderIndexingRoster();
         tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载失败: ' +
           escapeHtml(err.message) + "</td></tr>";
         els.knowledgeCounts.textContent = "";

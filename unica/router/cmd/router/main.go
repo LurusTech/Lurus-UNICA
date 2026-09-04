@@ -18,6 +18,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/platformsettings"
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/experience"
 	"github.com/kefu/unica/router/internal/guardrail"
@@ -77,14 +78,24 @@ func main() {
 	routeCache := routing.NewRouteCache(rdb, db, cfg.routeCacheTTL)
 	difyClient := bridge.NewDifyClient()
 
+	// The behaviour switches live in the database. The environment seeds them
+	// once, on a deployment that has never stored them; from then on this
+	// process reads the stored value on a ticker, so moving a switch on the
+	// console takes effect without a restart.
+	switchPoller := routing.NewSwitchPoller(ctx, platformsettings.NewStore(db), routing.EnvSwitches{
+		Triage:    cfg.triageMode,
+		TriageSet: cfg.triageModeSet,
+		Scene:     cfg.sceneMode,
+		SceneSet:  cfg.sceneModeSet,
+	}, cfg.switchPollInterval)
+	switchPoller.Start(ctx)
+
 	routerConfig := routing.RouterConfig{
 		ConsumerGroup: cfg.consumerGroup,
 		ConsumerName:  cfg.consumerName,
 		Workers:       cfg.workers,
-		TriageMode:    cfg.triageMode,
-		SceneMode:     cfg.sceneMode,
+		Switches:      switchPoller.Switches(),
 	}
-	log.Printf("[router] intent triage mode: %s, scene mode: %s", cfg.triageMode, cfg.sceneMode)
 
 	router := routing.NewRouter(rdb, db, stateManager, difyClient, routeCache, routerConfig)
 
@@ -170,21 +181,40 @@ func main() {
 	// integration is reported as on or off, never by its URL or credential.
 	mux.HandleFunc("/configz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]interface{}{
-			"intent_triage":      string(cfg.triageMode),
-			"scene_mode":         string(cfg.sceneMode),
-			"ontology_enabled":   cfg.ontologyEnabled,
-			"ontology_cache_ttl": cfg.ontologyCacheTTL.String(),
-			"route_cache_ttl":    cfg.routeCacheTTL.String(),
-			"idle_timeout":       cfg.idleTimeout.String(),
-			"acest_enabled":      cfg.acestURL != "",
-			"workers":            cfg.workers,
+		snap := switchPoller.Switches().Snapshot()
+		body := map[string]interface{}{
+			// The two stored switches keep their original meaning here: what
+			// this process is routing by right now. Readers that only want that
+			// need no change; the fields below are for the ones that also need
+			// to know how the value got here and how old it is.
+			"intent_triage":        string(snap.Triage),
+			"scene_mode":           string(snap.Scene),
+			"switch_sources":       snap.Sources,
+			"switch_poll_interval": switchPoller.Interval().String(),
+			"ontology_enabled":     cfg.ontologyEnabled,
+			"ontology_cache_ttl":   cfg.ontologyCacheTTL.String(),
+			"route_cache_ttl":      cfg.routeCacheTTL.String(),
+			"idle_timeout":         cfg.idleTimeout.String(),
+			"acest_enabled":        cfg.acestURL != "",
+			"workers":              cfg.workers,
 			// How long a conversation's Dify thread is remembered, i.e. how far
 			// back the assistant can still see. A compile-time constant rather
 			// than an env var, but it is behaviour an operator asks about in
 			// the same breath as the rest, and this is where they look.
 			"dify_conv_ttl": routing.DifyConvTTL.String(),
-		}); err != nil {
+		}
+		if !snap.ReadAt.IsZero() {
+			body["switches_read_at"] = snap.ReadAt.UTC().Format(time.RFC3339)
+		}
+		if snap.Err != "" {
+			body["switches_error"] = snap.Err
+		}
+		if len(snap.EnvShadowed) > 0 {
+			// Named, with the value being ignored, so the fix is one line of
+			// deployment config rather than a hunt.
+			body["env_shadowed"] = snap.EnvShadowed
+		}
+		if err := json.NewEncoder(w).Encode(body); err != nil {
 			log.Printf("[router] configz encode error: %v", err)
 		}
 	})
@@ -225,6 +255,9 @@ func main() {
 	routerCancel()
 	router.Stop()
 
+	// Phase 3b: Stop reading the platform switches
+	switchPoller.Stop()
+
 	// Phase 4: Stop state manager
 	stateManager.Stop()
 	partitions.Stop()
@@ -252,8 +285,17 @@ type config struct {
 	routeCacheTTL time.Duration
 	port          string
 	idleTimeout   time.Duration
-	triageMode    guardrail.TriageMode
-	sceneMode     routing.SceneMode
+	// The behaviour switches are stored in the database now; these two hold
+	// what this process's environment says, which seeds them the first time
+	// and is otherwise only used to report a disagreement. triageModeSet and
+	// sceneModeSet record whether the variable was present at all: an unset
+	// variable that differs from the stored value is not a disagreement, it
+	// is a deployment that has already stopped configuring this here.
+	triageMode         guardrail.TriageMode
+	triageModeSet      bool
+	sceneMode          routing.SceneMode
+	sceneModeSet       bool
+	switchPollInterval time.Duration
 
 	// Monthly partition provisioning for messages and audit_logs.
 	partitionInterval    time.Duration
@@ -320,7 +362,14 @@ func loadConfig() config {
 	// so enabling this on an existing deployment changes nothing observable to
 	// customers. A malformed value falls back to the default rather than
 	// silently disabling the feature.
-	triageMode, err := guardrail.ParseTriageMode(os.Getenv("INTENT_TRIAGE"))
+	//
+	// This variable now seeds the stored value on the first startup that finds
+	// none, and after that it is not read as configuration at all: the console
+	// owns the switch. Leaving it set is not an error, but it is reported as
+	// ignored rather than silently obeyed or silently dropped.
+	rawTriage := os.Getenv("INTENT_TRIAGE")
+	cfg.triageModeSet = strings.TrimSpace(rawTriage) != ""
+	triageMode, err := guardrail.ParseTriageMode(rawTriage)
 	if err != nil {
 		log.Printf("[router] warning: %v; falling back to %q", err, guardrail.DefaultTriageMode)
 		triageMode = guardrail.DefaultTriageMode
@@ -329,13 +378,26 @@ func loadConfig() config {
 
 	// Commercial-stage classification and response-strategy injection.
 	// Defaults to shadow for the same reason as triage: stage metrics accrue
-	// while every answer stays exactly as it was.
-	sceneMode, err := routing.ParseSceneMode(os.Getenv("SCENE_MODE"))
+	// while every answer stays exactly as it was. Seeds the stored value, on
+	// the same terms as INTENT_TRIAGE above.
+	rawScene := os.Getenv("SCENE_MODE")
+	cfg.sceneModeSet = strings.TrimSpace(rawScene) != ""
+	sceneMode, err := routing.ParseSceneMode(rawScene)
 	if err != nil {
 		log.Printf("[router] warning: %v; falling back to %q", err, routing.DefaultSceneMode)
 		sceneMode = routing.DefaultSceneMode
 	}
 	cfg.sceneMode = sceneMode
+
+	// How long a console change takes to reach this process. Configurable
+	// only so an operator can shorten it while watching a rollout.
+	pollInterval, err := time.ParseDuration(envOrDefault("SWITCH_POLL_INTERVAL", "10s"))
+	if err != nil || pollInterval <= 0 {
+		log.Printf("[router] warning: bad SWITCH_POLL_INTERVAL %q; using %s",
+			os.Getenv("SWITCH_POLL_INTERVAL"), routing.DefaultSwitchPollInterval)
+		pollInterval = routing.DefaultSwitchPollInterval
+	}
+	cfg.switchPollInterval = pollInterval
 
 	// Domain ontology. Enabled by default because it costs nothing until a
 	// product line opts in; ONTOLOGY_ENABLED=false is the switch for turning it

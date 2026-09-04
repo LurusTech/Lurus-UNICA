@@ -21,7 +21,7 @@ It is a real contract-delivered product (private-labeled per client, self-hosted
 - **Channel gateway with webhook verification, dedup and dead-letter handling** — signature verification, message normalization, Redis-based dedup with TTL fail-open, retry with backoff, and a dead-letter stream per channel (`unica/gateway/internal`).
 - **Session state machine + LLM routing with fail-open dual knowledge base** — router calls Dify per conversation and, when `ACEST_KB_URL` is set, recalls both an "experience" store and external knowledge from an [acest](https://github.com/LurusTech/Lurus-acest) `kb-server` in parallel before the call, injecting `experience_context` / `knowledge_context`; unreachable kb-server only drops the injected context (`unica/router/internal/routing`, `unica/router/cmd/router/main.go:351-373`).
 - **Domain ontology grounding** — per-tenant policy facts are injected before the model answers and validated after, with a circuit breaker that stops enforcing once the recent block rate exceeds 25% (`inject_facts` / `validation` off by default; `unica/pkg/domain`, `unica/router/cmd/router/main.go:343-349`).
-- **Scene-aware response strategy (pre-sales vs. post-sales)** — router classifies each message and injects a matching tone/behavior template via `scene_context`; ships in `shadow` mode (metrics only, no behavior change) by default (`SCENE_MODE`, `unica/router` `routing` package).
+- **Scene-aware response strategy (pre-sales vs. post-sales)** — router classifies each message and injects a matching tone/behavior template via `scene_context`; ships in `shadow` mode (metrics only, no behavior change) by default, and the mode is moved from the platform console without restarting the router (`SCENE_MODE` seeds it once, then `platform_settings`; `unica/router` `routing` package).
 - **One-click tenant onboarding** — a single admin-only call creates the tenant, its Dify app + knowledge dataset + API key, a portal account, and (optionally) a Chatwoot account/inbox; every step is idempotent and resumable from a partial failure (`unica/admin/internal/identity/tenants_onboarding.go`).
 - **Two-tier RBAC** — exactly two roles, `admin` (runs the platform) and `user` (owns exactly one tenant); tenant isolation is enforced server-side from the JWT, not just hidden in the UI (`unica/admin/internal/rbac/roles.go`).
 
@@ -100,15 +100,25 @@ Environment variables actually read in code (`os.Getenv` / `envOrDefault`), grou
 | `DIFY_ADMIN_URL` / `DIFY_ADMIN_EMAIL` / `DIFY_ADMIN_PASSWORD` | admin | — | Dify console credentials used for onboarding/provisioning |
 | `DIFY_API_BASE_URL` | admin/router | `http://dify:5001/v1` | Dify service API root |
 | `DIFY_DATASET_API_KEY` | admin | empty | dataset-scope key; self-serve knowledge base returns 503 without it |
-| `DIFY_INDEXING_TECHNIQUE` | admin | `high_quality` | `economy` required when the model provider offers no embeddings |
+| `DIFY_INDEXING_TECHNIQUE` | admin | `high_quality` | `economy` required when the model provider offers no embeddings. **Seed only** — see below |
 | `CHATWOOT_BASE_URL` / `CHATWOOT_PLATFORM_TOKEN` / `CHATWOOT_WEBHOOK_URL` | admin | empty | Chatwoot step of onboarding; skips (not fails) when unset |
 | `ACEST_KB_URL` / `ACEST_KB_TOKEN` | router | empty (disabled) | optional acest dual knowledge base |
 | `ACEST_RECALL_TIMEOUT` / `ACEST_RECALL_TOP_K` | router | `2s` / `3` | recall budget / snippets injected per store |
-| `INTENT_TRIAGE` | router | `off` | pre-LLM intent triage: `off` / `shadow` / `on` |
-| `SCENE_MODE` | router | `off` | pre/post-sales tone injection: `off` / `shadow` / `on` |
+| `INTENT_TRIAGE` | router | `shadow` | pre-LLM intent triage: `off` / `shadow` / `on`. **Seed only** — see below |
+| `SCENE_MODE` | router | `shadow` | pre/post-sales tone injection: `off` / `shadow` / `on`. **Seed only** — see below |
+| `SWITCH_POLL_INTERVAL` | router | `10s` | how often the router re-reads the stored switches, i.e. how long a console change takes to reach it |
 | `ONTOLOGY_ENABLED` | router | `true` | ontology master switch; per-tenant opt-in still required |
 | `PARTITION_MONTHS_AHEAD` / `PARTITION_CHECK_INTERVAL` | router | `3` / `24h` | monthly partition auto-provisioning |
 | `JWT_SECRET` | admin | `change-me-in-production` | back office + portal auth signing key |
+
+**Seed-only variables.** `INTENT_TRIAGE`, `SCENE_MODE` and `DIFY_INDEXING_TECHNIQUE` are read
+from the environment exactly once, on a first start that finds nothing stored: the value seeds a
+row in `platform_settings` (`unica/router/migrations/022_platform_settings.sql`) and the platform
+console owns it from then on. Changing them later in a deployment file has no effect — the router
+re-reads the table every `SWITCH_POLL_INTERVAL`, so a switch moves without a restart. A variable
+left set to something the table disagrees with is not silently obeyed or silently dropped: the
+router names it in `GET /configz` under `env_shadowed` and the console says to remove it
+(`unica/pkg/platformsettings`, `unica/router/internal/routing/switches.go`).
 
 ## API overview
 
@@ -131,7 +141,7 @@ Passing tests are not the same as verified behavior. [`doc/unverified.md`](doc/u
 
 - **Register, don't hide, unverified work.** New capabilities that can't be verified at merge time must get an entry in `doc/unverified.md` before or with the merge, and confirmed defects go in `doc/known-defects.md` with a `file:line` pointer — both files are pruned once the entry is actually verified or fixed, not left to rot.
 - **Migrations are numbered and idempotent** (`unica/router/migrations/NNN_*.sql`); each must replay cleanly on an already-migrated database.
-- **Flags default to off / shadow.** `SCENE_MODE`, `INTENT_TRIAGE`, ontology `validation` and the breaker all ship inert until explicitly turned on per tenant, so an upgrade never silently changes existing behavior.
+- **Flags default to off / shadow.** `SCENE_MODE`, `INTENT_TRIAGE`, ontology `validation` and the breaker all ship without changing observable behavior, so an upgrade never silently changes what customers see. The first two are platform-wide and live in `platform_settings`, changed from the console and picked up without a restart; ontology `validation` and the breaker are opted into per tenant.
 - Every module has its own `go.mod`; `unica/go.work` ties gateway/router/admin/reporter/pkg together for local development, but CI builds each module standalone (see the matrix in `.github/workflows/ci.yml`).
 
 ## Related projects

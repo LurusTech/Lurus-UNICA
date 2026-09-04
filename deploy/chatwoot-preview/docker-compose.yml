@@ -91,6 +91,10 @@ services:
       # "high_quality" needs an embedding model configured in the Dify
       # workspace; a deployment whose model provider has no embeddings (e.g.
       # DeepSeek-only) must set "economy" or every knowledge upload is refused.
+      #
+      # Read only on a first start that finds nothing stored: it seeds the
+      # platform_settings row and the platform console owns the value from
+      # then on. Changing it here later does not change what is in force.
       DIFY_INDEXING_TECHNIQUE: "${DIFY_INDEXING_TECHNIQUE:-high_quality}"
       # Chatwoot deployment onboarding provisions tenants in, reached inside the
       # compose network so no public hop is involved.

@@ -110,7 +110,7 @@ func newWiringRouter(t *testing.T, store *fakeConvStore, dify *fakeDify, routeCf
 		routeCache:    &fakeRoutes{cfg: routeCfg},
 		convLock:      NewConvLock(rc),
 		evaluator:     guardrail.NewEvaluator(),
-		triageMode:    guardrail.TriageOff,
+		switches:      StaticSwitches(guardrail.TriageOff, DefaultSceneMode),
 		breaker:       domain.NewBreaker(),
 		consumerGroup: "test-group",
 		consumerName:  "test-consumer",
@@ -278,7 +278,7 @@ func TestProcessMessage_SceneInjection(t *testing.T) {
 		store := &fakeConvStore{convID: "conv-scene-1", state: state.StatePending}
 		dify := &fakeDify{answer: "好的"}
 		r, _ := newWiringRouter(t, store, dify, &RouteConfig{ProductLineID: "pl-1"}, nil)
-		r.sceneMode = SceneOn
+		r.switches = StaticSwitches(r.switches.Triage(), SceneOn)
 
 		r.processMessage(context.Background(), inboundEntry(t, "10", "这两款哪个更值得买"), 0)
 		store.state = state.StatePending
@@ -305,7 +305,7 @@ func TestProcessMessage_SceneInjection(t *testing.T) {
 		store := &fakeConvStore{convID: "conv-scene-3", state: state.StatePending}
 		dify := &fakeDify{answer: "好的"}
 		r, _ := newWiringRouter(t, store, dify, &RouteConfig{ProductLineID: "pl-1"}, nil)
-		r.sceneMode = SceneShadow
+		r.switches = StaticSwitches(r.switches.Triage(), SceneShadow)
 
 		r.processMessage(context.Background(), inboundEntry(t, "12", "这个多少钱"), 0)
 
@@ -326,7 +326,7 @@ func TestProcessMessage_SceneStageIsSticky(t *testing.T) {
 	// convID echo makes recordJudgement persist the session (and the stage).
 	dify := &fakeDify{answer: "好的", convID: "dify-conv-1"}
 	r, _ := newWiringRouter(t, store, dify, &RouteConfig{ProductLineID: "pl-1"}, nil)
-	r.sceneMode = SceneOn
+	r.switches = StaticSwitches(r.switches.Triage(), SceneOn)
 
 	r.processMessage(context.Background(), inboundEntry(t, "20", "我买的杯子碎了"), 0)
 	store.state = state.StatePending

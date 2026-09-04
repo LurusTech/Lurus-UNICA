@@ -3,6 +3,7 @@ package aisettings
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,8 +15,10 @@ import (
 
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
+	"github.com/kefu/unica/admin/internal/capability"
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
+	"github.com/kefu/unica/pkg/difyapp"
 )
 
 // fakeProductLines is an in-memory productLines. Writes land back in configJSON
@@ -480,5 +483,144 @@ func TestHandler_ScopeForbidden(t *testing.T) {
 	}
 	if pls.writtenKey != "" {
 		t.Error("an out-of-scope request wrote to the tenant's config")
+	}
+}
+
+// --- the platform's half of the indexing story -----------------------------
+
+// fakeCapabilities is a capability list a test can dictate, so the narrowing
+// below is tested without standing up the real probe's dependencies.
+type fakeCapabilities struct{ list []capability.Capability }
+
+func (f *fakeCapabilities) List(context.Context) []capability.Capability { return f.list }
+
+// A tenant can already see how their own knowledge base is indexed. What they
+// could not see is what the platform will index the *next* document with — and
+// only the two together say whether an upload will ever be retrievable. When
+// they disagree the upload succeeds, the indexing succeeds, every query comes
+// back empty, and no error is raised anywhere.
+func TestKnowledgeStatus_ReportsWhatNewDocumentsWillBeIndexedWith(t *testing.T) {
+	technique := difyapp.IndexingEconomy
+	h := NewHandler(Config{
+		ProductLines:      &fakeProductLines{},
+		IndexingTechnique: func(context.Context) string { return technique },
+	})
+
+	st := h.knowledgeStatusOf(context.Background(), "", "")
+	if st.PlatformIndexingTechnique != difyapp.IndexingEconomy {
+		t.Fatalf("platform technique = %q, want economy", st.PlatformIndexingTechnique)
+	}
+
+	// An administrator moves the platform switch. The page must follow without
+	// a restart, or it goes on stating a technique that is no longer used.
+	technique = difyapp.IndexingHighQuality
+	st = h.knowledgeStatusOf(context.Background(), "", "")
+	if st.PlatformIndexingTechnique != difyapp.IndexingHighQuality {
+		t.Errorf("platform technique = %q after the console changed it, want high_quality",
+			st.PlatformIndexingTechnique)
+	}
+
+	body, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"platform_indexing_technique":"high_quality"`) {
+		t.Errorf("the field the page reads is not in the payload: %s", body)
+	}
+}
+
+// Dify accepts two techniques and the upload path turns anything else into
+// high_quality before it sends a document. This page has to report what that
+// path will actually do, so an unwired or unreadable resolver answers the same
+// way rather than leaving the field blank while uploads quietly proceed.
+func TestKnowledgeStatus_PlatformTechniqueFallsBackToHighQuality(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resolver func(context.Context) string
+	}{
+		{"nil resolver", nil},
+		{"empty answer", func(context.Context) string { return "" }},
+		{"unknown value", func(context.Context) string { return "medium" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHandler(Config{ProductLines: &fakeProductLines{}, IndexingTechnique: tc.resolver})
+			st := h.knowledgeStatusOf(context.Background(), "", "")
+			if st.PlatformIndexingTechnique != difyapp.IndexingHighQuality {
+				t.Errorf("platform technique = %q, want high_quality", st.PlatformIndexingTechnique)
+			}
+		})
+	}
+}
+
+// Owner names the process an operator has to go and change. A tenant owns
+// neither process, so the field would only tell them to file a ticket in a
+// vocabulary they do not have — and it exposes the platform's internal layout
+// to every tenant that opens the page.
+func TestTenantCapabilities_LeaveOutTheOwner(t *testing.T) {
+	h := NewHandler(Config{
+		ProductLines: &fakeProductLines{},
+		Capabilities: &fakeCapabilities{list: []capability.Capability{{
+			Key:    "knowledge_management",
+			Title:  "知识库管理",
+			State:  capability.StateOff,
+			Reason: "全平台租户的知识库管理已禁用",
+			Owner:  capability.OwnerAdmin,
+		}}},
+	})
+
+	got := h.tenantCapabilities(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("capabilities = %+v, want the one the probe reported", got)
+	}
+	if got[0].Key != "knowledge_management" || got[0].State != capability.StateOff || got[0].Reason == "" {
+		t.Errorf("the tenant lost part of the answer: %+v", got[0])
+	}
+	body, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "owner") {
+		t.Errorf("owner reached the tenant payload: %s", body)
+	}
+}
+
+// No probe is not the same as nothing disabled. An empty list would render as
+// "everything works here", which is a claim a handler with no source for it
+// must not make.
+func TestTenantCapabilities_AbsentWithoutAProbe(t *testing.T) {
+	h := NewHandler(Config{ProductLines: &fakeProductLines{}})
+	if got := h.tenantCapabilities(context.Background()); got != nil {
+		t.Errorf("capabilities = %+v, want nothing at all", got)
+	}
+}
+
+// The fourth section of the tenant settings page explains why controls above it
+// are disabled, and it reads exactly these four fields. They are pinned here
+// because narrowing the runtime block would not break any build — it would just
+// leave that section quietly blank.
+func TestRuntimeStatus_CarriesWhatTheTenantPageExplainsItselfWith(t *testing.T) {
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/configz" {
+			t.Errorf("unexpected router path %s", r.URL.Path)
+		}
+		io.WriteString(w, `{"intent_triage":"shadow","scene_mode":"on","ontology_enabled":true,"idle_timeout":"30m"}`)
+	}))
+	defer router.Close()
+
+	h := NewHandler(Config{ProductLines: &fakeProductLines{}, Router: bridge.NewRouterBridge(router.URL)})
+
+	body, err := json.Marshal(h.runtimeStatus(context.Background()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"available":true`,
+		`"ontology_enabled":true`,
+		`"intent_triage":"shadow"`,
+		`"scene_mode":"on"`,
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("runtime is missing %s: %s", want, body)
+		}
 	}
 }

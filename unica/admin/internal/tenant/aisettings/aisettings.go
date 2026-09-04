@@ -22,6 +22,7 @@ import (
 
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
+	"github.com/kefu/unica/admin/internal/capability"
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/admin/internal/routecache"
@@ -100,27 +101,54 @@ type Config struct {
 	// that repair then answers that this deployment has no provisioning to call,
 	// which is better than a button that appears to work.
 	Provisioner knowledgeProvisioner
+	// IndexingTechnique resolves the technique the platform creates *new*
+	// knowledge documents with. It is a function because an administrator can
+	// change it from the console while this process runs; a value captured at
+	// startup would have this page reporting the previous one indefinitely,
+	// which is worse than reporting nothing at all. Nil is tolerated and reads
+	// as the high-quality default — see platformIndexingTechnique.
+	//
+	// The resolution belongs to whoever wires this handler. This package must
+	// not read the environment or the settings store itself: a tenant page that
+	// grew its own source of platform truth is how two surfaces come to state
+	// two different platform techniques.
+	IndexingTechnique func(context.Context) string
+	// Capabilities lists what this deployment has switched off. Nil is
+	// tolerated and the section is then simply absent. It is shared with the
+	// platform console rather than re-derived here, for the same reason as
+	// above: one probe, one answer.
+	Capabilities capabilityProbe
+}
+
+// capabilityProbe is the capability list, taken as an interface so this package
+// depends on the shape of the answer rather than on how it is produced.
+type capabilityProbe interface {
+	List(ctx context.Context) []capability.Capability
 }
 
 // Handler serves the ai-settings sub-resource of a tenant.
 type Handler struct {
-	pls            productLines
-	dify           *bridge.DifyBridge
-	routeCache     *routecache.Invalidator
-	router         *bridge.RouterBridge
-	promptVersions promptVersions
-	provisioner    knowledgeProvisioner
+	pls               productLines
+	dify              *bridge.DifyBridge
+	routeCache        *routecache.Invalidator
+	router            *bridge.RouterBridge
+	promptVersions    promptVersions
+	provisioner       knowledgeProvisioner
+	indexingTechnique func(context.Context) string
+	capabilities      capabilityProbe
 }
 
 // NewHandler creates an AI settings handler.
 func NewHandler(cfg Config) *Handler {
 	return &Handler{
-		pls:            cfg.ProductLines,
-		dify:           cfg.Dify,
-		routeCache:     routecache.New(cfg.Redis, cfg.Channels),
-		router:         cfg.Router,
-		promptVersions: cfg.PromptVersions,
-		provisioner:    cfg.Provisioner,
+		pls:               cfg.ProductLines,
+		dify:              cfg.Dify,
+		routeCache:        routecache.New(cfg.Redis, cfg.Channels),
+		router:            cfg.Router,
+		promptVersions:    cfg.PromptVersions,
+		provisioner:       cfg.Provisioner,
+		indexingTechnique: cfg.IndexingTechnique,
+		capabilities:      cfg.Capabilities,
 	}
 }
 
@@ -147,6 +175,18 @@ type settingsResponse struct {
 	// the index its documents were built with, answers every query with nothing
 	// while reporting itself healthy.
 	Knowledge *knowledgeStatus `json:"knowledge,omitempty"`
+	// Capabilities is what this deployment has not enabled, in the tenant's
+	// half of the platform's list: key, title, state and the consequence. A
+	// feature switched off platform-wide simply disappears from this tenant's
+	// interface, and until now the page it disappeared from said nothing — the
+	// tenant was left to conclude they had done something wrong, or that the
+	// product was broken.
+	//
+	// Owner is deliberately not carried across. It names the process an
+	// operator must go and change, which a tenant cannot do and cannot act on;
+	// including it would only invite a support request phrased in a vocabulary
+	// nobody on the tenant side owns.
+	Capabilities []tenantCapability `json:"capabilities,omitempty"`
 	// Runtime is the narrow slice of platform switches a tenant needs in order
 	// to explain what it sees. The master switches decide whether settings on
 	// this page have any effect, so withholding them would leave a tenant
@@ -280,6 +320,32 @@ type knowledgeStatus struct {
 	SearchMethod      string `json:"search_method,omitempty"`
 	TopK              int    `json:"top_k,omitempty"`
 	Reason            string `json:"reason,omitempty"`
+	// PlatformIndexingTechnique is what the platform will index the *next*
+	// document with, and it is here so that it can be read beside
+	// IndexingTechnique above, which is what this dataset's existing documents
+	// were actually built with.
+	//
+	// The pair is the point. Either value alone looks fine; their disagreement
+	// is a knowledge base whose uploads succeed, whose indexing completes, and
+	// whose every query then returns nothing with no error anywhere — because
+	// documents indexed one way cannot be found by the search method the other
+	// way requires. Nobody could see that before, because only half of it was
+	// ever reported on one page.
+	PlatformIndexingTechnique string `json:"platform_indexing_technique,omitempty"`
+}
+
+// tenantCapability is one platform capability as a tenant may see it.
+//
+// It is a separate type from capability.Capability, rather than that type with
+// a tag added, because the difference is not cosmetic: Owner must not reach a
+// tenant, and a field dropped by convention is a field that comes back the
+// next time someone extends the struct upstream. Narrowing here makes the
+// omission structural.
+type tenantCapability struct {
+	Key    string `json:"key"`
+	Title  string `json:"title"`
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type runtimeStatus struct {
@@ -703,6 +769,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request, pl *reposi
 		Variables:       variables,
 		Knowledge:       h.knowledgeStatus(r.Context(), pl),
 		Runtime:         h.runtimeStatus(r.Context()),
+		Capabilities:    h.tenantCapabilities(r.Context()),
 		PromptContract:  contract,
 	})
 }
@@ -1302,13 +1369,23 @@ func (h *Handler) knowledgeStatus(ctx context.Context, pl *repository.ProductLin
 // by a record, so a repair can report on the dataset it created a moment ago
 // instead of on the row it read before creating it.
 func (h *Handler) knowledgeStatusOf(ctx context.Context, appID, datasetID string) *knowledgeStatus {
+	// Resolved once for either branch. A line with no dataset still shows the
+	// platform's technique: it is what its first upload will be indexed with,
+	// and it is a platform fact rather than a property of a dataset that does
+	// not exist yet.
+	platformTechnique := h.platformIndexingTechnique(ctx)
 	if datasetID == "" {
 		return &knowledgeStatus{
-			DatasetBound: false,
-			Reason:       "本产线没有知识库数据集，上传的文档无处可去，检索恒空",
+			DatasetBound:              false,
+			PlatformIndexingTechnique: platformTechnique,
+			Reason:                    "本产线没有知识库数据集，上传的文档无处可去，检索恒空",
 		}
 	}
-	st := &knowledgeStatus{DatasetBound: true, DatasetID: datasetID}
+	st := &knowledgeStatus{
+		DatasetBound:              true,
+		DatasetID:                 datasetID,
+		PlatformIndexingTechnique: platformTechnique,
+	}
 
 	// Every unmet condition is collected rather than the first one reported: a
 	// line can be missing the attachment *and* carrying a mismatched search
@@ -1388,11 +1465,54 @@ func derefID(p *string) string {
 	return *p
 }
 
+// platformIndexingTechnique is the technique new documents will be created
+// with.
+//
+// An unwired or empty resolver answers high_quality rather than an empty
+// string, because that is what the upload path itself falls back to: Dify
+// accepts only two techniques, and the knowledge handler turns anything else
+// into high_quality before it sends the document. Reporting nothing here while
+// uploads quietly proceed as high_quality would hide precisely the
+// disagreement this field was added to expose.
+func (h *Handler) platformIndexingTechnique(ctx context.Context) string {
+	if h.indexingTechnique == nil {
+		return difyapp.IndexingHighQuality
+	}
+	if technique := h.indexingTechnique(ctx); technique == difyapp.IndexingEconomy {
+		return technique
+	}
+	return difyapp.IndexingHighQuality
+}
+
+// tenantCapabilities is the platform's capability list with Owner removed.
+//
+// Nil when no probe is wired, which leaves the section out of the response
+// entirely — an empty list would read as "everything is enabled", which is a
+// claim this handler is in no position to make.
+func (h *Handler) tenantCapabilities(ctx context.Context) []tenantCapability {
+	if h.capabilities == nil {
+		return nil
+	}
+	all := h.capabilities.List(ctx)
+	out := make([]tenantCapability, 0, len(all))
+	for _, c := range all {
+		out = append(out, tenantCapability{Key: c.Key, Title: c.Title, State: c.State, Reason: c.Reason})
+	}
+	return out
+}
+
 // runtimeStatus narrows the router's switches to the ones a tenant can act on.
 func (h *Handler) runtimeStatus(ctx context.Context) *runtimeStatus {
 	sw, err := h.router.Switches(ctx)
 	if err != nil {
-		return &runtimeStatus{Available: false, Reason: err.Error()}
+		// The error itself does not travel. A transport failure carries the
+		// request URL, and that URL is this deployment’s internal router
+		// address — a tenant has no use for it and no business seeing it.
+		// What a tenant needs is that this is a platform-side fault rather
+		// than a setting of theirs, and that nothing here is being guessed.
+		// The verbatim cause is on the platform page, where it can be acted on.
+		return &runtimeStatus{Available: false,
+			Reason: "读不到平台的运行状态（平台侧故障，不是本租户的设置）。这里不拿默认值顶替：一个看着合理的错值，会被当成消息真正在按的设定。"}
 	}
 	return &runtimeStatus{
 		Available:       true,

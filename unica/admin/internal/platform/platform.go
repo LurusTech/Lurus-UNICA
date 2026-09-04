@@ -1,20 +1,28 @@
 // Package platform answers what this deployment is set to, for an operator who
 // would otherwise need a shell on the router host to find out.
 //
-// Most of it is read-only, and deliberately so: the values come from two places
-// that cannot be written through an API at all. The switches are the router's
-// environment, which changes when the router restarts; the rest are constants
+// Part of it is read-only, and deliberately so: those values are constants
 // compiled into these binaries, which change when a version ships. An interface
-// that let either be edited would be offering a control that ends at the next
+// that let them be edited would be offering a control that ends at the next
 // deploy.
 //
-// The model is the exception, and it is the reason this file is no longer
-// read-only. It used to be a compiled constant like the others, which meant
+// The rest has moved out of that category one value at a time, and each move
+// had the same reason. The model used to be a compiled constant, which meant
 // changing the model everyone answers with was a release — and the release could
 // not be checked against the provider it was aimed at until it was already out.
-// It now has a stored authority behind it, so the section that reports it says
-// which tier it came from rather than calling it a constant, and the write that
-// changes it is verified against Dify before anything is stored.
+// The behaviour switches and the indexing technique used to be the router's and
+// this service's environment, which meant a grading decision cost a restart of
+// the process that was carrying live conversations. All three now have a stored
+// authority behind them: the section that reports each one says where it came
+// from rather than calling it a constant, and the write that changes it goes
+// through this file.
+//
+// What the switches keep that the model does not is a delay. They are stored
+// here and polled by the router, so for up to one poll interval the table and
+// the process disagree — which is why this page reports the stored value and
+// the router's live value side by side rather than picking one. A single
+// number there would be right most of the time and unfalsifiable exactly when
+// an operator is asking whether their save worked.
 //
 // The division matters more than the contents. A value's source decides how it
 // changes and who can change it, so each one is reported with its source rather
@@ -26,6 +34,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -34,11 +43,13 @@ import (
 	"github.com/kefu/unica/admin/internal/audit"
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
+	"github.com/kefu/unica/admin/internal/capability"
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/admin/internal/tenant/knowledge"
 	"github.com/kefu/unica/pkg/difyapp"
 	"github.com/kefu/unica/pkg/guardrail"
+	"github.com/kefu/unica/pkg/platformsettings"
 	"github.com/kefu/unica/pkg/survey"
 )
 
@@ -46,6 +57,54 @@ import (
 type SwitchReader interface {
 	Switches(ctx context.Context) (*bridge.RuntimeSwitches, error)
 }
+
+// switchInvalidator drops whatever mirror of the router's state a reader is
+// holding. It is a separate interface, and asserted for rather than required,
+// because reading the router and caching the read are two different
+// capabilities: a test stub has the first and no use for the second, and a
+// deployment with no router address has neither.
+//
+// The write path uses it for one reason. A saved switch lands in the database
+// and the router picks it up on its own poll, but the bridge's cache knows
+// about neither, so the page that answers the save would keep quoting the value
+// the operator just replaced — and a save that appears not to have taken is a
+// save that gets made twice.
+type switchInvalidator interface {
+	Invalidate()
+}
+
+// settingsStore is the stored authority for the platform switches: what is in
+// the table now, and the write that changes it.
+//
+// Seed is deliberately absent even though the store has it. Seeding is a
+// startup act — the one say a process's environment variable gets, before
+// anyone is looking at this page — and an endpoint that could seed would be
+// able to write a row while calling its source "the environment". The wiring
+// seeds; this handler only ever writes with SourceConsole.
+type settingsStore interface {
+	Load(ctx context.Context, keys ...string) (map[string]platformsettings.Setting, error)
+	Set(ctx context.Context, key, value, source, updatedBy, note string) error
+}
+
+// capabilityProbe reports which platform-wide capabilities this deployment
+// actually has. The page carries the list beside the settings because the two
+// answer one question together: a knowledge setting is not worth reading on a
+// deployment where knowledge management is switched off entirely.
+type capabilityProbe interface {
+	List(ctx context.Context) []capability.Capability
+}
+
+// auditResourcePlatformSetting marks a stored platform switch being written.
+// The model resource names live in models.go beside each other for the reason
+// given there; this one is here because this is the only file that writes it.
+// audit_logs.resource_type is free text with no CHECK, so it needs no
+// migration — unlike the action verb, which is a closed vocabulary and is why
+// every row below says "update" rather than a word that fits better.
+const auditResourcePlatformSetting = "platform_setting"
+
+// switchBodyLimit is generous for three short enum values, a boolean and a
+// note, and small enough that a stray upload is refused rather than buffered.
+const switchBodyLimit = 8 << 10
 
 // settingsModelStore is the platform tier of the model authority: what is in
 // force now, and the write that changes it. Deliberately narrower than the
@@ -121,16 +180,43 @@ type SettingsConfig struct {
 	Console consoleSessionMinter
 	// Audit may be nil, which disables the trail. The live wiring always sets it.
 	Audit settingsAudit
+	// Settings is the stored switch authority. Nil disables the switch write
+	// and is reported as switches_editable:false, so the page can leave the
+	// controls out instead of offering a save that answers 503.
+	Settings settingsStore
+	// IndexingTechnique resolves the indexing technique this deployment creates
+	// datasets with right now: the stored row if there is one, the environment
+	// seed otherwise.
+	//
+	// It is a function supplied by the wiring rather than a value or a config
+	// read of our own, and both halves of that matter. A value would be
+	// captured at construction and go stale the moment an administrator changed
+	// it from this very page. Reading the configuration here would make this
+	// package the second place that decides how the environment and the table
+	// rank against each other, and the day the two answers differed the page
+	// would confidently contradict the datasets being created.
+	//
+	// Nil falls back to the shipped default, which is the honest answer for a
+	// handler that was given no deployment configuration at all.
+	IndexingTechnique func(context.Context) string
+	// Capabilities may be nil, which omits the list rather than publishing an
+	// empty one: "nothing is disabled" and "nobody looked" are different
+	// answers, and only one of them is reassuring.
+	Capabilities capabilityProbe
 }
 
-// Handler serves GET /api/v1/platform/settings and PUT /api/v1/platform/model.
+// Handler serves GET /api/v1/platform/settings, PUT /api/v1/platform/model and
+// PUT /api/v1/platform/switches.
 type Handler struct {
-	router SwitchReader
-	models settingsModelStore
-	lines  settingsLines
-	dify    settingsPinner
-	console consoleSessionMinter
-	audit   settingsAudit
+	router   SwitchReader
+	models   settingsModelStore
+	lines    settingsLines
+	dify     settingsPinner
+	console  consoleSessionMinter
+	audit    settingsAudit
+	settings settingsStore
+	indexing func(context.Context) string
+	caps     capabilityProbe
 }
 
 // NewHandler creates a read-only platform settings handler.
@@ -148,13 +234,34 @@ func NewHandler(router SwitchReader) *Handler {
 // model write needs.
 func NewSettingsHandler(cfg SettingsConfig) *Handler {
 	return &Handler{
-		router: cfg.Router,
-		models: cfg.Models,
-		lines:  cfg.ProductLines,
-		dify:    cfg.Dify,
-		console: cfg.Console,
-		audit:   cfg.Audit,
+		router:   cfg.Router,
+		models:   cfg.Models,
+		lines:    cfg.ProductLines,
+		dify:     cfg.Dify,
+		console:  cfg.Console,
+		audit:    cfg.Audit,
+		settings: cfg.Settings,
+		indexing: cfg.IndexingTechnique,
+		caps:     cfg.Capabilities,
 	}
+}
+
+// indexingTechnique is the technique this deployment creates datasets with at
+// this moment. Everything on the page that describes retrieval is derived from
+// this one call, so that the technique, the search method it implies and the
+// roster beside them cannot disagree with each other.
+func (h *Handler) indexingTechnique(ctx context.Context) string {
+	if h.indexing == nil {
+		return difyapp.IndexingHighQuality
+	}
+	if technique := h.indexing(ctx); technique != "" {
+		return technique
+	}
+	// A resolver that answers with nothing has failed to resolve, and an empty
+	// technique means something specific elsewhere — a Dify dataset that has no
+	// documents yet and therefore no technique. Passing it on would put that
+	// third state where a platform default belongs.
+	return difyapp.IndexingHighQuality
 }
 
 // runtimeSection is the router's own state. It is reported as unavailable
@@ -190,11 +297,49 @@ type sceneStrategy struct {
 
 // knowledgeDefaults are the two decisions that bound what retrieval can ever
 // return: how a document is cut up, and how the pieces are searched.
+//
+// IndexingTechnique is the value in force, not a constant. It used to be the
+// latter, and that was a defect with teeth: a deployment configured for economy
+// was shown high_quality and semantic search, which is the exact opposite of
+// what its datasets were being built with, on the one page an operator consults
+// to find out. The two below it are derived from it for the same reason — a
+// search method that does not follow from the technique returns nothing and
+// reports no error.
 type knowledgeDefaults struct {
 	IndexingTechnique string                 `json:"indexing_technique"`
 	SearchMethod      string                 `json:"search_method"`
 	TopK              int                    `json:"top_k"`
 	ProcessRule       map[string]interface{} `json:"process_rule"`
+	// IndexingStored is the row behind the value, absent when there is none.
+	// Its absence is the difference between "an administrator chose this" and
+	// "this is what the environment seeded and nobody has revisited".
+	IndexingStored *storedSetting `json:"indexing_stored,omitempty"`
+}
+
+// storedSetting is one row of platform_settings as the console renders it.
+//
+// Source is the field the page is built around: it separates a value an
+// administrator chose from one an environment variable seeded on some startup,
+// and those two invite opposite actions. The stored value travels beside the
+// router's live one rather than instead of it — they disagree for up to one
+// poll interval after every write, and a page showing only one of them cannot
+// tell "not picked up yet" from "not saved".
+type storedSetting struct {
+	Value     string    `json:"value"`
+	Source    string    `json:"source"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedBy string    `json:"updated_by,omitempty"`
+	Note      string    `json:"note,omitempty"`
+}
+
+func storedSettingOf(s platformsettings.Setting) storedSetting {
+	return storedSetting{
+		Value:     s.Value,
+		Source:    s.Source,
+		UpdatedAt: s.UpdatedAt,
+		UpdatedBy: s.UpdatedBy,
+		Note:      s.Note,
+	}
 }
 
 // platformModelSection is the model every product line inherits, reported
@@ -232,6 +377,25 @@ type settingsResponse struct {
 	Runtime  runtimeSection       `json:"runtime"`
 	Model    platformModelSection `json:"model"`
 	Compiled compiledSection      `json:"compiled"`
+	// StoredSwitches is what the table holds, keyed by setting key, with only
+	// the keys that have a row. It is deliberately not merged into Runtime:
+	// Runtime is what the router is routing by this second, this is what the
+	// database says it should be, and the whole value of showing both is that
+	// an operator can see the gap between a save and its effect.
+	StoredSwitches map[string]storedSetting `json:"stored_switches,omitempty"`
+	// SwitchesEditable says whether the write is wired at all, so a page can
+	// render the switches read-only instead of offering a save that answers
+	// 503.
+	SwitchesEditable bool `json:"switches_editable"`
+	// Capabilities is what this deployment cannot do, listed rather than left
+	// to be discovered through an empty screen somewhere else.
+	Capabilities []capability.Capability `json:"capabilities,omitempty"`
+	// StoredSwitchesError is why StoredSwitches is missing, when it is missing
+	// because the table could not be read rather than because nothing was ever
+	// stored. Without it the two are the same empty object on the wire, and a
+	// page would render an unreadable table as "never set" — which is this
+	// repository's one recurring bug wearing a new hat.
+	StoredSwitchesError string `json:"stored_switches_error,omitempty"`
 }
 
 // Handle answers with the deployment's settings. Administrator only: these are
@@ -246,17 +410,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime := runtimeSection{}
-	if h.router == nil {
-		runtime.Reason = "router address not configured"
-	} else if switches, err := h.router.Switches(r.Context()); err != nil {
-		log.Printf("[platform] runtime switches unavailable: %v", err)
-		runtime.Reason = err.Error()
-	} else {
-		runtime.Available = true
-		runtime.Switches = switches
-	}
-
+	ctx := r.Context()
 	strategies := make([]sceneStrategy, 0, len(difyapp.Stages()))
 	for _, stage := range difyapp.Stages() {
 		strategies = append(strategies, sceneStrategy{Stage: stage, Text: difyapp.StrategyFor(stage)})
@@ -264,14 +418,22 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// The retrieval defaults are asked for by indexing technique, so they are
 	// reported for the technique this deployment actually creates datasets
-	// with. Reporting the other one would describe a deployment nobody is on.
-	retrieval := difyapp.RetrievalModel(difyapp.IndexingHighQuality)
+	// with. Reporting the other one would describe a deployment nobody is on —
+	// which is exactly what this did while the technique was a constant here:
+	// an economy deployment was shown high_quality and semantic search, the
+	// opposite of what it was building, on the page an operator opens to check.
+	// One read, used for both the value and the row behind it. Asking twice
+	// would let a save landing between the two answers describe the technique
+	// with one value and its provenance with another, on the very page whose
+	// job is to show what is actually in force.
+	stored, storedErr := h.storedSettings(ctx)
+	technique := h.indexingTechniqueFrom(ctx, stored)
+	retrieval := difyapp.RetrievalModel(technique)
 	method, _ := retrieval["search_method"].(string)
 	topK, _ := retrieval["top_k"].(int)
-
 	writeJSON(w, http.StatusOK, settingsResponse{
-		Runtime: runtime,
-		Model:   h.platformModel(r.Context()),
+		Runtime: h.runtime(ctx),
+		Model:   h.platformModel(ctx),
 		Compiled: compiledSection{
 			PromptTemplate:     difyapp.PromptTemplate(),
 			PromptRequirements: difyapp.PromptRequirements(),
@@ -279,13 +441,116 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			Guardrail:          guardrail.Defaults(),
 			Survey:             survey.Defaults(),
 			Knowledge: knowledgeDefaults{
-				IndexingTechnique: difyapp.IndexingHighQuality,
+				IndexingTechnique: technique,
 				SearchMethod:      method,
 				TopK:              topK,
 				ProcessRule:       knowledge.DefaultProcessRule(),
+				IndexingStored:    rowOf(stored, platformsettings.KeyIndexingTechnique),
 			},
 		},
+		StoredSwitches:      switchRows(stored),
+		StoredSwitchesError: errorText(storedErr),
+		SwitchesEditable:    h.settings != nil,
+		Capabilities:        h.capabilities(ctx),
 	})
+}
+
+// runtime reports what the router says it is running with, or why it could not
+// be asked. It is a method because the write path answers with the same section
+// the page does: an operator who has just moved a switch is asking the same
+// question as one who has just opened the page, and two shapes for one answer
+// is how a console comes to contradict itself.
+func (h *Handler) runtime(ctx context.Context) runtimeSection {
+	section := runtimeSection{}
+	if h.router == nil {
+		section.Reason = "router address not configured"
+		return section
+	}
+	switches, err := h.router.Switches(ctx)
+	if err != nil {
+		log.Printf("[platform] runtime switches unavailable: %v", err)
+		section.Reason = err.Error()
+		return section
+	}
+	section.Available = true
+	section.Switches = switches
+	return section
+}
+
+// storedSettings reads every stored setting, or nil when there is nothing to
+// read from.
+//
+// A failed read does not fail the page: this is what an operator opens when
+// something is wrong, and losing the prompt template, the strategies and the
+// model to an unavailable table would take the diagnosis away along with the
+// fault. What is lost is provenance, and the caller is told so — an empty map
+// with no error means nothing was ever stored, an empty map with one means the
+// question could not be asked, and those must not render the same.
+func (h *Handler) storedSettings(ctx context.Context) (map[string]platformsettings.Setting, error) {
+	if h.settings == nil {
+		return nil, nil
+	}
+	rows, err := h.settings.Load(ctx)
+	if err != nil {
+		log.Printf("[platform] stored switches unavailable: %v", err)
+		return nil, err
+	}
+	return rows, nil
+}
+
+// indexingTechniqueFrom prefers the row already in hand and only falls back to
+// the resolver — which would read the table a second time — when this read did
+// not produce the key.
+func (h *Handler) indexingTechniqueFrom(ctx context.Context, rows map[string]platformsettings.Setting) string {
+	if row, ok := rows[platformsettings.KeyIndexingTechnique]; ok && row.Value != "" {
+		return row.Value
+	}
+	return h.indexingTechnique(ctx)
+}
+
+// errorText renders an error for the wire, empty when there is none.
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// rowOf renders one stored row for the response, or nil when the key has none.
+func rowOf(rows map[string]platformsettings.Setting, key string) *storedSetting {
+	row, ok := rows[key]
+	if !ok {
+		return nil
+	}
+	out := storedSettingOf(row)
+	return &out
+}
+
+// switchRows is the two behaviour switches only. The indexing technique shares
+// the table but not the section: it belongs beside the retrieval settings it
+// decides, and listing it among the router's switches would suggest the router
+// reads it, which it does not.
+func switchRows(rows map[string]platformsettings.Setting) map[string]storedSetting {
+	out := make(map[string]storedSetting, 2)
+	for _, key := range []string{platformsettings.KeyIntentTriage, platformsettings.KeySceneMode} {
+		if row, ok := rows[key]; ok {
+			out[key] = storedSettingOf(row)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// capabilities lists what this deployment cannot do, or nothing at all when
+// there is no probe to ask. An empty list would read as "everything works",
+// which is a claim this handler is not in a position to make.
+func (h *Handler) capabilities(ctx context.Context) []capability.Capability {
+	if h.caps == nil {
+		return nil
+	}
+	return h.caps.List(ctx)
 }
 
 // platformModel resolves the model in force for the platform tier: the active
@@ -690,6 +955,262 @@ func (h *Handler) record(r *http.Request, resourceID string, plRef *string,
 		afterState["error"] = failure.Error()
 	}
 	h.audit.LogEvent(actorID, actorRole, "push", auditResourcePlatformModel, resourceID, plRef,
+		beforeState, afterState, audit.ExtractIP(r))
+}
+
+// switchWriteRequest moves one, two or three stored platform settings.
+//
+// Unlike the model write this one is a partial update, and deliberately: the
+// three settings are unrelated decisions that happen to share a table, and
+// requiring all of them would mean a form that changes the scene strategy has
+// to restate the indexing technique — which is how a value nobody meant to
+// touch gets rewritten by a stale page.
+//
+// The three are pointers so that "absent" and "empty" stay apart. An empty
+// string is not a legal value for any of them, so an explicit one is a caller's
+// mistake and is refused by name rather than silently read as "leave it alone".
+type switchWriteRequest struct {
+	IntentTriage      *string `json:"intent_triage"`
+	SceneMode         *string `json:"scene_mode"`
+	IndexingTechnique *string `json:"dify_indexing_technique"`
+	// AcknowledgeExistingNotMigrated must be set to change the indexing
+	// technique. Changing it does nothing to the documents already indexed —
+	// they keep the technique they were built with, and retrieval against them
+	// keeps working — but every new document goes in the other way, and a
+	// dataset searched with the method the other technique implies returns
+	// nothing at all and reports no error. There is no cheap reversible probe
+	// for that, so the confirmation is the check.
+	AcknowledgeExistingNotMigrated bool `json:"acknowledge_existing_not_migrated"`
+	// Note is stored on the row and copied into the trail, so a reader a month
+	// later knows why a switch moved.
+	Note string `json:"note,omitempty"`
+}
+
+// switchWriteResponse reports what happened per key.
+//
+// Changed and Failed are both present because the keys are written
+// independently: one key failing is not a reason to abandon the others, and a
+// single ok/error pair for a three-key request would leave the caller unable to
+// say which of the three is now in force.
+type switchWriteResponse struct {
+	OK      bool     `json:"ok"`
+	Changed []string `json:"changed"`
+	// Failed maps a key to why its write did not happen. Absent when all of
+	// them landed.
+	Failed map[string]string `json:"failed,omitempty"`
+	// Stored is read back from the table rather than echoed from the request,
+	// so the timestamps and the source are the row's own and not this handler's
+	// account of what it meant to write.
+	Stored map[string]storedSetting `json:"stored"`
+	// Effective is the router's live state, in the same shape the settings page
+	// gets. Right after a write it will still show the old values for up to one
+	// poll interval — that is the truth, and showing it is what lets a page say
+	// "saved, not picked up yet" instead of leaving a viewer to guess.
+	Effective runtimeSection `json:"effective"`
+	// PollInterval is how long that gap can last, taken from the router rather
+	// than assumed here: the router owns the ticker and this service must not
+	// state a number it does not set.
+	PollInterval string `json:"poll_interval,omitempty"`
+}
+
+// HandleSwitches answers PUT /api/v1/platform/switches: the settings that used
+// to be environment variables on the router and are now rows an administrator
+// can move without a restart.
+//
+// Administrator only, and validated before anything is written. The order of
+// the checks is what keeps a half-applied request from happening: every value
+// in the request is judged legal before the first one is stored, so a request
+// carrying one good key and one typo writes neither.
+//
+// After that point the keys are independent. A failure on one is recorded and
+// reported and the rest are still written, because they are separate decisions
+// and refusing the ones that would have worked helps nobody.
+func (h *Handler) HandleSwitches(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if h.settings == nil {
+		// 503 rather than 500: nothing failed, this deployment simply has no
+		// table behind these switches — it has not run migration 022, and the
+		// values it is running on came from the router's environment. Saying so
+		// is better than a save that appears to work.
+		errorJSON(w, http.StatusServiceUnavailable,
+			"这个部署没有接入平台设置存储，运行开关只能改 router 的环境变量后重启")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, switchBodyLimit)
+	var req switchWriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Collected in a fixed order rather than iterated from a map, so that a
+	// two-key request produces its two audit rows in the same order every time
+	// and a reader of the trail is not left wondering whether the sequence
+	// meant something.
+	type pendingWrite struct{ key, value string }
+	var pending []pendingWrite
+	for _, field := range []struct {
+		key   string
+		value *string
+	}{
+		{platformsettings.KeyIntentTriage, req.IntentTriage},
+		{platformsettings.KeySceneMode, req.SceneMode},
+		{platformsettings.KeyIndexingTechnique, req.IndexingTechnique},
+	} {
+		if field.value == nil {
+			continue
+		}
+		pending = append(pending, pendingWrite{key: field.key, value: strings.TrimSpace(*field.value)})
+	}
+	if len(pending) == 0 {
+		errorJSON(w, http.StatusBadRequest,
+			"没有要修改的设置项：请至少给出 intent_triage、scene_mode 或 dify_indexing_technique 之一")
+		return
+	}
+
+	for _, p := range pending {
+		if platformsettings.Valid(p.key, p.value) {
+			continue
+		}
+		// The legal values travel with the refusal. The database's CHECK would
+		// reject this too, but it would reject it as a constraint violation
+		// after a round trip, and a form that has to guess what it may send is
+		// a form that sends the wrong thing twice.
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   fmt.Sprintf("%s 不接受 %q 这个值", p.key, p.value),
+			"allowed": map[string][]string{p.key: platformsettings.AllowedValues(p.key)},
+		})
+		return
+	}
+	if req.IndexingTechnique != nil && !req.AcknowledgeExistingNotMigrated {
+		errorJSON(w, http.StatusBadRequest, "存量文档不会自动迁移，请确认")
+		return
+	}
+
+	ctx := r.Context()
+	actorID := ""
+	if claims := auth.GetClaims(ctx); claims != nil {
+		actorID = claims.UserID
+	}
+
+	// One read for every key's before-state, taken before the first write so
+	// that a second key's row is not read back after the first key changed it.
+	//
+	// A read failure does not stop the write, which is the opposite of what the
+	// model write does with the same failure, and the difference is the stake:
+	// there the old value is restored into a live Dify app, so not knowing it
+	// means not being able to undo. Here it is only the trail's before-state,
+	// and refusing an administrator's change because the previous value could
+	// not be quoted would be trading the thing they asked for against a record
+	// of it. The failure is named in the audit row instead.
+	before, loadErr := h.settings.Load(ctx)
+	if loadErr != nil {
+		log.Printf("[platform] switch write: previous values could not be read: %v", loadErr)
+	}
+
+	resp := switchWriteResponse{
+		Changed: []string{},
+		Stored:  map[string]storedSetting{},
+	}
+	for _, p := range pending {
+		err := h.settings.Set(ctx, p.key, p.value, platformsettings.SourceConsole, actorID, req.Note)
+		h.recordSwitch(r, p.key, p.value, before[p.key], loadErr, req.Note, err)
+		if err != nil {
+			log.Printf("[platform] switch write: %s -> %s failed: %v", p.key, p.value, err)
+			if resp.Failed == nil {
+				resp.Failed = map[string]string{}
+			}
+			resp.Failed[p.key] = err.Error()
+			continue
+		}
+		resp.Changed = append(resp.Changed, p.key)
+	}
+
+	if len(resp.Changed) > 0 {
+		// The rows have moved and the router has not heard yet. Dropping the
+		// bridge's cache means the runtime section below is at most one router
+		// poll behind, instead of one poll plus a whole cache window — the
+		// difference between a page that catches up while the operator watches
+		// and one that appears to have ignored the save.
+		if invalidator, ok := h.router.(switchInvalidator); ok {
+			invalidator.Invalidate()
+		}
+	}
+	if rows, err := h.settings.Load(ctx); err == nil {
+		for _, p := range pending {
+			if row, ok := rows[p.key]; ok {
+				resp.Stored[p.key] = storedSettingOf(row)
+			}
+		}
+	} else {
+		log.Printf("[platform] switch write: stored values could not be read back: %v", err)
+	}
+
+	resp.Effective = h.runtime(ctx)
+	if resp.Effective.Switches != nil {
+		resp.PollInterval = resp.Effective.Switches.SwitchPollInterval
+	}
+	resp.OK = len(resp.Failed) == 0
+
+	// A request where nothing at all landed is a failed request, whatever the
+	// body says. Answering 200 with ok:false would leave every caller that
+	// checks the status code — including a browser's own error handling —
+	// believing a change took effect that did not.
+	status := http.StatusOK
+	if len(resp.Changed) == 0 {
+		status = http.StatusInternalServerError
+	}
+	writeJSON(w, status, resp)
+}
+
+// recordSwitch writes one key's change to the trail, whether or not it landed.
+//
+// One row per key rather than one per request, for the reason the model push
+// gives: a single row for three keys records that something happened to the
+// platform's behaviour without saying what happened to any one switch, and
+// "what was intent triage set to on the 3rd" is the only question anyone brings
+// to this trail.
+//
+// The verb is "update" because audit_logs_action_check holds a closed
+// vocabulary and a word outside it is refused at insert time — the row would be
+// lost quietly rather than rejected loudly. resource_type has no such
+// constraint, so the scope is carried there.
+func (h *Handler) recordSwitch(r *http.Request, key, value string,
+	before platformsettings.Setting, loadErr error, note string, failure error) {
+
+	if h.audit == nil {
+		return
+	}
+	actorID, actorRole := "", ""
+	if claims := auth.GetClaims(r.Context()); claims != nil {
+		actorID, actorRole = claims.UserID, claims.Role
+	}
+
+	// An absent row leaves both fields empty, which is unambiguous: no legal
+	// value for any of these keys is the empty string, so "" here can only mean
+	// "there was nothing stored before this write".
+	beforeState := map[string]interface{}{"value": before.Value, "source": before.Source}
+	if loadErr != nil {
+		beforeState["error"] = loadErr.Error()
+	}
+
+	afterState := map[string]interface{}{
+		"ok":     failure == nil,
+		"value":  value,
+		"source": platformsettings.SourceConsole,
+		"note":   note,
+	}
+	if failure != nil {
+		afterState["error"] = failure.Error()
+	}
+	h.audit.LogEvent(actorID, actorRole, "update", auditResourcePlatformSetting, key, nil,
 		beforeState, afterState, audit.ExtractIP(r))
 }
 

@@ -18,6 +18,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kefu/unica/admin/internal/auth"
@@ -82,27 +83,79 @@ type Handler struct {
 	// Deploying without an embedding model is a decision about answer quality
 	// and belongs in the deployment's logs, not only in whoever set the
 	// variable's memory.
-	indexingTechnique string
+	//
+	// It is resolved per upload rather than held as a string, because the value
+	// is stored on the platform and an administrator can change it while this
+	// process runs. A handler that kept the value it was constructed with would
+	// go on indexing documents the old way until someone restarted the service,
+	// and nothing about the upload would say so. Nil is tolerated and means the
+	// high-quality default.
+	indexingTechnique func(context.Context) string
+
+	// techniqueMu guards lastTechnique, which exists only so the consequence of
+	// the value is stated once per change instead of once per upload. Uploads
+	// arrive concurrently, so the read-compare-write below has to be locked;
+	// nothing else depends on it.
+	techniqueMu   sync.Mutex
+	lastTechnique string
 }
 
 // NewHandler creates a knowledge handler. datasetAPIBaseURL is the Dify service
 // API root (the /v1 base) and datasetAPIKey is a dataset-type key: the
 // knowledge endpoints reject the per-tenant app keys, so the key is
 // deployment-wide and knowledge management stays disabled while it is empty.
-func NewHandler(pls productLines, datasetAPIBaseURL, datasetAPIKey, indexingTechnique string) *Handler {
-	if indexingTechnique != "economy" {
-		indexingTechnique = "high_quality"
-	} else {
-		log.Printf("[knowledge] WARN: knowledge indexing is set to economy (DIFY_INDEXING_TECHNIQUE); " +
-			"uploaded documents are matched by extracted keywords rather than meaning, so many questions " +
-			"they answer will be met with \"no information\". Configure a text-embedding model in the Dify " +
-			"workspace and switch to high_quality to retrieve on meaning")
-	}
+// indexingTechnique is the platform-wide setting, resolved per call; nil is
+// accepted and reads as the high-quality default.
+func NewHandler(pls productLines, datasetAPIBaseURL, datasetAPIKey string, indexingTechnique func(context.Context) string) *Handler {
 	h := &Handler{pls: pls, indexingTechnique: indexingTechnique}
 	if datasetAPIKey != "" {
 		h.dataset = difyapp.NewDatasetClient(datasetAPIBaseURL, datasetAPIKey)
 	}
 	return h
+}
+
+// resolveIndexingTechnique answers what this upload should be indexed with, and
+// states the consequence in the log when that answer changes.
+//
+// Anything that is not "economy" is high_quality, including an empty answer
+// from a store that could not be read: those are the only two techniques Dify
+// accepts, and sending it a third makes it reject the upload with an error the
+// tenant cannot act on.
+//
+// The warning fires on a change rather than on every upload for two reasons.
+// Repeated once per document it is noise an operator learns to skip, which is
+// how it stopped being read; and the moment worth recording is the moment the
+// platform switched, because from then on new documents are indexed differently
+// from the ones already in the same knowledge base. The return to high_quality
+// is logged too — a log that only ever reports the bad direction leaves an
+// operator unable to confirm the fix landed.
+func (h *Handler) resolveIndexingTechnique(ctx context.Context) string {
+	technique := difyapp.IndexingHighQuality
+	if h.indexingTechnique != nil && h.indexingTechnique(ctx) == difyapp.IndexingEconomy {
+		technique = difyapp.IndexingEconomy
+	}
+
+	h.techniqueMu.Lock()
+	changed := technique != h.lastTechnique
+	previous := h.lastTechnique
+	h.lastTechnique = technique
+	h.techniqueMu.Unlock()
+	if !changed {
+		return technique
+	}
+
+	switch {
+	case technique == difyapp.IndexingEconomy:
+		log.Printf("[knowledge] WARN: knowledge indexing is now economy (was %q); "+
+			"documents uploaded from here on are matched by extracted keywords rather than meaning, so many "+
+			"questions they answer will be met with \"no information\". Configure a text-embedding model in "+
+			"the Dify workspace and switch back to high_quality to retrieve on meaning", previous)
+	case previous == difyapp.IndexingEconomy:
+		log.Printf("[knowledge] knowledge indexing is now high_quality (was economy); " +
+			"documents uploaded from here on are embedded and retrieved on meaning. Documents already " +
+			"indexed keep their keyword index until they are re-uploaded")
+	}
+	return technique
 }
 
 // Handle routes the knowledge sub-resource of a tenant:
@@ -380,7 +433,7 @@ func (h *Handler) uploadFromMultipart(w http.ResponseWriter, r *http.Request, da
 	// The body is fully consumed by the parse above, so the size limit can no
 	// longer fire from here on.
 	result, err := h.dataset.CreateDocumentByFile(r.Context(), datasetID, filename, file,
-		difyapp.DocumentOptions{IndexingTechnique: h.indexingTechnique, ProcessRule: defaultProcessRule})
+		difyapp.DocumentOptions{IndexingTechnique: h.resolveIndexingTechnique(r.Context()), ProcessRule: defaultProcessRule})
 	if err != nil {
 		writeDatasetError(w, "failed to upload knowledge document", err)
 		return nil, err
@@ -406,7 +459,7 @@ func (h *Handler) uploadFromJSON(w http.ResponseWriter, r *http.Request, dataset
 	}
 
 	result, err := h.dataset.CreateDocumentByText(r.Context(), datasetID, name, text,
-		difyapp.DocumentOptions{IndexingTechnique: h.indexingTechnique, ProcessRule: defaultProcessRule})
+		difyapp.DocumentOptions{IndexingTechnique: h.resolveIndexingTechnique(r.Context()), ProcessRule: defaultProcessRule})
 	if err != nil {
 		writeDatasetError(w, "failed to upload knowledge document", err)
 		return nil, err

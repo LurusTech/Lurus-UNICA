@@ -21,7 +21,7 @@ UNICA 是一套自托管、多租户的跨渠道 AI 客服系统：一次部署�
 - **渠道网关：验签 + 去重 + 死信** —— webhook 验签、消息标准化、Redis 去重（fail-open + TTL）、带退避的重试、按渠道分流的死信队列（`unica/gateway/internal`）。
 - **会话状态机 + 大模型路由，双知识库 fail-open 召回** —— router 每次调用 Dify 时，若设置了 `ACEST_KB_URL` 会并行召回 [acest](https://github.com/LurusTech/Lurus-acest) 的 `kb-server` 提供的"经验库"与外源知识库，注入 `experience_context`/`knowledge_context`；kb-server 不可达时仅缺注入内容，不影响主流程（`unica/router/internal/routing`、`unica/router/cmd/router/main.go:351-373`）。
 - **领域本体校验** —— 每条产品线的政策事实在调用大模型前注入、回答后校验，熔断器在近期拦截比例超过 25% 时自动停止拦截（`inject_facts`/`validation` 默认全关；`unica/pkg/domain`、`unica/router/cmd/router/main.go:343-349`）。
-- **场景化应答策略（售前/售后）** —— router 判定每条消息所处场景，注入对应语气/行为模板（`scene_context`），默认以 `shadow` 模式上线（只记指标不改行为）（`SCENE_MODE`，`unica/router` 的 `routing` 包）。
+- **场景化应答策略（售前/售后）** —— router 判定每条消息所处场景，注入对应语气/行为模板（`scene_context`），默认以 `shadow` 模式上线（只记指标不改行为）；换档在平台管理页上做，**不重启 router**（`SCENE_MODE` 只种一次，之后以 `platform_settings` 为准；`unica/router` 的 `routing` 包）。
 - **一键开户** —— 一次超管专属调用即建好租户、其 Dify 应用+知识库数据集+API key、门户账号，以及可选的 Chatwoot 账号/收件箱；每一步幂等，失败后可从缺口续作（`unica/admin/internal/identity/tenants_onboarding.go`）。
 - **两层 RBAC** —— 恰好两种角色：`admin`（运营整个平台）与 `user`（恰好拥有一个租户）；租户隔离由服务端按 JWT 强制，而不仅是界面隐藏（`unica/admin/internal/rbac/roles.go`）。
 
@@ -100,15 +100,24 @@ ROUTER_TEST_POSTGRES_URL="postgres://...@localhost:5432/unica_test?sslmode=disab
 | `DIFY_ADMIN_URL` / `DIFY_ADMIN_EMAIL` / `DIFY_ADMIN_PASSWORD` | admin | — | 开户/开通用的 Dify 控制台凭据 |
 | `DIFY_API_BASE_URL` | admin/router | `http://dify:5001/v1` | Dify 服务 API 根 |
 | `DIFY_DATASET_API_KEY` | admin | 空 | 数据集级 key；不配置则知识库自助返回 503 |
-| `DIFY_INDEXING_TECHNIQUE` | admin | `high_quality` | 模型商不提供嵌入时必须用 `economy` |
+| `DIFY_INDEXING_TECHNIQUE` | admin | `high_quality` | 模型商不提供嵌入时必须用 `economy`。**仅首次种子**，见下 |
 | `CHATWOOT_BASE_URL` / `CHATWOOT_PLATFORM_TOKEN` / `CHATWOOT_WEBHOOK_URL` | admin | 空 | 一键开户的 Chatwoot 步骤；不配置则跳过而非失败 |
 | `ACEST_KB_URL` / `ACEST_KB_TOKEN` | router | 空（禁用） | 可选的 acest 双知识库 |
 | `ACEST_RECALL_TIMEOUT` / `ACEST_RECALL_TOP_K` | router | `2s` / `3` | 召回总预算 / 每库注入片段数 |
-| `INTENT_TRIAGE` | router | `off` | 调大模型前意图分诊：`off`/`shadow`/`on` |
-| `SCENE_MODE` | router | `off` | 售前/售后语气注入：`off`/`shadow`/`on` |
+| `INTENT_TRIAGE` | router | `shadow` | 调大模型前意图分诊：`off`/`shadow`/`on`。**仅首次种子**，见下 |
+| `SCENE_MODE` | router | `shadow` | 售前/售后语气注入：`off`/`shadow`/`on`。**仅首次种子**，见下 |
+| `SWITCH_POLL_INTERVAL` | router | `10s` | router 多久重读一次库里的开关，也就是控制台改动多久生效 |
 | `ONTOLOGY_ENABLED` | router | `true` | 本体总开关，仍需逐租户单独开通 |
 | `PARTITION_MONTHS_AHEAD` / `PARTITION_CHECK_INTERVAL` | router | `3` / `24h` | 月分区自动续期 |
 | `JWT_SECRET` | admin | `change-me-in-production` | 后台与 portal 鉴权签名密钥 |
+
+**只作首次种子的三个变量。** `INTENT_TRIAGE`、`SCENE_MODE`、`DIFY_INDEXING_TECHNIQUE`
+只在「库里还没有这一行」的首次启动时被读一次：值种进 `platform_settings`
+（`unica/router/migrations/022_platform_settings.sql`），之后由平台管理页说了算。
+此后再改部署文件里的这几个变量不会有任何效果——router 每 `SWITCH_POLL_INTERVAL`
+重读一次库，所以换档不用重启。变量留着不删也不会被静默服从或静默忽略：
+router 会在 `GET /configz` 的 `env_shadowed` 里点名，控制台提示把它从部署配置里删掉
+（`unica/pkg/platformsettings`、`unica/router/internal/routing/switches.go`）。
 
 ## 接口概览
 
@@ -131,7 +140,7 @@ ROUTER_TEST_POSTGRES_URL="postgres://...@localhost:5432/unica_test?sslmode=disab
 
 - **登记而非隐藏未验证的工作**：合并时无法验证的新能力必须在合并前后写进 `doc/unverified.md`；已确认的缺陷登记进 `doc/known-defects.md` 并带 `file:line`——两份文件都在对应条目真正被验证/修复后才删除，不允许放着不管。
 - **迁移编号且幂等**（`unica/router/migrations/NNN_*.sql`）：每条在已迁移过的数据库上重放必须成功。
-- **开关默认关闭/影子模式**：`SCENE_MODE`、`INTENT_TRIAGE`、本体 `validation` 与熔断器上线时都默认不生效（只记指标），确保升级不会静默改变现有行为，需要逐租户显式开通。
+- **开关默认关闭/影子模式**：`SCENE_MODE`、`INTENT_TRIAGE`、本体 `validation` 与熔断器上线时都不改变可观察行为（只记指标），确保升级不会静默改变客户看到的东西。前两个是平台级的，存在 `platform_settings` 里、在控制台改、不重启即生效；本体 `validation` 与熔断器则是逐租户开通。
 - 每个模块有自己的 `go.mod`；`unica/go.work` 只把 gateway/router/admin/reporter/pkg 串成本地开发工作区，CI 按模块独立构建（见 `.github/workflows/ci.yml` 的 matrix）。
 
 ## 相关项目

@@ -88,8 +88,9 @@ EMBEDDING_PORT=8199 python server.py
   用 `wsl bash -lc "ip route | grep default"` 查（本机为 `172.17.144.1`）
 - 同一 compose 网络 → 服务名
 
-接入后需要让 UNICA 也切过去：把 admin 的 `DIFY_INDEXING_TECHNIQUE`
-改成 `high_quality` 并重启，否则新上传的文档仍按 economy 建索引。
+接入后需要让 UNICA 也切过去：在**平台管理页**把索引方式改成 `high_quality`，
+否则新上传的文档仍按 economy 建索引。不用重启，也不要再改 `DIFY_INDEXING_TECHNIQUE`——
+那个变量只在从未存过值的首次启动时种一次，之后以库里的值为准。
 
 ## 已有知识库的迁移
 

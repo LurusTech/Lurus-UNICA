@@ -175,7 +175,7 @@ func credentialedBridge(url string) *bridge.DifyBridge {
 		APIBaseURL:        url,
 		AdminEmail:        "admin@example.com",
 		AdminPassword:     "secret",
-		IndexingTechnique: "high_quality",
+		IndexingTechnique: func(context.Context) string { return "high_quality" },
 	})
 }
 

@@ -348,3 +348,143 @@ func TestKnowledgeRoster_UnreadableIsNotHealthy(t *testing.T) {
 		t.Errorf("documents = %+v, want unknown with a reason rather than a count of zero", d)
 	}
 }
+
+// The platform page has to put the technique new documents will be created with
+// next to the technique each existing knowledge base was actually built with:
+// when those two disagree, uploads succeed, indexing succeeds, every query comes
+// back empty and nothing anywhere reports an error. That comparison needs a
+// field, not the Chinese sentence the retrieval column carries — and it must
+// never invent a technique for a dataset Dify has not decided one for, because a
+// fabricated "high_quality" there either manufactures a disagreement or hides a
+// real one.
+func TestKnowledgeRoster_ReportsWhatEachDatasetIsActuallyIndexedWith(t *testing.T) {
+	lines := &fakeKnowledgeLines{lines: []repository.ProductLine{
+		{ID: "pl-sound", Name: "sound", DifyAgentID: ptr("app-1"), DifyDatasetID: ptr("ds-1")},
+		{ID: "pl-empty", Name: "empty", DifyAgentID: ptr("app-2"), DifyDatasetID: ptr("ds-2")},
+		{ID: "pl-nodataset", Name: "nodataset", DifyAgentID: ptr("app-4")},
+	}}
+	dify := &fakeKnowledgeDify{
+		attached: map[string][]string{"app-1": {"ds-1"}, "app-2": {"ds-2"}},
+		cfgs: map[string]*bridge.DatasetConfig{
+			"ds-1": {IndexingTechnique: difyapp.IndexingEconomy, SearchMethod: "keyword_search", TopK: 6},
+			// Nobody has uploaded to this one, so Dify reports no technique.
+			"ds-2": {IndexingTechnique: "", SearchMethod: "semantic_search", TopK: 6},
+		},
+		prompts: map[string]string{
+			"app-1": "answer using {{knowledge_context}} please",
+			"app-2": "answer using {{knowledge_context}} please",
+			"app-4": "answer using {{knowledge_context}} please",
+		},
+	}
+	h := NewKnowledgeHandler(KnowledgeConfig{ProductLines: lines, Dify: dify})
+
+	rows := map[string]knowledgeRow{}
+	for _, row := range decodeKnowledge(t, getKnowledge(t, h, rbac.RoleAdmin)).Lines {
+		rows[row.ProductLineID] = row
+	}
+
+	sound := rows["pl-sound"].Indexing
+	if sound == nil {
+		t.Fatal("a dataset that reports a technique must carry it in a field, not only in a sentence")
+	}
+	if !sound.Decided || sound.Technique != difyapp.IndexingEconomy || sound.SearchMethod != "keyword_search" {
+		t.Errorf("indexing = %+v, want a decided economy index searched by keywords", sound)
+	}
+	if sound.Reason != "" {
+		t.Errorf("a decided index has nothing to explain, got reason %q", sound.Reason)
+	}
+
+	empty := rows["pl-empty"].Indexing
+	if empty == nil {
+		t.Fatal("an empty dataset is still a dataset; omitting it leaves the page unable to say why it is blank")
+	}
+	if empty.Decided {
+		t.Errorf("indexing = %+v: Dify assigns a technique at the first indexed document, so this one is undecided", empty)
+	}
+	if empty.Technique != "" {
+		t.Errorf("technique = %q, want empty — a technique nobody has decided must not be filled in with a default, "+
+			"which is how a console comes to report a disagreement that does not exist", empty.Technique)
+	}
+	if empty.Reason == "" {
+		t.Error("an undecided technique needs a reason, or the blank reads as a failed read")
+	}
+
+	if rows["pl-nodataset"].Indexing != nil {
+		t.Errorf("indexing = %+v for a line with no dataset; there is no index to describe",
+			rows["pl-nodataset"].Indexing)
+	}
+}
+
+// A dataset the roster could not read is not a dataset with no technique. Both
+// leave the technique blank, and only one of them means an operator should go
+// looking at Dify — so the unreadable case has to arrive with a reason rather
+// than being dropped from the payload.
+func TestKnowledgeRoster_UnreadableIndexingSaysSoRatherThanVanishing(t *testing.T) {
+	lines := &fakeKnowledgeLines{lines: []repository.ProductLine{
+		{ID: "pl-1", Name: "one", DifyAgentID: ptr("app-1"), DifyDatasetID: ptr("ds-1")},
+	}}
+	dify := &fakeKnowledgeDify{cfgErr: errors.New("dify unreachable")}
+	h := NewKnowledgeHandler(KnowledgeConfig{ProductLines: lines, Dify: dify})
+
+	rows := decodeKnowledge(t, getKnowledge(t, h, rbac.RoleAdmin)).Lines
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %d", len(rows))
+	}
+	indexing := rows[0].Indexing
+	if indexing == nil {
+		t.Fatal("a dataset that exists but could not be read must still be reported, or the page cannot " +
+			"tell an empty knowledge base from an unreachable Dify")
+	}
+	if indexing.Decided || indexing.Technique != "" {
+		t.Errorf("indexing = %+v: nothing was read, so nothing is decided", indexing)
+	}
+	if indexing.Reason == "" {
+		t.Error("an unread index must say why it could not be read")
+	}
+}
+
+// The roster has three blanks to keep apart: a dataset whose technique Dify has
+// not fixed yet, a dataset whose configuration could not be read, and a line
+// with no dataset at all. Collapsing the first two — which one flag would do —
+// tells an operator their datasets are empty on a day when Dify is simply down.
+func TestRosterKeepsUnreadableApartFromUndecided(t *testing.T) {
+	t.Run("unreadable", func(t *testing.T) {
+		h := &KnowledgeHandler{} // no Dify console configured
+		_, idx := h.retrievalStep(context.Background(), "ds-1")
+		if idx == nil {
+			t.Fatal("no indexing report at all: the page cannot say why it is blank")
+		}
+		if idx.Known {
+			t.Error("an unread dataset is reported as read")
+		}
+		if idx.Decided {
+			t.Error("an unread dataset cannot have a decided technique")
+		}
+		if idx.Reason == "" {
+			t.Error("the blank has no explanation")
+		}
+	})
+
+	t.Run("undecided", func(t *testing.T) {
+		idx := indexingOf(&bridge.DatasetConfig{IndexingTechnique: "", SearchMethod: "semantic_search"})
+		if !idx.Known {
+			t.Error("the configuration was read; only the technique is pending")
+		}
+		if idx.Decided {
+			t.Error("an empty dataset has no technique yet")
+		}
+		if idx.Technique != "" {
+			t.Errorf("a technique was invented: %q", idx.Technique)
+		}
+	})
+
+	t.Run("decided", func(t *testing.T) {
+		idx := indexingOf(&bridge.DatasetConfig{IndexingTechnique: "economy", SearchMethod: "keyword_search"})
+		if !idx.Known || !idx.Decided {
+			t.Errorf("a readable, settled dataset reported known=%v decided=%v", idx.Known, idx.Decided)
+		}
+		if idx.Technique != "economy" {
+			t.Errorf("technique = %q, want economy", idx.Technique)
+		}
+	})
+}

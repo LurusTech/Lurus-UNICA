@@ -621,7 +621,9 @@ func newTenantFixture(t *testing.T, difyEmail, difyPassword string, chatwoot *br
 				// Named rather than left to the default, because the retrieval
 				// steps compare a dataset's indexing technique against this
 				// deployment's and an unset one compares equal to nothing.
-				IndexingTechnique: "high_quality",
+				// A function now, not a value: the technique is stored and an
+				// administrator can change it while the process runs.
+				IndexingTechnique: func(context.Context) string { return "high_quality" },
 			}),
 			difyAdminEmail:     difyEmail,
 			difyAdminPassword:  difyPassword,

@@ -12,9 +12,17 @@ import (
 )
 
 // RuntimeSwitches is what the router reports about the behaviour it is running
-// with. These are not settings this service owns or can change; they are read
-// so an operator can see the values in force without opening a shell on the
-// router host.
+// with, read so an operator can see the values in force without opening a
+// shell on the router host.
+//
+// Two of them — intent triage and scene mode — are no longer this process's
+// to read only. They are stored in platform_settings, this service writes
+// them, and the router picks a change up on its own poll. What arrives here
+// is still strictly the router's report: the value it is actually routing
+// by, which after a write lags the stored value by up to one poll interval.
+// Showing both is the point — the gap between them is how an operator sees a
+// save take effect, and Invalidate exists so the gap is not widened by this
+// service's own cache.
 type RuntimeSwitches struct {
 	IntentTriage     string `json:"intent_triage"`
 	SceneMode        string `json:"scene_mode"`
@@ -29,14 +37,58 @@ type RuntimeSwitches struct {
 	// the same way the rest do, and an operator asks about it in the same
 	// breath.
 	DifyConvTTL string `json:"dify_conv_ttl"`
+
+	// The provenance of the two stored switches, and how fresh the router's
+	// copy of them is. All of it is optional, because a router that predates
+	// the stored switches omits every one of these fields and must keep
+	// reporting the values above unchanged rather than being read as broken.
+	//
+	// SwitchSources names, per key, where the value in force came from: "seed"
+	// (an environment variable on some startup, which has had its one say),
+	// "console" (an administrator moved it), or "env_fallback" (the router
+	// could not read the table at startup and is running on its environment).
+	// The last one is the only reading under which the values above are not
+	// what the database says, which is exactly why it is named rather than
+	// folded into the other two.
+	SwitchSources map[string]string `json:"switch_sources,omitempty"`
+	// SwitchPollInterval is how long a console write can take to reach the
+	// router. A page that offers the write has to be able to state that delay
+	// instead of leaving a viewer to conclude the save did not take.
+	SwitchPollInterval string `json:"switch_poll_interval,omitempty"`
+	// SwitchesReadAt is when the router last read the table successfully, in
+	// RFC 3339. Absent when it never has — which is not the same as "long ago",
+	// and substituting a zero time for it would make a router that has never
+	// reached the database look merely stale.
+	SwitchesReadAt string `json:"switches_read_at,omitempty"`
+	// SwitchesError is the last read failure, absent when the last read
+	// succeeded. The router keeps serving the previous snapshot through a
+	// failure rather than reverting to defaults, so this is the only signal
+	// that the values above may no longer match the table.
+	SwitchesError string `json:"switches_error,omitempty"`
+	// EnvShadowed maps an environment variable name to the value it is asking
+	// for and not getting, because a stored row outranks it. It exists so the
+	// disagreement between a deployment's config file and the database is a
+	// sentence an operator can read, rather than a silent preference.
+	EnvShadowed map[string]string `json:"env_shadowed,omitempty"`
 }
 
 // RouterBridge reads the router's runtime switches.
 //
-// The values are cached briefly. They change only when the router restarts, and
-// a console page that renders them should not put a request on the router's
-// path for every viewer — but the window is kept short enough that a restart is
-// reflected while an operator is still looking at the page.
+// The values are cached briefly, because a console page that renders them
+// should not put a request on the router's path for every viewer.
+//
+// Two of them — intent triage and the scene-stage strategy — are no longer the
+// router's environment. They live in platform_settings, an administrator moves
+// them from the platform page, and the router picks the change up on its own
+// poll. So this cache now sits between a write and its own confirmation: the
+// operator who just saved would spend up to the cache window looking at the
+// value they replaced and concluding the save did not take. That is what
+// Invalidate exists for, and it is why the write path calls it rather than
+// waiting the window out.
+//
+// The remaining fields still change only when the router restarts, and for
+// those the window is short enough that a restart shows up while an operator is
+// still on the page.
 type RouterBridge struct {
 	baseURL string
 	client  *http.Client
@@ -64,6 +116,26 @@ func NewRouterBridge(baseURL string) *RouterBridge {
 		client:  &http.Client{Timeout: 5 * time.Second},
 		ttl:     runtimeCacheTTL,
 	}
+}
+
+// Invalidate drops the cached snapshot so the next Switches call goes to the
+// router.
+//
+// It is called after this service writes a stored switch. The write went to the
+// database and the router will pick it up on its next poll; the mirror this
+// bridge holds knows nothing of either, and left alone it would keep answering
+// with the pre-write value for up to the cache window. Showing an operator the
+// value they just replaced is how a save that worked gets repeated.
+//
+// A nil bridge is a deployment with no router address, which has nothing to
+// drop; that is a state the write path is allowed to be in, not an error.
+func (b *RouterBridge) Invalidate() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.cached, b.fetched = nil, time.Time{}
+	b.mu.Unlock()
 }
 
 // Switches returns the router's current behaviour switches.

@@ -1,6 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI 设置 - UNICA 统一管理门户</title>
+<title>设置 - UNICA 统一管理门户</title>
 <style>
   /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
   :root {
@@ -352,13 +352,58 @@
   .toast.warn { border-left-color: var(--warn); }
   @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
+  /* ---- Zones --------------------------------------------------------------
+     The page grew to seven cards answering four different questions, and a flat
+     stack of them made every setting look equally available. The headings say
+     which question a card belongs to and — for the last zone — that the answer
+     is not this tenant's to give. They are headings *between* cards rather than
+     wrappers *around* them, so re-ordering the page cannot disturb what any
+     card does. */
+  .zone-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin: 30px 0 14px; padding-top: 20px; border-top: 1px solid var(--border);
+  }
+  .zone-head h2 { font-size: 0.95rem; margin: 0; font-weight: 600; letter-spacing: 0.02em; }
+  .zone-tag { font-size: 12px; color: var(--text-muted); }
+  .zone-sub { color: var(--text-muted); font-size: 0.82rem; line-height: 1.7; margin: -6px 0 16px; }
+
+  /* ---- Platform runtime status (zone 4) -----------------------------------
+     Read-only rows, deliberately not styled as fields: nothing here has an
+     input, and dressing them as one would invite an operator to try. Each row
+     states the value and then what that value does to the settings above — the
+     second half is what earns the space. */
+  .rt-group { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .rt-head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--text-muted); }
+  .rt-rows, .rt-caps { list-style: none; margin: 10px 0 0; padding: 0; }
+  .rt-row {
+    display: grid; grid-template-columns: 170px 1fr; gap: 2px 14px;
+    padding: 10px 0; border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+    font-size: 13px; align-items: baseline;
+  }
+  .rt-row:first-child { border-top: 0; }
+  .rt-key { font-weight: 600; }
+  .rt-val { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+  .rt-note { grid-column: 2; color: var(--text-muted); font-size: 12px; line-height: 1.75; margin-top: 2px; }
+  /* A consequence somebody has to act on, not a footnote. Used only where the
+     two values on screen contradict each other. */
+  .rt-note.bad { color: var(--bad); }
+  /* "unknown" must not read as "off". Off is a decision somebody made; unknown
+     is a question this page failed to get an answer to, and the two lead to
+     opposite next steps — so they never share a colour or a phrasing. */
+  .rt-state { font-size: 12px; }
+  .rt-row.is-on .rt-state      { color: var(--ok); }
+  .rt-row.is-off .rt-state     { color: var(--bad); }
+  .rt-row.is-shadow .rt-state  { color: var(--warn); }
+  .rt-row.is-unknown .rt-state { color: var(--warn); }
+  .rt-row.is-unknown .rt-val   { color: var(--text-muted); font-style: italic; }
+
   [hidden] { display: none !important; }
 </style>
 
 <header>
   <div class="left">
     <a class="back" id="back-link" href="./home.html">← 返回首页</a>
-    <h1>AI 设置</h1>
+    <h1>设置</h1>
   </div>
   <div id="user-info">
     <span id="tenant-name"></span>
@@ -400,6 +445,15 @@
            the knowledge base unusable, and that list has to stay on screen
            long enough to be acted on. -->
       <div class="notice" id="diag-provision-result" hidden style="margin:16px 0 0"></div>
+    </div>
+
+    <!-- Zone 1. The cards below all answer the same question — what the AI says
+         back — and they are the ones a tenant's own people are expected to
+         touch. The test message closes the zone because it is how the two
+         cards above it get checked without waiting for a real customer. -->
+    <div class="zone-head">
+      <h2>回答行为</h2>
+      <span class="zone-tag">AI 怎么答、什么时候不答</span>
     </div>
 
     <!-- System prompt -->
@@ -505,37 +559,32 @@
       </div>
     </div>
 
-    <!-- Dataset binding repair -->
+    <!-- Test message -->
     <div class="card">
       <div class="card-head">
-        <h2>知识库绑定</h2>
-        <span class="pill" id="dataset-pill" hidden></span>
+        <h2>测试消息</h2>
       </div>
       <p class="card-sub">
-        AI 应用要挂上本租户的知识库，检索才会用到上传的文档。
-        早期开通的应用可能漏挂——重新绑定一次即可修复，重复执行安全无副作用。
+        以当前设置向 AI 应用问一句话，看看客户会得到什么回答。测试不会写入任何会话记录。
       </p>
-      <div class="actions-row">
-        <button id="dataset-bind-btn">修复知识库绑定</button>
-        <span class="spacer"></span>
-        <span class="hint" id="dataset-hint"></span>
-      </div>
-
-      <div class="field narrow" id="topk-field" hidden>
-        <label for="f-topk">单次检索召回条数（top_k）</label>
-        <input id="f-topk" type="number" min="1" max="10" step="1" />
-        <div class="hint">
-          每次回答最多可以引用知识库里的几段内容。调高更不容易漏掉正确的一段，
-          也更容易把正确答案埋在几段相近内容里；调低则相反。
-          <b>改动会影响本产线所有回答，也会影响回归测试的基准</b>，所以只对管理员开放。
-          改完可以用下面的「测试消息」直接看召回了哪几段。
+      <form id="test-form">
+        <div class="field">
+          <label for="f-test">测试问题</label>
+          <input id="f-test" placeholder="例如：你们的退货时效是多久？" />
         </div>
         <div class="actions-row">
-          <button id="topk-save-btn">保存召回条数</button>
-          <span class="spacer"></span>
-          <span class="hint" id="topk-state"></span>
+          <button class="primary" type="submit" id="test-submit-btn">发送</button>
         </div>
-      </div>
+      </form>
+      <div class="result-box" id="test-result" hidden></div>
+    </div>
+
+    <!-- Zone 2. Its own zone rather than a card among the others: it is the one
+         block on this page that sends a message to a customer on its own, and
+         it is off until somebody turns it on. -->
+    <div class="zone-head">
+      <h2>满意度调研</h2>
+      <span class="zone-tag">会话结束后主动发给客户的那条消息</span>
     </div>
 
     <!-- Satisfaction survey -->
@@ -593,6 +642,46 @@
         <button class="primary" id="survey-save-btn">保存</button>
         <span class="spacer"></span>
         <span class="hint" id="survey-state"></span>
+      </div>
+    </div>
+
+    <!-- Zone 3. What the answer is built out of: which knowledge base is
+         consulted, how much of it comes back, and which model reads it. -->
+    <div class="zone-head">
+      <h2>知识与检索</h2>
+      <span class="zone-tag">回答的素材从哪来、由谁读</span>
+    </div>
+
+    <!-- Dataset binding repair -->
+    <div class="card">
+      <div class="card-head">
+        <h2>知识库绑定</h2>
+        <span class="pill" id="dataset-pill" hidden></span>
+      </div>
+      <p class="card-sub">
+        AI 应用要挂上本租户的知识库，检索才会用到上传的文档。
+        早期开通的应用可能漏挂——重新绑定一次即可修复，重复执行安全无副作用。
+      </p>
+      <div class="actions-row">
+        <button id="dataset-bind-btn">修复知识库绑定</button>
+        <span class="spacer"></span>
+        <span class="hint" id="dataset-hint"></span>
+      </div>
+
+      <div class="field narrow" id="topk-field" hidden>
+        <label for="f-topk">单次检索召回条数（top_k）</label>
+        <input id="f-topk" type="number" min="1" max="10" step="1" />
+        <div class="hint">
+          每次回答最多可以引用知识库里的几段内容。调高更不容易漏掉正确的一段，
+          也更容易把正确答案埋在几段相近内容里；调低则相反。
+          <b>改动会影响本产线所有回答，也会影响回归测试的基准</b>，所以只对管理员开放。
+          改完可以用「回答行为」区的「测试消息」直接看召回了哪几段。
+        </div>
+        <div class="actions-row">
+          <button id="topk-save-btn">保存召回条数</button>
+          <span class="spacer"></span>
+          <span class="hint" id="topk-state"></span>
+        </div>
       </div>
     </div>
 
@@ -668,24 +757,57 @@
       </div>
     </div>
 
-    <!-- Test message -->
-    <div class="card">
+    <!-- Zone 4. Read-only, and the reason the other three zones can be trusted:
+         every item here is decided above this tenant's head and can change what
+         the settings above actually do — a keyword list nothing reads, facts
+         that never reach the model, an index the retrieval cannot match. Left
+         off the page, each of them shows up as a greyed-out field or a setting
+         that quietly has no effect, and the operator is left guessing. -->
+    <div class="zone-head">
+      <h2>平台运行状态</h2>
+      <span class="zone-tag">只读</span>
+    </div>
+    <p class="zone-sub">
+      这些由平台方决定，本页只读；能改的在上面三区。
+      它们会改变上面那些设置的实际效果，所以放在同一页上——否则某个设置为什么没反应，就只能靠猜。
+    </p>
+
+    <div class="card" id="runtime-card">
       <div class="card-head">
-        <h2>测试消息</h2>
+        <h2>平台开关与索引方式</h2>
+        <span class="pill" id="runtime-pill" hidden></span>
       </div>
       <p class="card-sub">
-        以当前设置向 AI 应用问一句话，看看客户会得到什么回答。测试不会写入任何会话记录。
+        本租户的设置要先经过这几个平台层开关，才会变成客户看到的回答。
+        这里的值来自 router 与平台管理页，本页不做推断，也不用默认值顶替读不到的项。
       </p>
-      <form id="test-form">
-        <div class="field">
-          <label for="f-test">测试问题</label>
-          <input id="f-test" placeholder="例如：你们的退货时效是多久？" />
+
+      <div class="notice bad" id="runtime-unavailable" hidden></div>
+      <ul class="rt-rows" id="runtime-switches"></ul>
+
+      <div class="rt-group">
+        <div class="rt-head">
+          <strong>索引方式</strong>
+          <span id="indexing-summary"></span>
         </div>
-        <div class="actions-row">
-          <button class="primary" type="submit" id="test-submit-btn">发送</button>
+        <p class="hint" style="margin-top:4px">
+          索引方式决定文档怎么建索引、检索怎么搜。它由平台统一指定，且只对<b>此后上传</b>的文档生效——
+          存量文档不会自动重建索引。
+        </p>
+        <ul class="rt-rows" id="runtime-indexing"></ul>
+      </div>
+
+      <div class="rt-group" id="capability-group" hidden>
+        <div class="rt-head">
+          <strong>本部署的能力</strong>
+          <span id="capability-summary"></span>
         </div>
-      </form>
-      <div class="result-box" id="test-result" hidden></div>
+        <p class="hint" style="margin-top:4px">
+          没启用的能力不会报错，只会让对应的页面与设置安静地不起作用。
+          「读不到」与「未启用」是两回事：前者是这次没问到，不代表它关着。
+        </p>
+        <ul class="rt-caps" id="runtime-capabilities"></ul>
+      </div>
     </div>
   </div>
 </main>
@@ -823,6 +945,15 @@
     testSubmitBtn: document.getElementById("test-submit-btn"),
     testResult: document.getElementById("test-result"),
 
+    runtimePill: document.getElementById("runtime-pill"),
+    runtimeUnavailable: document.getElementById("runtime-unavailable"),
+    runtimeSwitches: document.getElementById("runtime-switches"),
+    runtimeIndexing: document.getElementById("runtime-indexing"),
+    indexingSummary: document.getElementById("indexing-summary"),
+    capabilityGroup: document.getElementById("capability-group"),
+    capabilitySummary: document.getElementById("capability-summary"),
+    runtimeCapabilities: document.getElementById("runtime-capabilities"),
+
     toastHost: document.getElementById("toast-host")
   };
 
@@ -928,7 +1059,7 @@
     if (state.tenants.length === 0) {
       els.tenantSelect.innerHTML = '<option value="">暂无租户</option>';
       els.loading.hidden = true;
-      showPageError("还没有租户", "AI 设置属于某个租户，请先开户。");
+      showPageError("还没有租户", "本页的设置属于某个租户，请先开户。");
       return;
     }
     els.tenantSelect.innerHTML = state.tenants.map(function (t) {
@@ -1008,7 +1139,7 @@
       .catch(function (err) {
         if (err.message === "unauthorized") return;
         els.loading.hidden = true;
-        showPageError("加载 AI 设置失败", err.message);
+        showPageError("加载设置失败", err.message);
       });
   }
 
@@ -1068,6 +1199,9 @@
     renderPromptVersion(cfg);
     renderThresholdTiers(cfg, state.factsConfig);
     applyKeywordAvailability(cfg);
+    // Drawn from the same cfg as everything above it, so the read-only zone
+    // and the controls it explains can never be a refresh out of step.
+    renderPlatformRuntime(cfg);
 
     els.promptConflict.hidden = true;
     els.promptState.textContent = "";
@@ -2410,9 +2544,11 @@
 
     // 5. Handoff keywords are retired wholesale under triage=on. The card says
     //    so rather than letting an operator keep tuning a list nothing reads.
-    if (rt.available && rt.intent_triage === "on") {
+    //    Asked through the shared rule so this row, the inert field and the
+    //    platform-status zone can never disagree about it.
+    if (keywordsRetiredByTriage(cfg)) {
       rows.push({ state: "warn", title: "转人工关键词", state_text: "已由意图分诊接管",
-        note: "平台启用了意图分诊，下方的关键词表整体不再生效——转人工由分诊模型判定。屏蔽话题不受影响。" });
+        note: "平台启用了意图分诊：" + TRIAGE_RETIRES_KEYWORDS });
     } else if (rt.available) {
       rows.push({ state: "ok", title: "转人工关键词",
         state_text: rt.intent_triage === "shadow" ? "生效（分诊仅观测）" : "生效" });
@@ -2697,19 +2833,34 @@
     });
   }
 
+  // The single rule that decides whether the handoff keyword list is still
+  // read. Three places on this page depend on the answer — the diagnostic row,
+  // the field that goes inert, and the platform-status zone that explains why —
+  // and three copies of the condition would be free to drift until the page
+  // disabled a field while telling the operator beside it that the list was
+  // live. `available` is part of the rule, not a guard around it: a runtime we
+  // could not read is not permission to declare the list retired.
+  function keywordsRetiredByTriage(cfg) {
+    var rt = (cfg && cfg.runtime) || {};
+    return rt.available === true && rt.intent_triage === "on";
+  }
+
+  // The consequence, worded once. Each caller supplies its own lead-in because
+  // the list is below the notice in one place and above it in another, but the
+  // sentence that says what actually stops working is shared.
+  var TRIAGE_RETIRES_KEYWORDS =
+    "转人工改由分诊模型判定，转人工关键词表整体不再生效；屏蔽话题与置信度阈值不受影响，仍然照常生效。";
+
   // Under triage=on the keyword list is not consulted at all. Leaving the field
   // live would let an operator keep tuning a list nothing reads — the most
   // expensive kind of silence this page can produce.
   function applyKeywordAvailability(cfg) {
-    var rt = cfg.runtime || {};
-    var retired = rt.available && rt.intent_triage === "on";
-    els.handoffField.classList.toggle("inert", !!retired);
-    els.fHandoff.disabled = !!retired;
+    var retired = keywordsRetiredByTriage(cfg);
+    els.handoffField.classList.toggle("inert", retired);
+    els.fHandoff.disabled = retired;
     els.keywordNotice.hidden = !retired;
     if (retired) {
-      els.keywordNotice.textContent =
-        "平台已启用意图分诊，下面这份关键词表整体不再生效——转人工改由分诊模型判定。" +
-        "屏蔽话题与置信度阈值不受影响，仍然照常生效。";
+      els.keywordNotice.textContent = "平台已启用意图分诊：" + TRIAGE_RETIRES_KEYWORDS;
     }
     // The card's own description names the keyword list as a trigger. Under
     // triage that sentence is false, and a warning below a false statement does
@@ -2719,6 +2870,239 @@
       : "这些设置由消息管道实时读取：AI 置信度低于阈值、客户说了转人工关键词，或问到屏蔽话题时，会话转交人工客服。保存后本租户已接入的渠道立即生效。";
   }
 
+
+  // ---------- Zone 4: platform runtime status ----------
+  //
+  // Read-only by construction: nothing here has a control, because nothing here
+  // is this tenant's to set. It is on the page anyway because every value in it
+  // silently changes what the three zones above actually do. Left off, each one
+  // shows up as a greyed-out field or a setting that has no effect, with no way
+  // on the page to find out why.
+
+  // A three-state platform switch reads the same way wherever it appears.
+  // "shadow" is spelled out every time: it is the value most likely to be read
+  // as "on" by someone who was never told it changes nothing yet.
+  var SWITCH_STATES = {
+    off:    { cls: "is-off",    text: "未启用" },
+    shadow: { cls: "is-shadow", text: "仅观测，不改变实际行为" },
+    on:     { cls: "is-on",     text: "已生效" }
+  };
+  var SWITCH_UNREPORTED = { cls: "is-unknown", text: "router 未报告这一项" };
+
+  // The technique names are what the platform console and the API use, so they
+  // stay on screen verbatim; the parenthesis is what they mean for retrieval,
+  // which is the half that decides whether two of them can coexist.
+  var INDEXING_LABELS = {
+    high_quality: "high_quality（向量索引 · 语义检索）",
+    economy: "economy（关键词索引 · 关键词检索）"
+  };
+  function indexingLabel(value) {
+    return INDEXING_LABELS[value] || String(value);
+  }
+
+  // "unknown" is not a quieter "off". Off is a decision somebody made and can
+  // undo; unknown is a question this page did not get an answer to. They send
+  // an operator in opposite directions, so they never share a colour or a word.
+  var CAP_STATES = {
+    on:      { cls: "is-on",      text: "已启用" },
+    off:     { cls: "is-off",     text: "未启用" },
+    unknown: { cls: "is-unknown", text: "读不到，无法判断" }
+  };
+
+  // One row: what it is, what it is set to, and — where there is one — the
+  // sentence saying what that setting does to a control above. The second half
+  // is what earns the row its space; a bare value would only raise a question.
+  function rtRow(list, key, value, state, note, noteIsConsequence) {
+    var li = document.createElement("li");
+    li.className = "rt-row" + (state && state.cls ? " " + state.cls : "");
+
+    var k = document.createElement("span");
+    k.className = "rt-key";
+    k.textContent = key;
+    li.appendChild(k);
+
+    var v = document.createElement("span");
+    v.className = "rt-val";
+    if (value) {
+      var main = document.createElement("span");
+      main.textContent = value;
+      v.appendChild(main);
+    }
+    if (state && state.text) {
+      var st = document.createElement("span");
+      st.className = "rt-state";
+      st.textContent = state.text;
+      v.appendChild(st);
+    }
+    li.appendChild(v);
+
+    if (note) {
+      var n = document.createElement("div");
+      n.className = "rt-note" + (noteIsConsequence ? " bad" : "");
+      n.textContent = note;
+      li.appendChild(n);
+    }
+    list.appendChild(li);
+  }
+
+  function renderPlatformRuntime(cfg) {
+    renderRuntimeSwitches(cfg);
+    renderIndexingComparison(cfg);
+    renderCapabilities(cfg);
+  }
+
+  function renderRuntimeSwitches(cfg) {
+    var rt = (cfg && cfg.runtime) || {};
+    var list = els.runtimeSwitches;
+    list.textContent = "";
+
+    // The same stance the platform console takes: a runtime that could not be
+    // read is reported as unread. Filling these rows with the compiled defaults
+    // would put a plausible wrong value in front of someone as the setting the
+    // messages are actually being routed by — and this zone exists precisely so
+    // that nobody has to guess at that.
+    if (!rt.available) {
+      els.runtimeUnavailable.hidden = false;
+      els.runtimeUnavailable.textContent =
+        "读不到平台运行状态（" + (rt.reason || "原因未知") + "）。" +
+        "这里不会用默认值顶替：一个看起来合理的错值，会被当成平台此刻真正在按的设定。" +
+        "在读通之前，本区的开关一项都不显示——包括「转人工关键词还生不生效」这一条。";
+      els.runtimePill.hidden = false;
+      els.runtimePill.className = "pill bad";
+      els.runtimePill.textContent = "运行状态读不到";
+      list.hidden = true;
+      return;
+    }
+    els.runtimeUnavailable.hidden = true;
+    els.runtimePill.hidden = true;
+    list.hidden = false;
+
+    // 1. Intent triage. Asked through the same rule that greys out the keyword
+    //    field, so the explanation here and the disabled input up there cannot
+    //    end up saying different things.
+    rtRow(list, "意图分诊", rt.intent_triage || "（未报告）",
+      SWITCH_STATES[rt.intent_triage] || SWITCH_UNREPORTED,
+      keywordsRetiredByTriage(cfg)
+        ? TRIAGE_RETIRES_KEYWORDS + "「转人工与阈值」里的关键词输入框因此是灰的。"
+        : "分诊切到 on 时，「转人工与阈值」里的转人工关键词表会整体停用，转人工改由分诊模型判定。");
+
+    // 2. Scene mode rides the same rail: the platform decides the stage, the
+    //    prompt has to have somewhere to put it.
+    rtRow(list, "商业阶段策略", rt.scene_mode || "（未报告）",
+      SWITCH_STATES[rt.scene_mode] || SWITCH_UNREPORTED,
+      rt.scene_mode === "off"
+        ? "平台未启用商业阶段策略：提示词里的 {{scene_context}} 始终是空的，写不写都一样。"
+        : "平台判定客户处在哪个商业阶段，把对应的应答策略注入提示词的 {{scene_context}}。" +
+          (rt.scene_mode === "shadow" ? "shadow 下只记录判定结果，不改变发给客户的回答。" : ""));
+
+    // 3. The ontology master switch. A tenant can publish facts, turn its own
+    //    injection on, and still have none of it reach the model — without an
+    //    error anywhere. That is worth a row of its own.
+    rtRow(list, "本体总闸", rt.ontology_enabled ? "已开启" : "已关闭",
+      rt.ontology_enabled ? SWITCH_STATES.on : SWITCH_STATES.off,
+      rt.ontology_enabled
+        ? "本租户在「确定性事实」页发布的口径可以注入回答；是否注入仍由本租户自己的开关决定。"
+        : "平台层关掉了本体功能：本租户发布的确定性事实一条都不会注入回答，" +
+          "无论「确定性事实」页里那个注入开关是开是关，而且不会有任何报错。");
+  }
+
+  // What the platform will index the next document with, beside what this
+  // tenant's own dataset was actually built with. They are two different
+  // decisions that look like one value, and the page used to show only the
+  // second — so a platform-side change could silently stop retrieval working
+  // for every document uploaded after it.
+  function renderIndexingComparison(cfg) {
+    var list = els.runtimeIndexing;
+    list.textContent = "";
+    var know = (cfg && cfg.knowledge) || null;
+
+    // X comes from the platform settings rather than from this dataset, so it
+    // is knowable even when the dataset itself cannot be read.
+    var platform = know && know.platform_indexing_technique
+      ? String(know.platform_indexing_technique) : "";
+    // Y comes from Dify. It does not fix a technique until the first document
+    // finishes indexing, so "no documents yet" is a third answer rather than a
+    // missing one — and it must never be filled in with X, which is exactly the
+    // confusion this comparison exists to prevent.
+    var mine = know && know.indexing_technique ? String(know.indexing_technique) : "";
+    var pending = !!(know && !mine && know.empty);
+    var disagree = !!(platform && mine && platform !== mine);
+
+    els.indexingSummary.textContent = disagree ? "两者不一致" : "";
+
+    rtRow(list, "平台给新文档用的", platform ? indexingLabel(platform) : "读不到",
+      platform ? null : { cls: "is-unknown", text: "平台未报告索引方式" },
+      "由平台管理员统一设定。改动只影响此后上传的文档，存量文档不会重新建索引。");
+
+    if (mine) {
+      rtRow(list, "本知识库实际", indexingLabel(mine), null,
+        know.search_method
+          ? "当前检索方式 " + know.search_method +
+            (know.top_k ? "，单次召回 " + know.top_k + " 条" : "")
+          : "");
+    } else if (pending) {
+      rtRow(list, "本知识库实际", "尚未确定（还没有文档）",
+        { cls: "is-unknown", text: "等第一篇文档索引完成" },
+        "知识库里还没有文档，索引方式要到第一篇文档索引完成时才由 Dify 定下来。" +
+        "这不是故障；也不能拿平台的取值当作它的答案。");
+    } else if (know && !know.dataset_bound) {
+      rtRow(list, "本知识库实际", "本产线还没有数据集",
+        { cls: "is-unknown", text: "无从判断" },
+        know.reason || "本产线还没有知识库数据集，先看页顶「接通体检」里的知识库检索一项。");
+    } else {
+      rtRow(list, "本知识库实际", "读不到",
+        { cls: "is-unknown", text: "无从判断" },
+        (know && know.reason) || "读不到本知识库当前的索引方式，无法与平台取值比对。");
+    }
+
+    // The failure the whole comparison is here for: new documents get indexed
+    // one way while retrieval is configured the other. Upload succeeds, indexing
+    // succeeds, retrieval succeeds and returns nothing — no stage reports an
+    // error, so nothing on any other page would ever say so.
+    if (disagree) {
+      rtRow(list, "两者不一致", "新文档 " + platform + " ／ 本库 " + mine,
+        { cls: "is-off", text: "检索会恒空" },
+        "此后上传的文档按 " + platform + " 建索引，而本知识库的检索按 " + mine + " 配置。" +
+        "两者对不上时新文档一条都命中不了：上传、索引、检索三步各自都显示成功，查询却始终返回空，" +
+        "全程没有任何报错。存量文档也不会自动重建索引。需要平台管理员把两者改回一致，或对本库重建索引。",
+        true);
+    }
+  }
+
+  // What this deployment can do at all. A capability that was never configured
+  // does not fail loudly — the page that needs it simply does nothing — so the
+  // list is rendered in full rather than only when something is wrong: a list
+  // showing nothing would be indistinguishable from one that was never fetched.
+  function renderCapabilities(cfg) {
+    var caps = (cfg && Array.isArray(cfg.capabilities)) ? cfg.capabilities : null;
+    // Absent is not the same as empty. An admin build that does not report this
+    // list yet is not evidence that the deployment has no capabilities, so the
+    // group stays off the page rather than making a claim it cannot support.
+    if (!caps) {
+      els.capabilityGroup.hidden = true;
+      return;
+    }
+    els.capabilityGroup.hidden = false;
+
+    var list = els.runtimeCapabilities;
+    list.textContent = "";
+
+    var off = 0, unknown = 0;
+    caps.forEach(function (cap) {
+      cap = cap || {};
+      var state = CAP_STATES[cap.state] || CAP_STATES.unknown;
+      if (state === CAP_STATES.off) off += 1;
+      if (state === CAP_STATES.unknown) unknown += 1;
+      rtRow(list, cap.title || cap.key || "未命名能力", "", state, cap.reason || "");
+    });
+
+    var parts = [];
+    if (off) parts.push(off + " 项未启用");
+    if (unknown) parts.push(unknown + " 项读不到");
+    els.capabilitySummary.textContent = caps.length
+      ? "共 " + caps.length + " 项" + (parts.length ? "：" + parts.join("、") : "，全部已启用")
+      : "本部署没有报告任何能力项";
+  }
   // ---------- Guardrail ----------
   els.guardrailSaveBtn.addEventListener("click", function () {
     if (state.busy) return;

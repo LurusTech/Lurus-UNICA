@@ -39,8 +39,28 @@ type DifyBridgeConfig struct {
 	// IndexingTechnique is how this deployment indexes knowledge documents.
 	// A dataset's retrieval settings have to agree with it: Dify defaults a new
 	// dataset to semantic search, which finds nothing in one indexed by
-	// keywords. Empty means the high-quality default.
-	IndexingTechnique string
+	// keywords.
+	//
+	// It is a function rather than a string because the value is no longer
+	// fixed when the process starts. It is stored in platform_settings and an
+	// administrator can change it from the console, so a bridge holding the
+	// value it was constructed with would keep creating datasets for the
+	// previous technique until someone restarted the service — and the symptom
+	// of that is not an error but a knowledge base that retrieves nothing.
+	// Asking per call is what makes the console's value the one in force.
+	//
+	// Nil is tolerated and means the built-in high-quality default, which is
+	// what a test or a partially wired process gets; see indexingTechnique.
+	IndexingTechnique func(context.Context) string
+}
+
+// StaticIndexingTechnique adapts a value that genuinely cannot change into the
+// resolver shape above. It is for callers that hold one — a test pinning a
+// deployment's technique, or a process with no settings store to read — and
+// deliberately not for the service's own wiring, which must resolve the stored
+// value per call or lose the point of storing it.
+func StaticIndexingTechnique(technique string) func(context.Context) string {
+	return func(context.Context) string { return technique }
 }
 
 // DifyBridge communicates with the Dify platform for AI config management.
@@ -390,12 +410,41 @@ type RetrievalOverrides struct {
 	TopK int
 }
 
+// indexingTechnique resolves the technique this deployment is creating
+// knowledge documents with right now.
+//
+// The empty answer is treated as the high-quality default rather than passed
+// on: an empty technique compares equal to no dataset's reported one, so it
+// would turn the agreement check below into a refusal of every dataset, and it
+// would ask difyapp.RetrievalModel for the settings of a technique that does
+// not exist. A resolver that has not been wired, or one whose store is
+// unreachable and which returned nothing, must therefore land on the same
+// default the rest of the platform assumes.
+func (b *DifyBridge) indexingTechnique(ctx context.Context) string {
+	if b.config.IndexingTechnique == nil {
+		return difyapp.IndexingHighQuality
+	}
+	if technique := b.config.IndexingTechnique(ctx); technique != "" {
+		return technique
+	}
+	return difyapp.IndexingHighQuality
+}
+
 // SetDatasetRetrievalWith aligns a dataset's retrieval settings with the
 // platform's, applying the caller's overrides on top.
 func (b *DifyBridge) SetDatasetRetrievalWith(ctx context.Context, datasetID, token string, ov RetrievalOverrides) error {
 	if datasetID == "" {
 		return fmt.Errorf("dataset ID is empty")
 	}
+
+	// Resolved once, at the top, and used everywhere below. The value is now
+	// read from a store that another process polls and an administrator can
+	// change mid-call, so asking again per use would let this function compare
+	// the dataset against one technique and then write the retrieval settings
+	// of another — a disagreement that leaves the dataset retrieving nothing
+	// and no error anywhere to say why. One read makes the whole call speak
+	// about a single technique, whichever one it caught.
+	technique := b.indexingTechnique(ctx)
 
 	// Read the dataset before writing to it. A retrieval method has to match the
 	// index the documents were actually built with: pointing a keyword-indexed
@@ -422,14 +471,14 @@ func (b *DifyBridge) SetDatasetRetrievalWith(ctx context.Context, datasetID, tok
 	switch {
 	case difyapp.IndexingUndecided(current.IndexingTechnique):
 		log.Printf("[dify-bridge] dataset %s has no indexing technique yet (nothing indexed into it); "+
-			"applying this deployment's %s retrieval settings", datasetID, b.config.IndexingTechnique)
-	case current.IndexingTechnique != b.config.IndexingTechnique:
+			"applying this deployment's %s retrieval settings", datasetID, technique)
+	case current.IndexingTechnique != technique:
 		return fmt.Errorf(
 			"set dataset retrieval: dataset %s was indexed as %q but this deployment is configured for %q; "+
 				"applying %q retrieval to a %q index makes every query return nothing. "+
 				"Re-index the dataset (delete and re-upload its documents) before repairing retrieval",
-			datasetID, current.IndexingTechnique, b.config.IndexingTechnique,
-			b.config.IndexingTechnique, current.IndexingTechnique)
+			datasetID, current.IndexingTechnique, technique,
+			technique, current.IndexingTechnique)
 	}
 
 	// Built as platform defaults merged with this dataset's overrides, even
@@ -438,7 +487,7 @@ func (b *DifyBridge) SetDatasetRetrievalWith(ctx context.Context, datasetID, tok
 	// top_k, say — a "repair" that rebuilt the object from defaults alone would
 	// silently roll that writer back. Constructing it this way from the start
 	// means the two cannot fight.
-	want := difyapp.RetrievalModel(b.config.IndexingTechnique)
+	want := difyapp.RetrievalModel(technique)
 	for k, v := range current.Overrides {
 		want[k] = v
 	}

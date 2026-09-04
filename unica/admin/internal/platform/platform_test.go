@@ -13,9 +13,11 @@ import (
 
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/bridge"
+	"github.com/kefu/unica/admin/internal/capability"
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/pkg/difyapp"
+	"github.com/kefu/unica/pkg/platformsettings"
 )
 
 type stubSwitches struct {
@@ -800,3 +802,618 @@ func TestDifyConsoleSession_RejectsNonGet(t *testing.T) {
 	}
 }
 
+// --- the stored switches, and the technique the page reports ---
+
+// settingsStubSettings is the platform_settings table.
+type settingsStubSettings struct {
+	rows    map[string]platformsettings.Setting
+	loadErr error
+	// setErr fails the write for one named key, so a test can put one key on a
+	// failure and the others on success — which is the only way to check that a
+	// multi-key request does not lose the keys that would have worked.
+	setErr  map[string]error
+	writes  []settingsWrite
+	loadHit int
+}
+
+type settingsWrite struct {
+	key, value, source, updatedBy, note string
+}
+
+func newStubSettings(rows ...platformsettings.Setting) *settingsStubSettings {
+	s := &settingsStubSettings{rows: map[string]platformsettings.Setting{}}
+	for _, row := range rows {
+		s.rows[row.Key] = row
+	}
+	return s
+}
+
+func (s *settingsStubSettings) Load(_ context.Context, keys ...string) (map[string]platformsettings.Setting, error) {
+	s.loadHit++
+	if s.loadErr != nil {
+		return nil, s.loadErr
+	}
+	out := map[string]platformsettings.Setting{}
+	if len(keys) == 0 {
+		for k, v := range s.rows {
+			out[k] = v
+		}
+		return out, nil
+	}
+	for _, k := range keys {
+		if row, ok := s.rows[k]; ok {
+			out[k] = row
+		}
+	}
+	return out, nil
+}
+
+func (s *settingsStubSettings) Set(_ context.Context, key, value, source, updatedBy, note string) error {
+	s.writes = append(s.writes, settingsWrite{key, value, source, updatedBy, note})
+	if err := s.setErr[key]; err != nil {
+		return err
+	}
+	s.rows[key] = platformsettings.Setting{
+		Key: key, Value: value, Source: source, UpdatedBy: updatedBy, Note: note,
+		UpdatedAt: time.Now().UTC(),
+	}
+	return nil
+}
+
+func storedRow(key, value, source string) platformsettings.Setting {
+	return platformsettings.Setting{
+		Key: key, Value: value, Source: source,
+		UpdatedBy: "u-1", UpdatedAt: time.Now().UTC(),
+	}
+}
+
+// The confirmed defect. The page reported a compiled constant while claiming in
+// its own comment to report "the technique this deployment actually creates
+// datasets with", so a deployment configured for economy was shown high_quality
+// and semantic search — the exact opposite of what its datasets are built with,
+// on the one page an operator opens to find out. And the failure it hides is
+// silent: economy datasets searched semantically return nothing, with no error
+// anywhere.
+func TestHandle_ReportsTheIndexingTechniqueInForce(t *testing.T) {
+	store := newStubSettings(storedRow(platformsettings.KeyIndexingTechnique, difyapp.IndexingEconomy, platformsettings.SourceConsole))
+	h := NewSettingsHandler(SettingsConfig{
+		Router:            stubSwitches{sw: &bridge.RuntimeSwitches{}},
+		Settings:          store,
+		IndexingTechnique: func(context.Context) string { return difyapp.IndexingEconomy },
+	})
+
+	var got settingsResponse
+	if err := json.Unmarshal(get(t, h, rbac.RoleAdmin).Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if got.Compiled.Knowledge.IndexingTechnique != difyapp.IndexingEconomy {
+		t.Errorf("indexing_technique = %q, want %q: the page reported a constant instead of the value in force",
+			got.Compiled.Knowledge.IndexingTechnique, difyapp.IndexingEconomy)
+	}
+	// Derived from the same value, not from a second opinion. A search method
+	// that does not follow from the technique describes retrieval that returns
+	// nothing and reports no error.
+	if got.Compiled.Knowledge.SearchMethod != "keyword_search" {
+		t.Errorf("search_method = %q, want keyword_search for economy indexing",
+			got.Compiled.Knowledge.SearchMethod)
+	}
+	if got.Compiled.Knowledge.TopK == 0 {
+		t.Error("top_k was lost")
+	}
+	// The row behind the value, so the page can distinguish a technique an
+	// administrator chose from one an environment variable seeded.
+	if got.Compiled.Knowledge.IndexingStored == nil {
+		t.Fatal("indexing_stored is missing, so the page cannot say where the technique came from")
+	}
+	if got.Compiled.Knowledge.IndexingStored.Value != difyapp.IndexingEconomy ||
+		got.Compiled.Knowledge.IndexingStored.Source != platformsettings.SourceConsole {
+		t.Errorf("indexing_stored = %+v, want the stored row", got.Compiled.Knowledge.IndexingStored)
+	}
+}
+
+// A deployment that has never seeded the technique has no row, and the page
+// must say so by omission rather than by inventing one — the absence is what
+// tells an operator nobody has ever chosen this value.
+func TestHandle_NoStoredTechniqueOmitsTheRowButKeepsTheValue(t *testing.T) {
+	h := NewSettingsHandler(SettingsConfig{
+		Router:            stubSwitches{sw: &bridge.RuntimeSwitches{}},
+		Settings:          newStubSettings(),
+		IndexingTechnique: func(context.Context) string { return difyapp.IndexingHighQuality },
+	})
+
+	var got settingsResponse
+	if err := json.Unmarshal(get(t, h, rbac.RoleAdmin).Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if got.Compiled.Knowledge.IndexingTechnique != difyapp.IndexingHighQuality {
+		t.Errorf("indexing_technique = %q", got.Compiled.Knowledge.IndexingTechnique)
+	}
+	if got.Compiled.Knowledge.IndexingStored != nil {
+		t.Errorf("indexing_stored = %+v, want nothing for a key with no row",
+			got.Compiled.Knowledge.IndexingStored)
+	}
+}
+
+// --- the switch write ------------------------------------------------------
+
+// invalidatingSwitches is a router reader that also caches, which is what the
+// live bridge is. The counter is the only way to tell that the write path
+// dropped the mirror: a cache that was not invalidated returns the same values
+// as one that was, and only the drop itself is observable.
+type invalidatingSwitches struct {
+	sw          *bridge.RuntimeSwitches
+	err         error
+	invalidated int
+}
+
+func (s *invalidatingSwitches) Switches(context.Context) (*bridge.RuntimeSwitches, error) {
+	return s.sw, s.err
+}
+
+func (s *invalidatingSwitches) Invalidate() { s.invalidated++ }
+
+func putSwitches(t *testing.T, h *Handler, role string, body interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/platform/switches", strings.NewReader(string(encoded)))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
+		&auth.Claims{Role: role, UserID: "u-1"}))
+	w := httptest.NewRecorder()
+	h.HandleSwitches(w, req)
+	return w
+}
+
+func decodeSwitchWrite(t *testing.T, w *httptest.ResponseRecorder) switchWriteResponse {
+	t.Helper()
+	var resp switchWriteResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response is not JSON: %v (%s)", err, w.Body.String())
+	}
+	return resp
+}
+
+func TestHandleSwitches_RequiresPutAndAdmin(t *testing.T) {
+	store := newStubSettings()
+	h := NewSettingsHandler(SettingsConfig{Router: stubSwitches{}, Settings: store})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform/switches", nil)
+	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey,
+		&auth.Claims{Role: rbac.RoleAdmin, UserID: "u-1"}))
+	w := httptest.NewRecorder()
+	h.HandleSwitches(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405 for a GET", w.Code)
+	}
+
+	if w := putSwitches(t, h, rbac.RoleUser, map[string]interface{}{"intent_triage": "on"}); w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 for a tenant: %s", w.Code, w.Body.String())
+	}
+	if len(store.writes) != 0 {
+		t.Errorf("a refused request still wrote %+v", store.writes)
+	}
+}
+
+// A deployment that has not run migration 022 has nowhere to put these values.
+// Answering 503 rather than 500 says the difference: nothing failed, this
+// console simply is not the authority here and the router's environment still
+// is.
+func TestHandleSwitches_WithoutAStoreRefusesRatherThanPretends(t *testing.T) {
+	h := NewSettingsHandler(SettingsConfig{Router: stubSwitches{}})
+	w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{"intent_triage": "on"})
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleSwitches_RefusesAnEmptyRequest(t *testing.T) {
+	store := newStubSettings()
+	h := NewSettingsHandler(SettingsConfig{Router: stubSwitches{}, Settings: store})
+	w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{"note": "nothing in particular"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if len(store.writes) != 0 {
+		t.Errorf("an empty request wrote %+v", store.writes)
+	}
+}
+
+// A request carrying one good key and one bad one writes neither. Validation
+// happens across the whole request before the first write, because a partially
+// applied change to how every message is routed is worse than a rejected one:
+// the operator's page then shows a state nobody asked for.
+func TestHandleSwitches_AnIllegalValueRejectsTheWholeRequest(t *testing.T) {
+	store := newStubSettings()
+	trail := &rosterAudit{}
+	h := NewSettingsHandler(SettingsConfig{Router: stubSwitches{}, Settings: store, Audit: trail})
+
+	w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{
+		"intent_triage": "on",
+		"scene_mode":    "enabled",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if len(store.writes) != 0 {
+		t.Errorf("a rejected request still wrote %+v", store.writes)
+	}
+	if len(trail.rows) != 0 {
+		t.Errorf("a rejected request left %d audit rows", len(trail.rows))
+	}
+
+	var body struct {
+		Error   string              `json:"error"`
+		Allowed map[string][]string `json:"allowed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	// The legal values travel with the refusal so a form does not have to guess
+	// what it may send next.
+	allowed := body.Allowed[platformsettings.KeySceneMode]
+	if len(allowed) == 0 {
+		t.Fatalf("no allowed values for the rejected key: %s", w.Body.String())
+	}
+	if strings.Join(allowed, ",") != "off,shadow,on" {
+		t.Errorf("allowed = %v, want the store's own list", allowed)
+	}
+}
+
+// Changing the indexing technique leaves every existing document on the old
+// one, and a dataset searched with the wrong method returns nothing and reports
+// no error. There is no cheap probe for that, so the acknowledgement is the
+// check — and it has to stop the write, not merely be recorded beside it.
+func TestHandleSwitches_IndexingTechniqueNeedsTheAcknowledgement(t *testing.T) {
+	store := newStubSettings()
+	h := NewSettingsHandler(SettingsConfig{Router: stubSwitches{}, Settings: store})
+
+	w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{
+		"dify_indexing_technique": difyapp.IndexingEconomy,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "存量文档不会自动迁移") {
+		t.Errorf("the refusal does not say why: %s", w.Body.String())
+	}
+	if len(store.writes) != 0 {
+		t.Errorf("an unacknowledged technique change wrote %+v", store.writes)
+	}
+
+	w = putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{
+		"dify_indexing_technique":           difyapp.IndexingEconomy,
+		"acknowledge_existing_not_migrated": true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 once acknowledged: %s", w.Code, w.Body.String())
+	}
+	if len(store.writes) != 1 || store.writes[0].value != difyapp.IndexingEconomy {
+		t.Errorf("writes = %+v, want the acknowledged technique", store.writes)
+	}
+}
+
+// Two keys in one request are two decisions, and the trail has to carry them as
+// two rows: a single row would record that the platform's behaviour changed
+// without saying what either switch moved from or to, which is the only
+// question anyone brings to this trail.
+func TestHandleSwitches_WritesOneAuditRowPerKey(t *testing.T) {
+	store := newStubSettings(
+		storedRow(platformsettings.KeyIntentTriage, "shadow", platformsettings.SourceSeed),
+	)
+	trail := &rosterAudit{}
+	router := &invalidatingSwitches{sw: &bridge.RuntimeSwitches{SwitchPollInterval: "10s"}}
+	h := NewSettingsHandler(SettingsConfig{Router: router, Settings: store, Audit: trail})
+
+	w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{
+		"intent_triage": "on",
+		"scene_mode":    "shadow",
+		"note":          "试运行结束",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	resp := decodeSwitchWrite(t, w)
+	if !resp.OK || len(resp.Changed) != 2 {
+		t.Fatalf("response = %+v, want both keys changed", resp)
+	}
+	if resp.Stored[platformsettings.KeyIntentTriage].Value != "on" ||
+		resp.Stored[platformsettings.KeyIntentTriage].Source != platformsettings.SourceConsole {
+		t.Errorf("stored = %+v, want the row read back with a console source", resp.Stored)
+	}
+	// The delay between the save and the router picking it up is stated rather
+	// than left for a viewer to infer from a page that has not changed.
+	if resp.PollInterval != "10s" {
+		t.Errorf("poll_interval = %q, want the router's own", resp.PollInterval)
+	}
+
+	if len(trail.rows) != 2 {
+		t.Fatalf("audit rows = %d, want one per key: %+v", len(trail.rows), trail.rows)
+	}
+	triage := trail.rowFor(t, platformsettings.KeyIntentTriage)
+	if triage.action != "update" || triage.resourceType != auditResourcePlatformSetting {
+		t.Errorf("row = %s/%s, want update/%s", triage.action, triage.resourceType, auditResourcePlatformSetting)
+	}
+	before, _ := triage.before.(map[string]interface{})
+	if before["value"] != "shadow" || before["source"] != platformsettings.SourceSeed {
+		t.Errorf("before = %+v, want the row this write displaced", triage.before)
+	}
+	after, _ := triage.after.(map[string]interface{})
+	if after["value"] != "on" || after["source"] != platformsettings.SourceConsole || after["ok"] != true {
+		t.Errorf("after = %+v", triage.after)
+	}
+	if after["note"] != "试运行结束" {
+		t.Errorf("the note did not reach the trail: %+v", triage.after)
+	}
+
+	// A key with no row before this write records an empty before-value. No
+	// legal value for these keys is the empty string, so it is unambiguous.
+	scene := trail.rowFor(t, platformsettings.KeySceneMode)
+	sceneBefore, _ := scene.before.(map[string]interface{})
+	if sceneBefore["value"] != "" {
+		t.Errorf("before = %+v, want an empty value for a key that had no row", scene.before)
+	}
+}
+
+// The bridge caches the router's state for half a minute. Right after a write
+// that cache holds the value the operator just replaced, and a page that
+// redisplays it reports the save as having done nothing — which is how the same
+// change gets made twice.
+func TestHandleSwitches_DropsTheRouterMirrorAfterAWrite(t *testing.T) {
+	router := &invalidatingSwitches{sw: &bridge.RuntimeSwitches{}}
+	h := NewSettingsHandler(SettingsConfig{Router: router, Settings: newStubSettings()})
+
+	if w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{"intent_triage": "on"}); w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if router.invalidated != 1 {
+		t.Errorf("the router mirror was invalidated %d times, want 1", router.invalidated)
+	}
+}
+
+// One key failing is not a reason to abandon the others: they are unrelated
+// decisions that share a table. The failure has to reach both the response and
+// the trail, because a write that was attempted and did not land is exactly the
+// event an operator will later be trying to reconstruct.
+func TestHandleSwitches_AFailedKeyDoesNotTakeTheOthersWithIt(t *testing.T) {
+	store := newStubSettings()
+	store.setErr = map[string]error{platformsettings.KeySceneMode: errors.New("connection refused")}
+	trail := &rosterAudit{}
+	router := &invalidatingSwitches{sw: &bridge.RuntimeSwitches{}}
+	h := NewSettingsHandler(SettingsConfig{Router: router, Settings: store, Audit: trail})
+
+	w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{
+		"intent_triage": "on",
+		"scene_mode":    "off",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 when one of two keys landed: %s", w.Code, w.Body.String())
+	}
+
+	resp := decodeSwitchWrite(t, w)
+	if resp.OK {
+		t.Error("ok:true for a request that lost a key")
+	}
+	if len(resp.Changed) != 1 || resp.Changed[0] != platformsettings.KeyIntentTriage {
+		t.Errorf("changed = %v, want only the key that landed", resp.Changed)
+	}
+	if resp.Failed[platformsettings.KeySceneMode] == "" {
+		t.Errorf("failed = %v, want the reason the key did not land", resp.Failed)
+	}
+
+	scene := trail.rowFor(t, platformsettings.KeySceneMode)
+	after, _ := scene.after.(map[string]interface{})
+	if after["ok"] != false || after["error"] == nil {
+		t.Errorf("after = %+v, want ok:false with the reason", scene.after)
+	}
+	if router.invalidated != 1 {
+		t.Errorf("invalidated %d times, want 1: one key did land", router.invalidated)
+	}
+}
+
+// Nothing landing is a failed request whatever the body says. A 200 there would
+// leave every caller that checks the status code believing a change took effect
+// that did not.
+func TestHandleSwitches_NothingLandedIsNotSuccess(t *testing.T) {
+	store := newStubSettings()
+	store.setErr = map[string]error{platformsettings.KeyIntentTriage: errors.New("connection refused")}
+	router := &invalidatingSwitches{sw: &bridge.RuntimeSwitches{}}
+	h := NewSettingsHandler(SettingsConfig{Router: router, Settings: store, Audit: &rosterAudit{}})
+
+	w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{"intent_triage": "on"})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 when nothing was written: %s", w.Code, w.Body.String())
+	}
+	if router.invalidated != 0 {
+		t.Errorf("the router mirror was dropped for a write that never happened")
+	}
+}
+
+// The stored value and the router's live value are both on the page because
+// they legitimately differ for up to one poll interval after a write. A page
+// carrying only one of them cannot tell "saved, not picked up yet" from "not
+// saved".
+func TestHandle_CarriesTheStoredSwitchesBesideTheLiveOnes(t *testing.T) {
+	store := newStubSettings(
+		storedRow(platformsettings.KeyIntentTriage, "on", platformsettings.SourceConsole),
+		storedRow(platformsettings.KeySceneMode, "shadow", platformsettings.SourceSeed),
+	)
+	h := NewSettingsHandler(SettingsConfig{
+		Router:   stubSwitches{sw: &bridge.RuntimeSwitches{IntentTriage: "shadow", SceneMode: "shadow"}},
+		Settings: store,
+	})
+
+	var got settingsResponse
+	if err := json.Unmarshal(get(t, h, rbac.RoleAdmin).Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if !got.SwitchesEditable {
+		t.Error("switches_editable is false on a handler that has a store")
+	}
+	if got.StoredSwitches[platformsettings.KeyIntentTriage].Value != "on" {
+		t.Errorf("stored_switches = %+v", got.StoredSwitches)
+	}
+	if got.StoredSwitches[platformsettings.KeySceneMode].Source != platformsettings.SourceSeed {
+		t.Errorf("the source is missing, so the page cannot tell a chosen value from a seeded one: %+v",
+			got.StoredSwitches)
+	}
+	// The router still says shadow: it has not polled yet. Both values are on
+	// the page, and neither has been substituted for the other.
+	if got.Runtime.Switches.IntentTriage != "shadow" {
+		t.Errorf("runtime = %+v, want the router's own value untouched", got.Runtime.Switches)
+	}
+	// The indexing technique shares the table but not this section — the router
+	// does not read it, and listing it here would suggest otherwise.
+	if _, listed := got.StoredSwitches[platformsettings.KeyIndexingTechnique]; listed {
+		t.Error("the indexing technique was listed among the router's switches")
+	}
+}
+
+// A handler with no store must not offer a save that answers 503.
+func TestHandle_WithoutAStoreSaysTheSwitchesAreNotEditable(t *testing.T) {
+	h := NewHandler(stubSwitches{sw: &bridge.RuntimeSwitches{}})
+	var got settingsResponse
+	if err := json.Unmarshal(get(t, h, rbac.RoleAdmin).Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if got.SwitchesEditable {
+		t.Error("switches_editable is true on a handler with no store")
+	}
+	if got.StoredSwitches != nil {
+		t.Errorf("stored_switches = %+v, want nothing at all", got.StoredSwitches)
+	}
+}
+
+// An unreadable table must not take the page with it: this is the page an
+// operator opens when something is down. What is lost is provenance, not the
+// whole screen.
+func TestHandle_AnUnreadableSettingsTableKeepsThePage(t *testing.T) {
+	store := newStubSettings()
+	store.loadErr = errors.New("connection refused")
+	h := NewSettingsHandler(SettingsConfig{
+		Router:   stubSwitches{sw: &bridge.RuntimeSwitches{}},
+		Settings: store,
+	})
+
+	w := get(t, h, rbac.RoleAdmin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var got settingsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if got.Compiled.PromptTemplate == "" {
+		t.Error("the rest of the page was lost with the settings table")
+	}
+	if got.StoredSwitches != nil {
+		t.Errorf("rows were invented for a table that could not be read: %+v", got.StoredSwitches)
+	}
+}
+
+// The capability list travels with the settings because the two answer one
+// question together: a knowledge setting is not worth reading on a deployment
+// where knowledge management is switched off entirely.
+func TestHandle_CarriesTheCapabilityList(t *testing.T) {
+	h := NewSettingsHandler(SettingsConfig{
+		Router:       stubSwitches{sw: &bridge.RuntimeSwitches{}},
+		Capabilities: stubCapabilities{},
+	})
+	var got settingsResponse
+	if err := json.Unmarshal(get(t, h, rbac.RoleAdmin).Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if len(got.Capabilities) != 1 || got.Capabilities[0].Key != "knowledge_management" {
+		t.Fatalf("capabilities = %+v", got.Capabilities)
+	}
+	if got.Capabilities[0].State != "off" || got.Capabilities[0].Reason == "" {
+		t.Error("a disabled capability with no reason leaves an operator nothing to act on")
+	}
+	// The owner is on the platform page: it is the half a tenant must not see
+	// and an administrator needs, because it says who can turn the thing on.
+	if got.Capabilities[0].Owner == "" {
+		t.Error("the owner is missing, so the page cannot say who can enable it")
+	}
+}
+
+// A handler with no probe says nothing rather than publishing an empty list.
+// "Nothing is disabled" and "nobody looked" are different answers and only one
+// of them is reassuring.
+func TestHandle_NoProbeOmitsTheCapabilityList(t *testing.T) {
+	h := NewHandler(stubSwitches{sw: &bridge.RuntimeSwitches{}})
+	if strings.Contains(get(t, h, rbac.RoleAdmin).Body.String(), `"capabilities"`) {
+		t.Error("an empty capability list was published by a handler that has no probe")
+	}
+}
+
+type stubCapabilities struct{}
+
+func (stubCapabilities) List(context.Context) []capability.Capability {
+	return []capability.Capability{{
+		Key:    "knowledge_management",
+		Title:  "知识库管理",
+		State:  "off",
+		Reason: "全平台租户的知识库管理已禁用：上传、删除、查看分段均不可用",
+		Owner:  "admin",
+	}}
+}
+
+// An unreadable settings table and a table that was never written produce the
+// same empty object on the wire. Without a word saying which, the page renders
+// a database it could not reach as a deployment nobody has configured, and an
+// operator goes looking for a setting they already made.
+func TestHandle_AnUnreadableTableSaysSoRatherThanLookingUnset(t *testing.T) {
+	store := newStubSettings()
+	store.loadErr = errors.New("pq: canceling statement due to statement timeout")
+	h := NewSettingsHandler(SettingsConfig{
+		Router:            stubSwitches{sw: &bridge.RuntimeSwitches{IntentTriage: "on"}},
+		Settings:          store,
+		IndexingTechnique: func(context.Context) string { return difyapp.IndexingHighQuality },
+	})
+
+	var got settingsResponse
+	if err := json.Unmarshal(get(t, h, rbac.RoleAdmin).Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if got.StoredSwitchesError == "" {
+		t.Error("the read failed and the page does not say so; an empty table and an unreachable one look identical")
+	}
+	if !strings.Contains(got.StoredSwitchesError, "statement timeout") {
+		t.Errorf("stored_switches_error = %q, want the cause", got.StoredSwitchesError)
+	}
+	// The rest of the page survives: this is what an operator opens when
+	// something is wrong, and losing the diagnosis with the fault helps nobody.
+	if got.Runtime.Switches == nil || got.Runtime.Switches.IntentTriage != "on" {
+		t.Error("a failed settings read took the live runtime section with it")
+	}
+}
+
+// The value and the row behind it come from one read, so a save landing between
+// two reads cannot make the page describe the technique with one value and its
+// provenance with another.
+func TestHandle_TechniqueAndItsProvenanceComeFromOneRead(t *testing.T) {
+	store := newStubSettings(storedRow(platformsettings.KeyIndexingTechnique, difyapp.IndexingEconomy, platformsettings.SourceConsole))
+	h := NewSettingsHandler(SettingsConfig{
+		Router:   stubSwitches{sw: &bridge.RuntimeSwitches{}},
+		Settings: store,
+		// Deliberately disagrees with the stored row. If the page ever consults
+		// this instead of the row it already read, the two halves diverge.
+		IndexingTechnique: func(context.Context) string { return difyapp.IndexingHighQuality },
+	})
+
+	var got settingsResponse
+	if err := json.Unmarshal(get(t, h, rbac.RoleAdmin).Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if got.Compiled.Knowledge.IndexingTechnique != difyapp.IndexingEconomy {
+		t.Errorf("indexing_technique = %q, want the stored %q",
+			got.Compiled.Knowledge.IndexingTechnique, difyapp.IndexingEconomy)
+	}
+	if got.Compiled.Knowledge.IndexingStored == nil ||
+		got.Compiled.Knowledge.IndexingStored.Value != got.Compiled.Knowledge.IndexingTechnique {
+		t.Errorf("the reported value and the row behind it disagree: %+v vs %q",
+			got.Compiled.Knowledge.IndexingStored, got.Compiled.Knowledge.IndexingTechnique)
+	}
+}
