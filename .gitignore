@@ -46,3 +46,7 @@ ScreenShot_*.png
 
 # promptaudit writes a verbatim backup of every live prompt next to wherever it runs
 prompt-backup-*.json
+
+# 测试环境凭据清单:明文口令,只留本机(2026-09-24 移出 git;历史里仍有,轮换见 owner 队列)。
+# 与根治理仓的 重要信息.md 同一模式 —— 需要它的人找 owner 要,不进仓。
+doc/测试信息.md

@@ -100,6 +100,11 @@ regexes = [
   # `^[A-Za-z0-9_.-]+$`: real passwords in this org mix case and digits
   # (Unica2026x-class) and must keep firing.
   '''^[a-z_.-]+$''',
+  # Bracketed UPPERCASE protocol tags ("[HANDOFF:", "[FACT:") are prompt
+  # markers assigned to a struct field that happens to be named Token
+  # (unica/pkg/difyapp/prompt.go), not credentials. Anchored on both ends so
+  # a real password wrapped in brackets would not slip through.
+  '''^\[[A-Z][A-Z_]*:?\]?$''',
 ]
 
 # --- Rule 6: newapi/relay-style API key --------------------------------------

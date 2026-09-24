@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	"unicode/utf8"
 )
 
 // seedDir is the shipped ontology set, relative to this package.
@@ -329,11 +330,21 @@ var identifierLike = regexp.MustCompile(`^[a-zA-Z_]+$`)
 
 // isProseComparable reports whether a pinned value is expected to appear
 // verbatim in customer-facing copy.
+//
+// A pinned *fact* is a phrase (hotline, service hours, a window in days —
+// at most 16 runes in every shipped seed). Since 2026-08-23 the seeds also
+// carry agent-side *procedures* (转人工采集通则 / 分场景必问项 / 采集跳过情形):
+// multi-sentence instructions a canned reply follows but never quotes, so
+// demanding them verbatim in customer copy is a false drift, not a real one.
+// Anything with sentence punctuation or longer than 64 runes is a procedure.
 func isProseComparable(value string) bool {
 	if identifierLike.MatchString(value) {
 		return false
 	}
 	if _, err := strconv.Atoi(value); err == nil {
+		return false
+	}
+	if strings.ContainsAny(value, "。；;") || utf8.RuneCountInString(value) > 64 {
 		return false
 	}
 	return true
