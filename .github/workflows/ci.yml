@@ -40,9 +40,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Highest go directive in the repo: unica/go.work requires 1.24.0.
-          # The individual modules declare 1.22 - 1.23.0 and build fine with it.
-          go-version: '1.24.x'
+          # Highest go directive in the repo: unica/go.work and unica/admin
+          # require 1.25.0 (golang.org/x/crypto >= 0.52 declares it). The other
+          # modules declare 1.22 - 1.23.0 and build fine with it.
+          go-version: '1.25.x'
           cache-dependency-path: ${{ matrix.cache_path }}
 
       - name: Build
