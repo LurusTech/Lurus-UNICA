@@ -31,6 +31,10 @@ const factsHeader = "【本业务确定性事实 — 优先级高于历史经验
 // denialsHeader introduces the closed-world negations.
 const denialsHeader = "【本业务不提供以下服务，如客户问及请明确告知不支持】"
 
+// aliasesHeader introduces the synonym table. It says which side to answer
+// with: an alias is how a customer asks, never how a fact is stated.
+const aliasesHeader = "【客户常用说法 — 左侧是客户的叫法，指的就是右侧；回答与引用标签时一律使用右侧的规范说法】"
+
 // tagsHeader introduces the claim-tag vocabulary.
 //
 // Without it a model asked to emit [FACT:属性名=取值] invents the property name
@@ -76,6 +80,10 @@ func Render(o *Ontology) string {
 		b.WriteString(denialsHeader)
 		b.WriteString("\n")
 		b.WriteString(denials)
+	}
+	if aliases := renderAliases(o); aliases != "" {
+		b.WriteString("\n")
+		b.WriteString(aliases)
 	}
 	if tags := renderTags(o); tags != "" {
 		b.WriteString("\n")
@@ -164,6 +172,38 @@ func renderDenials(o *Ontology) string {
 		fmt.Fprintf(&b, "· %s（%s）\n", d.Term, d.Note)
 	}
 	return b.String()
+}
+
+// renderAliases renders the synonym table, header included, or nothing when the
+// ontology declares no aliases — so an ontology written before aliases existed
+// renders byte for byte as it always did. Validate measures this same string
+// against AliasBudget.
+//
+// A target that no longer resolves is skipped rather than rendered: Validate
+// rejects such an ontology, and the renderer must not be the place that fails.
+func renderAliases(o *Ontology) string {
+	if len(o.Aliases) == 0 {
+		return ""
+	}
+	var lines strings.Builder
+	for _, ref := range o.AliasRefs() {
+		target, err := o.aliasTarget(ref)
+		if err != nil || len(o.Aliases[ref]) == 0 {
+			continue
+		}
+		quoted := make([]string, 0, len(o.Aliases[ref]))
+		for _, phrase := range o.Aliases[ref] {
+			quoted = append(quoted, "「"+strings.TrimSpace(phrase)+"」")
+		}
+		if strings.HasPrefix(string(ref), aliasKindDeny+":") {
+			target += "（本业务不提供）"
+		}
+		fmt.Fprintf(&lines, "· %s → %s\n", strings.Join(quoted, ""), target)
+	}
+	if lines.Len() == 0 {
+		return ""
+	}
+	return aliasesHeader + "\n" + lines.String()
 }
 
 // ScopeLabel renders a scope in customer-facing wording, class first.

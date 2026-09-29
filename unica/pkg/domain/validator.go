@@ -301,7 +301,7 @@ func (o *Ontology) statesProperty(answer, property string) bool {
 }
 
 // checkDenials scans the answer text for capabilities the business does not
-// offer. This is the only check that fires when the model emits no claim tags,
+// offer, under the denial's term and under every alias of it. This is the only check that fires when the model emits no claim tags,
 // which makes it the safety net for an app whose prompt was never updated.
 func checkDenials(o *Ontology, answer string) []Violation {
 	if answer == "" {
@@ -310,11 +310,23 @@ func checkDenials(o *Ontology, answer string) []Violation {
 
 	var out []Violation
 	for _, d := range o.Denials {
-		sentence := AffirmingSentence(answer, d.Term)
+		// The term first, then its aliases: an answer the term catches yields
+		// the same violation it did before aliases existed, and an alias can
+		// only add a catch the term missed.
+		var sentence, matched string
+		for _, phrase := range o.denialPhrases(d) {
+			if sentence = AffirmingSentence(answer, phrase); sentence != "" {
+				matched = phrase
+				break
+			}
+		}
 		if sentence == "" {
 			continue
 		}
 		message := fmt.Sprintf("%s 不提供「%s」，回答却以肯定语气提及", o.ProductLine, d.Term)
+		if matched != d.Term {
+			message += fmt.Sprintf("（以客户说法「%s」出现）", matched)
+		}
 		if d.Note != "" {
 			message += "；正确说法：" + d.Note
 		}

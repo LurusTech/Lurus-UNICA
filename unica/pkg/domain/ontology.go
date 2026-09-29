@@ -213,6 +213,12 @@ type Ontology struct {
 	Properties map[string]Property  `yaml:"properties" json:"properties"`
 	Assertions []Assertion          `yaml:"assertions" json:"assertions"`
 	Denials    []Denial             `yaml:"denies,omitempty" json:"denies,omitempty"`
+
+	// Aliases map what customers actually say onto something already declared.
+	// They can only make the system stricter: they are rendered as a synonym
+	// table and widen the denial scan, and never state, change or remove a
+	// fact. See aliases.go.
+	Aliases map[AliasRef][]string `yaml:"aliases,omitempty" json:"aliases,omitempty"`
 }
 
 // IsClosedWorld reports whether an undeclared property means the business does
@@ -556,7 +562,7 @@ func (o *Ontology) Validate() error {
 			return fmt.Errorf("%s: denial %d has an empty term", o.ProductLine, i)
 		}
 	}
-	return nil
+	return o.validateAliases()
 }
 
 func (o *Ontology) validateClasses() error {
