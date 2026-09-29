@@ -201,22 +201,9 @@ func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag strin
 	configs := make(map[string]lineConfig, len(lines))
 
 	for line := range lines {
-		var id string
-		var baseURL, apiKey sql.NullString
-		var configJSON []byte
-
-		err := db.QueryRowContext(ctx,
-			`SELECT id, dify_base_url, dify_api_key, config_json FROM product_lines WHERE name = $1`,
-			line).Scan(&id, &baseURL, &apiKey, &configJSON)
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("product line %q not found in product_lines; "+
-				"golden set names must match the database", line)
-		}
+		rec, err := eval.LookupLine(ctx, db, line)
 		if err != nil {
-			return nil, fmt.Errorf("look up product line %q: %w", line, err)
-		}
-		if !apiKey.Valid || apiKey.String == "" {
-			return nil, fmt.Errorf("product line %q has no dify_api_key; provision it first", line)
+			return nil, err
 		}
 
 		// Injection is driven by the flag rather than by config_json: the point of
@@ -227,7 +214,7 @@ func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag strin
 		// measure recall: those answers are mostly wrong, so the share the
 		// validator catches is real evidence. A run where every answer is already
 		// correct can only ever show that it does not over-fire.
-		lineOntology, version, err := store.Active(ctx, id)
+		lineOntology, version, err := store.Active(ctx, rec.ID)
 		if err != nil {
 			return nil, fmt.Errorf("load ontology for %q: %w", line, err)
 		}
@@ -246,9 +233,9 @@ func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag strin
 		}
 
 		configs[line] = lineConfig{
-			difyBaseURL: baseURL.String,
-			difyAPIKey:  apiKey.String,
-			guardrail:   guardrail.LoadGuardrailConfig(json.RawMessage(configJSON)),
+			difyBaseURL: rec.BaseURL,
+			difyAPIKey:  rec.APIKey,
+			guardrail:   guardrail.LoadGuardrailConfig(rec.ConfigJSON),
 			facts:       facts,
 			ontology:    lineOntology,
 		}

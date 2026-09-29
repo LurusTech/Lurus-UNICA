@@ -49,6 +49,28 @@ select count(*) from ontology_versions ov
 where ov.active and ov.created_at < now() - interval '90 days';
 ```
 
+### 4. 本体自演化：可削减类转人工率 ↓（守门）
+**定义**：留出集（按会话编号 SHA-256 冻结的 30%）上，以线上同一个 Dify 应用重答，
+转人工原因属于可削减类（`low_confidence` / `empty_answer` / `model_requested` /
+`claim_conflict`）的轮次占比。同时必须满足：强制类转人工逐条不少、错误作答（a）不上升。
+口径与门控见 `unica/router/internal/replay`。
+
+**数据前提**：客户机已跑迁移 023 并打开 `evolve_capture`，且经 owner 批准做了脱敏导出
+（`doc/evolve-export.md`）。**演练数据只验链路，不报本指标。**
+
+取数（只写命令，不写数值；数值只在真实导出的留出集上报告）：
+```bash
+evolve split -in export.jsonl -side holdout -out holdout.txt          # 冻结一次，提交 ID 列表
+# 基线：当前激活版本
+POSTGRES_URL=... evolve eval -in export.jsonl -line <产品线> -ontology active \
+    -split holdout -manifest holdout.txt -out base.json -md base.md
+# 候选
+POSTGRES_URL=... evolve eval -in export.jsonl -line <产品线> -ontology cand.yaml \
+    -split holdout -manifest holdout.txt -out cand.json -md cand.md
+evolve gate -baseline base.json -candidate cand.json -md gate.md      # 退出码 1 = 未过门
+```
+基线报告里的 `可削减类转人工` 即本指标；（b）坐席参照不一致与（c）20 条人工抽检随报告输出。
+
 ## 记录
 
 | 轮次 | 日期 | 自助解决率 | 合规误报率 | 事实过期数 | 备注 |
