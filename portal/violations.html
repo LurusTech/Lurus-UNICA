@@ -215,6 +215,21 @@
   .row-actions { display: flex; gap: 6px; flex-wrap: nowrap; }
   .row-actions button { padding: 5px 9px; font-size: 0.78rem; white-space: nowrap; }
 
+  /* Quality overview: three north-star numbers, each with its own sample
+     size right next to it -- never just a percentage on its own. */
+  .northstar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .northstar-metric {
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--bg);
+  }
+  .northstar-metric .metric-label {
+    font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    margin-bottom: 6px;
+  }
+  .northstar-metric .metric-value { font-size: 1.5rem; font-weight: 600; line-height: 1.3; }
+  .northstar-metric .metric-value.muted { color: var(--text-muted); font-size: 1.1rem; font-weight: 500; }
+  .northstar-metric .metric-sample { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+  .northstar-metric.stale .metric-value { color: var(--warn); }
+
   /* Detail panel */
   tr.detail-row > td { padding: 0; background: var(--bg); white-space: normal; }
   .detail { padding: 16px 18px; }
@@ -345,6 +360,20 @@
 
     <div class="card empty-state" id="no-pl-hint">请先在上方选择一个租户</div>
 
+    <div class="card" id="northstar-card" hidden>
+      <div class="card-head">
+        <h2>质量概览</h2>
+        <span class="pill muted" id="northstar-window-pill">—</span>
+      </div>
+      <p class="card-sub">
+        三个互相制衡的北极星指标（见 doc/metrics-northstar.md）：自助解决率守价值，
+        合规误报率守信任，事实过期守真实。样本不足时明确标注，不给出一个假装精确的数字。
+      </p>
+      <div class="northstar-grid" id="northstar-grid">
+        <div class="loading-text">加载中…</div>
+      </div>
+    </div>
+
     <div class="card" id="queue-card" hidden>
       <div class="card-head">
         <h2>复核队列</h2>
@@ -457,6 +486,9 @@
     refreshBtn: document.getElementById("refresh-btn"),
 
     noPlHint: document.getElementById("no-pl-hint"),
+    northstarCard: document.getElementById("northstar-card"),
+    northstarWindowPill: document.getElementById("northstar-window-pill"),
+    northstarGrid: document.getElementById("northstar-grid"),
     queueCard: document.getElementById("queue-card"),
     totalPill: document.getElementById("total-pill"),
     tableWrap: document.getElementById("table-wrap"),
@@ -631,6 +663,7 @@
       els.plSelect.innerHTML = '<option value="">暂无租户</option>';
       els.noPlHint.innerHTML = '还没有租户，先去<a href="./admin.html">开户 →</a>';
       els.noPlHint.hidden = false;
+      els.northstarCard.hidden = true;
       els.queueCard.hidden = true;
       return;
     }
@@ -654,11 +687,13 @@
       ? (state.currentTenant.display_name || state.currentTenant.name)
       : "";
     if (!state.currentTenant) {
+      els.northstarCard.hidden = true;
       els.queueCard.hidden = true;
       els.noPlHint.hidden = false;
       return;
     }
     els.noPlHint.hidden = true;
+    els.northstarCard.hidden = false;
     els.queueCard.hidden = false;
     // Kind options are derived from the loaded rows, so they belong to one line.
     state.knownKinds = [];
@@ -666,6 +701,7 @@
     renderKindOptions();
     resetPaging();
     loadViolations();
+    loadNorthstar();
   }
 
   function findTenant(id) {
@@ -705,8 +741,12 @@
   });
 
   els.refreshBtn.addEventListener("click", function () {
-    if (state.currentTenant) loadViolations();
-    else loadTenants();
+    if (state.currentTenant) {
+      loadViolations();
+      loadNorthstar();
+    } else {
+      loadTenants();
+    }
   });
 
   els.prevBtn.addEventListener("click", function () {
@@ -843,6 +883,82 @@
 
   function kindLabel(kind) {
     return KIND_LABELS[kind] || kind || "—";
+  }
+
+  // ---------- Quality overview (north-star numbers) ----------
+  // A separate request from the review queue above, with its own failure
+  // mode: a slow or erroring north-star query must never block the review
+  // queue the page exists for, so a failure here only degrades this one card.
+  var NORTHSTAR_WINDOW_DAYS = 30;
+
+  function loadNorthstar() {
+    if (!state.currentTenant) return Promise.resolve();
+    var plId = state.currentTenant.id;
+    els.northstarGrid.innerHTML = '<div class="loading-text">加载中…</div>';
+    return UnicaAuth.api(tenantPath("/quality/northstar?days=" + NORTHSTAR_WINDOW_DAYS))
+      .then(function (stats) {
+        if (String(plId) !== String(state.currentTenant.id)) return; // stale response
+        renderNorthstar(stats || {});
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.northstarGrid.innerHTML =
+          '<div class="empty-state">加载质量概览失败：' + escapeHtml(errorText(err)) + "</div>";
+      });
+  }
+
+  function formatPercent(rate) {
+    return (rate * 100).toFixed(1) + "%";
+  }
+
+  // metricHtml renders one north-star card: a value (muted when the sample
+  // has not cleared the floor the server enforces, so "样本不足" never looks
+  // like a confident 0%) and, always, the sample size it was computed from --
+  // a rate with no sample size next to it is not something this page shows.
+  function metricHtml(label, valueText, muted, sampleText, stale) {
+    return (
+      '<div class="northstar-metric' + (stale ? " stale" : "") + '">' +
+      '<div class="metric-label">' + escapeHtml(label) + "</div>" +
+      '<div class="metric-value' + (muted ? " muted" : "") + '">' + escapeHtml(valueText) + "</div>" +
+      '<div class="metric-sample">' + escapeHtml(sampleText) + "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderNorthstar(stats) {
+    els.northstarWindowPill.className = "pill muted";
+    els.northstarWindowPill.textContent = (stats.window_days || NORTHSTAR_WINDOW_DAYS) + " 天窗口";
+
+    var selfServiceValue = stats.self_service_rate != null ? formatPercent(stats.self_service_rate) : "样本不足";
+    var selfServiceSample = "会话 " + (stats.conversations_total || 0) +
+      "，转人工 " + (stats.handoff_conversations || 0) +
+      "（可削减 " + (stats.reducible_handoff_conversations || 0) +
+      " / 强制 " + (stats.forced_handoff_conversations || 0) + "）" +
+      (stats.self_service_insufficient ? " · 样本不足（需 ≥30 会话），仅供参考" : "");
+
+    var complianceValue = stats.compliance_false_positive_rate != null
+      ? formatPercent(stats.compliance_false_positive_rate) : "样本不足";
+    var complianceSample = "已复核拦截 " + (stats.enforced_reviewed || 0) +
+      " 条，其中误报 " + (stats.enforced_false_positive || 0) + " 条" +
+      (stats.compliance_insufficient ? " · 样本不足（需 ≥20 条已复核），仅供参考" : "");
+
+    var factValue, factSample, factStale;
+    if (stats.fact_stale_insufficient) {
+      factValue = "尚未发布";
+      factSample = "该租户还没有生效的本体版本";
+      factStale = false;
+    } else {
+      factStale = !!stats.fact_stale;
+      factValue = (stats.active_version_age_days != null ? stats.active_version_age_days : "—") + " 天";
+      factSample = "生效版本 v" + stats.active_ontology_version +
+        (factStale ? " · 已超过 90 天未重新确认，建议复核事实是否仍然准确" : "");
+    }
+
+    els.northstarGrid.innerHTML = [
+      metricHtml("自助解决率 ↑", selfServiceValue, stats.self_service_rate == null, selfServiceSample, false),
+      metricHtml("合规误报率 ↓", complianceValue, stats.compliance_false_positive_rate == null, complianceSample, false),
+      metricHtml("事实新鲜度 ↓", factValue, stats.fact_stale_insufficient, factSample, factStale)
+    ].join("");
   }
 
   // ---------- Render ----------

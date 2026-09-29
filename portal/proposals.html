@@ -1,0 +1,1171 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>修改建议 - UNICA 统一管理门户</title>
+<style>
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root {
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+    --lt-accent: #FF5D1F;
+    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
+    --lt-on-accent: #14130F;
+    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  :root {
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    --ok: var(--lt-ok);
+    --bad: var(--lt-err);
+    --warn: var(--lt-warn);
+    /* Neutral elevation shadow, no brand hue — kept at original value. */
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
+    :root {
+      --lt-paper: #14130F;
+      --lt-bg:    #0A0908;
+      --lt-ink:   #F0EDE4;
+      --lt-rule:  #25221C;
+      --lt-ok:    #3FA876;
+      --lt-warn:  #E0A040;
+      --lt-err:   #EE6F5E;
+      --lt-info:  #5A7BC7;
+
+      --bg: var(--lt-paper);
+      --surface: var(--lt-bg);
+      --text: var(--lt-ink);
+      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+      --border: var(--lt-rule);
+      --primary: var(--lt-accent);
+      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+      --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+    }
+  }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
+  :root[data-theme="dark"] {
+    --lt-paper: #14130F;
+    --lt-bg:    #0A0908;
+    --lt-ink:   #F0EDE4;
+    --lt-rule:  #25221C;
+    --lt-ok:    #3FA876;
+    --lt-warn:  #E0A040;
+    --lt-err:   #EE6F5E;
+    --lt-info:  #5A7BC7;
+
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+  }
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root[data-theme="light"] {
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1200px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  input[type="checkbox"] { width: auto; padding: 0; }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+
+  /* Login screen */
+  #login-view {
+    max-width: 380px; margin: 10vh auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; box-shadow: var(--shadow);
+  }
+  #login-view h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  #login-view p.sub { color: var(--text-muted); margin: 0 0 22px; font-size: 0.88rem; }
+  #login-error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
+  }
+  #login-view .remember { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  #login-view .remember input { width: auto; }
+  #login-view .remember label { margin-bottom: 0; font-weight: 400; color: var(--text-muted); }
+
+  /* App view */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; margin-bottom: 20px; }
+  .toolbar .field { margin-bottom: 0; min-width: 220px; }
+  .toolbar .field.narrow { min-width: 0; }
+  .toolbar .spacer { flex: 1; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 8px 13px; border-radius: 999px; font-size: 0.82rem; white-space: nowrap; }
+  .chip[aria-pressed="true"] {
+    background: var(--primary); color: #fff; border-color: var(--primary);
+  }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 24px; box-shadow: var(--shadow); margin-bottom: 20px;
+  }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 4px;
+  }
+  .card h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  .card-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 18px; line-height: 1.6; }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 0.85em; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 5px;
+  }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.info { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+
+  /* Batch bar: appears once at least one pending A/B card is checked, and is
+     the only place approve/reject for a batch happen — cards themselves carry
+     no per-item A/B buttons, only the checkbox. */
+  .batch-bar {
+    position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; margin-bottom: 16px; box-shadow: var(--shadow);
+  }
+  .batch-bar .count { font-size: 0.85rem; font-weight: 500; }
+  .batch-bar .spacer { flex: 1; }
+
+  /* Proposal queue: a stack of cards, each self-contained, rather than a
+     table row — every card carries four fixed evidence blocks a reviewer
+     needs before deciding, which a row's columns cannot hold at a glance. */
+  .proposal-list { display: flex; flex-direction: column; gap: 16px; }
+  .proposal-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px 20px; box-shadow: var(--shadow);
+  }
+  .proposal-card.selected { border-color: var(--primary); }
+  .proposal-head {
+    display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .proposal-head .pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .proposal-head .select { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
+  .proposal-blocks {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px;
+  }
+  .pblock {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .pblock h4 {
+    margin: 0 0 8px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .pblock .body { font-size: 0.86rem; line-height: 1.7; word-break: break-word; }
+
+  .diff-line { font-size: 0.9rem; line-height: 1.8; }
+  .diff-add { color: var(--ok); }
+  .diff-remove { color: var(--bad); }
+  .diff-note { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; }
+
+  .evidence-list { display: none; margin-top: 8px; }
+  .evidence-list.expanded { display: block; }
+  .evidence-item {
+    border-left: 3px solid var(--border); padding-left: 10px; margin-bottom: 10px; font-size: 0.85rem;
+  }
+  .evidence-item:last-child { margin-bottom: 0; }
+  .evidence-item q { quotes: "\201C" "\201D"; white-space: pre-wrap; }
+  .evidence-item .convo { color: var(--text-muted); font-size: 0.76rem; display: block; margin-bottom: 2px; }
+  .evidence-toggle { padding: 3px 9px; font-size: 0.76rem; margin-top: 4px; }
+
+  .gate-empty { color: var(--text-muted); }
+  .gate-metrics { display: grid; gap: 4px; }
+  .gate-metrics .row { display: flex; justify-content: space-between; gap: 8px; }
+  .gate-metrics .row .k { color: var(--text-muted); }
+  .gate-failures { margin-top: 8px; padding-left: 18px; color: var(--bad); font-size: 0.8rem; }
+  .gate-failures li { margin-bottom: 2px; }
+
+  .proposal-meta {
+    margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+    font-size: 0.8rem; color: var(--text-muted);
+  }
+  .proposal-actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .proposal-actions button, .proposal-actions a.action-link {
+    padding: 6px 12px; font-size: 0.8rem;
+  }
+  .proposal-actions a.action-link {
+    display: inline-flex; align-items: center; font-family: inherit; cursor: pointer;
+    border-radius: 8px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); text-decoration: none; transition: background 0.15s, border-color 0.15s;
+  }
+  .proposal-actions a.action-link:hover { border-color: var(--primary); }
+
+  .pager {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px;
+  }
+  .pager .count { margin-right: auto; font-size: 0.82rem; color: var(--text-muted); }
+
+  .empty-state { padding: 40px 16px; text-align: center; color: var(--text-muted); line-height: 1.8; }
+  .empty-state a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .empty-state a:hover { text-decoration: underline; }
+  .empty-state .big { display: block; font-size: 1.6rem; margin-bottom: 8px; }
+  .empty-state .title { color: var(--text); font-weight: 600; font-size: 0.95rem; }
+  .empty-state.celebrate .title { color: var(--ok); }
+  .empty-state .actions-row { margin-top: 14px; display: flex; justify-content: center; gap: 10px; }
+
+  /* Toasts */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 320px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
+    animation: slide-in 0.2s ease; line-height: 1.6;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  .toast.warn { border-left-color: var(--warn); }
+  .toast a { color: var(--primary); font-weight: 500; text-decoration: none; display: inline-block; margin-top: 6px; }
+  .toast a:hover { text-decoration: underline; }
+  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
+    <h1>修改建议</h1>
+  </div>
+  <div id="user-info" hidden>
+    <span id="tenant-name"></span>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <!-- Login view -->
+  <section id="login-view">
+    <h2>登录</h2>
+    <p class="sub">请使用管理账号登录以复核本体修改建议</p>
+    <div id="login-error"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <div class="remember">
+        <input id="remember" type="checkbox" />
+        <label for="remember">记住我（7 天内免登录）</label>
+      </div>
+      <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
+    </form>
+  </section>
+
+  <!-- App view -->
+  <section id="app-view" hidden>
+    <div class="toolbar">
+      <div class="field" id="pl-field" hidden>
+        <label for="pl-select">租户</label>
+        <select id="pl-select"><option value="">请选择租户</option></select>
+      </div>
+      <div class="field narrow">
+        <label id="status-label">状态</label>
+        <div class="chips" id="status-chips" role="group" aria-labelledby="status-label">
+          <button type="button" class="chip" data-status="pending" aria-pressed="true">待复核</button>
+          <button type="button" class="chip" data-status="" aria-pressed="false">全部</button>
+          <button type="button" class="chip" data-status="approved" aria-pressed="false">已采纳</button>
+          <button type="button" class="chip" data-status="published" aria-pressed="false">已发布</button>
+          <button type="button" class="chip" data-status="rejected" aria-pressed="false">已驳回</button>
+          <button type="button" class="chip" data-status="resolved" aria-pressed="false">已解决</button>
+          <button type="button" class="chip" data-status="superseded" aria-pressed="false">已被取代</button>
+        </div>
+      </div>
+      <div class="field narrow">
+        <label id="tier-label">级别</label>
+        <div class="chips" id="tier-chips" role="group" aria-labelledby="tier-label">
+          <button type="button" class="chip" data-tier="" aria-pressed="true">全部</button>
+          <button type="button" class="chip" data-tier="A" aria-pressed="false">A 别名</button>
+          <button type="button" class="chip" data-tier="B" aria-pressed="false">B 结构化</button>
+          <button type="button" class="chip" data-tier="C" aria-pressed="false">C 缺事实</button>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <button id="refresh-btn">刷新</button>
+    </div>
+
+    <div class="card empty-state" id="no-pl-hint">请先在上方选择一个租户</div>
+
+    <div class="card" id="queue-card" hidden>
+      <div class="card-head">
+        <h2>建议队列</h2>
+        <span class="pill muted" id="total-pill">—</span>
+      </div>
+      <p class="card-sub">
+        每一条都是从客服对话与坐席回复里挖掘出的本体修改建议：A 级别名已通过重放验证门可直接采纳；
+        B 级结构化改动（新增维度取值或伴随约束）由你判断；C 级是模型答不出、只能由人补值的事实缺口，永远不会自动生成值。
+      </p>
+
+      <div id="batch-bar-wrap" hidden>
+        <div class="batch-bar">
+          <span class="count" id="batch-count">已选 0 条</span>
+          <span class="spacer"></span>
+          <button id="batch-reject-btn">批量驳回</button>
+          <button class="primary" id="batch-approve-btn" hidden>批量采纳</button>
+        </div>
+      </div>
+
+      <div id="proposal-list" class="proposal-list">
+        <div class="loading-text">加载中…</div>
+      </div>
+
+      <div class="empty-state" id="empty-box" hidden></div>
+
+      <div class="pager" id="pager" hidden>
+        <span class="count" id="page-count"></span>
+        <button id="prev-btn">上一页</button>
+        <button id="next-btn">下一页</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script src="./auth.js?v=1"></script>
+<script>
+(function () {
+  "use strict";
+
+  var PAGE_SIZE = 50;
+
+  var STATUS_LABELS = {
+    pending: "待复核",
+    approved: "已采纳",
+    rejected: "已驳回",
+    superseded: "已被取代",
+    published: "已发布",
+    resolved: "已解决"
+  };
+
+  var STATUS_PILLS = {
+    pending: "warn",
+    approved: "info",
+    rejected: "muted",
+    superseded: "muted",
+    published: "ok",
+    resolved: "ok"
+  };
+
+  var TIER_LABELS = { A: "A 别名", B: "B 结构化", C: "C 缺事实" };
+  var TIER_PILLS = { A: "ok", B: "warn", C: "bad" };
+
+  var KIND_LABELS = {
+    alias: "别名",
+    dimension_value: "维度取值",
+    requires: "伴随约束",
+    missing_fact: "缺事实工单"
+  };
+
+  // AliasRef kind prefixes (see pkg/domain/aliases.go): property:<name>,
+  // value:<property>.<value>, class:<name>, deny:<term>. Stripped here to a
+  // reviewer-facing label — the raw "property:退费比例" form is an internal
+  // key, not something to show on a card.
+  function describeRef(ref) {
+    if (!ref) return "";
+    var idx = ref.indexOf(":");
+    if (idx < 0) return ref;
+    var kind = ref.slice(0, idx);
+    var rest = ref.slice(idx + 1);
+    if (kind === "value") {
+      var dot = rest.indexOf(".");
+      if (dot >= 0) return rest.slice(0, dot) + "：" + rest.slice(dot + 1);
+    }
+    return rest;
+  }
+
+  // The property a tier C ticket (or a value alias) is about, for the
+  // "去补事实" link into ontology.html. Aliases on a value ref point at the
+  // property before the dot; missing_fact tickets name it directly.
+  function propertyOf(v) {
+    if (v.missing_fact && v.missing_fact.property) return v.missing_fact.property;
+    if (!v.ref) return "";
+    var idx = v.ref.indexOf(":");
+    var rest = idx < 0 ? v.ref : v.ref.slice(idx + 1);
+    var dot = rest.indexOf(".");
+    return dot < 0 ? rest : rest.slice(0, dot);
+  }
+
+  var state = {
+    tenants: [],
+    currentTenant: null,
+    status: "pending",
+    tier: "",
+    offset: 0,
+    total: 0,
+    items: [],
+    selected: {}, // id -> true, pending A/B only
+    loading: false
+  };
+
+  var els = {
+    loginView: document.getElementById("login-view"),
+    appView: document.getElementById("app-view"),
+    loginForm: document.getElementById("login-form"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
+    remember: document.getElementById("remember"),
+    userInfo: document.getElementById("user-info"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    backLink: document.getElementById("back-link"),
+    tenantName: document.getElementById("tenant-name"),
+
+    plField: document.getElementById("pl-field"),
+    plSelect: document.getElementById("pl-select"),
+    statusChips: document.getElementById("status-chips"),
+    tierChips: document.getElementById("tier-chips"),
+    refreshBtn: document.getElementById("refresh-btn"),
+
+    noPlHint: document.getElementById("no-pl-hint"),
+    queueCard: document.getElementById("queue-card"),
+    totalPill: document.getElementById("total-pill"),
+    batchBarWrap: document.getElementById("batch-bar-wrap"),
+    batchCount: document.getElementById("batch-count"),
+    batchRejectBtn: document.getElementById("batch-reject-btn"),
+    batchApproveBtn: document.getElementById("batch-approve-btn"),
+    list: document.getElementById("proposal-list"),
+    emptyBox: document.getElementById("empty-box"),
+    pager: document.getElementById("pager"),
+    pageCount: document.getElementById("page-count"),
+    prevBtn: document.getElementById("prev-btn"),
+    nextBtn: document.getElementById("next-btn"),
+
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  function toast(message, kind, link) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    var line = document.createElement("div");
+    line.textContent = message;
+    el.appendChild(line);
+    if (link) {
+      var a = document.createElement("a");
+      a.href = link.href;
+      a.textContent = link.text;
+      el.appendChild(a);
+    }
+    els.toastHost.appendChild(el);
+    setTimeout(function () {
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.3s";
+      setTimeout(function () { el.remove(); }, 300);
+    }, link ? 9000 : 3200);
+  }
+
+  // ---------- Auth / API ----------
+  // Token storage, claim decoding, the fetch wrapper and silent token renewal
+  // all live in auth.js; this page only reacts to what they report.
+
+  // ---------- Tenant scope ----------
+  var TENANT_ME = "me";
+
+  function accountRole() {
+    var claims = UnicaAuth.decodeClaims(UnicaAuth.accessToken());
+    return claims && typeof claims.role === "string" ? claims.role : "";
+  }
+
+  // Approve is the one decision that publishes a new ontology version
+  // immediately, so it is gated on the same role check every other
+  // ontology-mutating surface in this portal uses (see ontology.html,
+  // violations.html) rather than a role invented for this page alone.
+  function isAdmin() { return accountRole() === "admin"; }
+
+  function requestedTenant() {
+    if (!isAdmin()) return "";
+    var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  function tenantSegment() {
+    if (!isAdmin()) return TENANT_ME;
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function tenantPath(suffix) {
+    return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
+  }
+
+  // The property jump target on ontology.html carries the same ?tenant= an
+  // administrator's other links in this portal carry (see home.html's
+  // PAGE_CARDS), so the page lands on the right tenant's editor.
+  function ontologyHref(property) {
+    var q = isAdmin() && state.currentTenant ? "tenant=" + encodeURIComponent(state.currentTenant.id) : "";
+    if (property) q += (q ? "&" : "") + "property=" + encodeURIComponent(property);
+    return "./ontology.html" + (q ? "?" + q : "");
+  }
+
+  function showLogin(message) {
+    UnicaAuth.dropTab();
+    els.appView.hidden = true;
+    els.userInfo.hidden = true;
+    els.loginView.hidden = false;
+    if (message) {
+      els.loginError.textContent = message;
+      els.loginError.style.display = "block";
+    }
+  }
+
+  function showApp() {
+    els.loginView.hidden = true;
+    els.appView.hidden = false;
+    els.userInfo.hidden = false;
+  }
+
+  function errorText(err) {
+    if (err && err.status === 403) {
+      return "无权限：" + ((err.data && err.data.error) || "当前账号不能处理修改建议");
+    }
+    return (err && err.message) || "请求失败";
+  }
+
+  function reportError(prefix, err) {
+    if (err.message === "unauthorized") return;
+    toast(prefix + ": " + errorText(err), "error");
+  }
+
+  // ---------- Login ----------
+  els.loginForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    els.loginError.style.display = "none";
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "登录中…";
+
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+    var remember = els.remember.checked;
+
+    UnicaAuth.login(email, password, remember)
+      .then(function () {
+        els.userEmail.textContent = email;
+        showApp();
+        bootstrap();
+      })
+      .catch(function (err) {
+        els.loginError.textContent = err.message || "登录失败，请检查网络";
+        els.loginError.style.display = "block";
+      })
+      .finally(function () {
+        els.loginSubmit.disabled = false;
+        els.loginSubmit.textContent = "登 录";
+      });
+  });
+
+  els.logoutBtn.addEventListener("click", function () {
+    UnicaAuth.logout();
+    showLogin();
+  });
+
+  // ---------- Bootstrap after login ----------
+  function bootstrap() {
+    loadTenants();
+  }
+
+  function loadTenants() {
+    if (!isAdmin()) {
+      return UnicaAuth.api("/api/v1/tenants/" + TENANT_ME)
+        .then(function (tenant) {
+          state.tenants = tenant ? [tenant] : [];
+          renderTenantOptions();
+        })
+        .catch(function (err) { reportError("加载租户失败", err); });
+    }
+    return UnicaAuth.api("/api/v1/tenants")
+      .then(function (data) {
+        state.tenants = Array.isArray(data) ? data : [];
+        renderTenantOptions();
+      })
+      .catch(function (err) { reportError("加载租户失败", err); });
+  }
+
+  function renderTenantOptions() {
+    els.plField.hidden = !isAdmin();
+    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
+
+    if (state.tenants.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无租户</option>';
+      els.noPlHint.innerHTML = '还没有租户，先去<a href="./admin.html">开户 →</a>';
+      els.noPlHint.hidden = false;
+      els.queueCard.hidden = true;
+      return;
+    }
+    els.plSelect.innerHTML = state.tenants.map(function (pl) {
+      return '<option value="' + escapeHtml(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
+    }).join("");
+    var initial = findTenant(requestedTenant()) || state.tenants[0];
+    els.plSelect.value = String(initial.id);
+    selectTenant(els.plSelect.value);
+  }
+
+  els.plSelect.addEventListener("change", function () {
+    selectTenant(els.plSelect.value);
+  });
+
+  function selectTenant(id) {
+    state.currentTenant = findTenant(id);
+    els.tenantName.textContent = state.currentTenant
+      ? (state.currentTenant.display_name || state.currentTenant.name)
+      : "";
+    if (!state.currentTenant) {
+      els.queueCard.hidden = true;
+      els.noPlHint.hidden = false;
+      return;
+    }
+    els.noPlHint.hidden = true;
+    els.queueCard.hidden = false;
+    resetPaging();
+    loadProposals();
+  }
+
+  function findTenant(id) {
+    for (var i = 0; i < state.tenants.length; i++) {
+      if (String(state.tenants[i].id) === String(id)) return state.tenants[i];
+    }
+    return null;
+  }
+
+  // ---------- Filters ----------
+  els.statusChips.addEventListener("click", function (e) {
+    var btn = e.target.closest("button.chip");
+    if (!btn) return;
+    state.status = btn.dataset.status || "";
+    syncChips(els.statusChips, state.status, "status");
+    resetPaging();
+    loadProposals();
+  });
+
+  els.tierChips.addEventListener("click", function (e) {
+    var btn = e.target.closest("button.chip");
+    if (!btn) return;
+    state.tier = btn.dataset.tier || "";
+    syncChips(els.tierChips, state.tier, "tier");
+    resetPaging();
+    loadProposals();
+  });
+
+  function syncChips(host, value, key) {
+    var chips = host.querySelectorAll("button.chip");
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].setAttribute("aria-pressed", (chips[i].dataset[key] || "") === value ? "true" : "false");
+    }
+  }
+
+  els.refreshBtn.addEventListener("click", function () {
+    if (state.currentTenant) {
+      loadProposals();
+    } else {
+      loadTenants();
+    }
+  });
+
+  els.prevBtn.addEventListener("click", function () {
+    if (state.offset <= 0) return;
+    state.offset = Math.max(0, state.offset - PAGE_SIZE);
+    loadProposals();
+  });
+
+  els.nextBtn.addEventListener("click", function () {
+    if (state.offset + PAGE_SIZE >= state.total) return;
+    state.offset += PAGE_SIZE;
+    loadProposals();
+  });
+
+  function resetPaging() {
+    state.offset = 0;
+    state.selected = {};
+  }
+
+  function clearFilters() {
+    state.status = "pending";
+    state.tier = "";
+    syncChips(els.statusChips, state.status, "status");
+    syncChips(els.tierChips, state.tier, "tier");
+    resetPaging();
+    loadProposals();
+  }
+
+  // ---------- Load ----------
+  function proposalsPath(params) {
+    var qs = [];
+    Object.keys(params).forEach(function (k) {
+      var v = params[k];
+      if (v === "" || v === null || v === undefined) return;
+      qs.push(encodeURIComponent(k) + "=" + encodeURIComponent(v));
+    });
+    return tenantPath("/facts/proposals") + (qs.length ? "?" + qs.join("&") : "");
+  }
+
+  function loadProposals() {
+    if (!state.currentTenant) return Promise.resolve();
+    state.loading = true;
+    els.emptyBox.hidden = true;
+    els.pager.hidden = true;
+    els.list.hidden = false;
+    els.list.innerHTML = '<div class="loading-text">加载中…</div>';
+
+    var plId = state.currentTenant.id;
+    return UnicaAuth.api(proposalsPath({
+      status: state.status,
+      tier: state.tier,
+      limit: PAGE_SIZE,
+      offset: state.offset
+    }))
+      .then(function (data) {
+        if (String(plId) !== String(state.currentTenant.id)) return; // stale response
+        data = data || {};
+        state.items = Array.isArray(data.items) ? data.items : [];
+        state.total = typeof data.total === "number" ? data.total : state.items.length;
+
+        // The queue can shrink between pages as rows are decided out of the
+        // filter, stranding the reviewer past the last page. Snap back instead.
+        if (state.items.length === 0 && state.offset > 0) {
+          var lastOffset = Math.floor(Math.max(0, state.total - 1) / PAGE_SIZE) * PAGE_SIZE;
+          if (lastOffset < state.offset) {
+            state.offset = lastOffset;
+            return loadProposals();
+          }
+        }
+
+        render();
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        els.list.innerHTML =
+          '<div class="empty-state">加载失败：' + escapeHtml(errorText(err)) + "</div>";
+        els.totalPill.className = "pill muted";
+        els.totalPill.textContent = "—";
+        reportError("加载修改建议失败", err);
+      })
+      .finally(function () { state.loading = false; });
+  }
+
+  // ---------- Render ----------
+  function render() {
+    renderTotalPill();
+    if (state.items.length === 0) {
+      els.list.hidden = true;
+      els.pager.hidden = true;
+      renderEmptyState();
+      renderBatchBar();
+      return;
+    }
+    els.emptyBox.hidden = true;
+    els.list.hidden = false;
+    els.list.innerHTML = state.items.map(cardHtml).join("");
+    bindCards();
+    renderPager();
+    renderBatchBar();
+  }
+
+  function renderTotalPill() {
+    var label = state.status ? STATUS_LABELS[state.status] || state.status : "全部";
+    els.totalPill.className = "pill " + (state.total > 0 ? "info" : "muted");
+    els.totalPill.textContent = label + " " + state.total + " 条";
+  }
+
+  function renderPager() {
+    var from = state.offset + 1;
+    var to = state.offset + state.items.length;
+    els.pageCount.textContent = "第 " + from + "–" + to + " 条 / 共 " + state.total + " 条";
+    els.prevBtn.disabled = state.offset <= 0;
+    els.nextBtn.disabled = state.offset + PAGE_SIZE >= state.total;
+    els.pager.hidden = false;
+  }
+
+  function renderEmptyState() {
+    if (state.status === "pending" && !state.tier) {
+      els.emptyBox.className = "empty-state celebrate";
+      els.emptyBox.innerHTML =
+        '<span class="big">🎉</span>' +
+        '<span class="title">待复核队列已清空</span><br />' +
+        "本体修改建议来自客服对话与坐席回复的挖掘：新客户说法沉淀成别名（A 级），" +
+        "新的维度取值或伴随约束等你判断（B 级），系统答不出、需要人补值的事实缺口在这里排队（C 级）。" +
+        "当前没有待复核的建议，切换到「全部」可以回看已处理的记录。";
+    } else {
+      els.emptyBox.className = "empty-state";
+      els.emptyBox.innerHTML =
+        '<span class="title">没有符合筛选条件的建议</span><br />' +
+        "换一组筛选条件，或清除筛选查看待复核队列。" +
+        '<div class="actions-row"><button id="clear-filters-btn">清除筛选</button></div>';
+      var btn = document.getElementById("clear-filters-btn");
+      if (btn) btn.addEventListener("click", clearFilters);
+    }
+    els.emptyBox.hidden = false;
+  }
+
+  // A card may be checked only while pending and tier A/B: tier C has no
+  // batch path (see anyTierC in the server handler), and a decided row is
+  // read-only history.
+  function selectable(v) {
+    return v.status === "pending" && (v.tier === "A" || v.tier === "B");
+  }
+
+  function cardHtml(v) {
+    var id = String(v.id);
+    var checked = !!state.selected[id];
+    var tierPill = '<span class="pill ' + (TIER_PILLS[v.tier] || "muted") + '">' +
+      escapeHtml(TIER_LABELS[v.tier] || v.tier) + "</span>";
+    var kindPill = '<span class="pill muted">' + escapeHtml(KIND_LABELS[v.kind] || v.kind) + "</span>";
+    var statusPill = '<span class="pill ' + (STATUS_PILLS[v.status] || "muted") + '">' +
+      escapeHtml(STATUS_LABELS[v.status] || v.status) + "</span>";
+
+    return (
+      '<div class="proposal-card' + (checked ? " selected" : "") + '" data-id="' + escapeHtml(id) + '">' +
+      '<div class="proposal-head">' +
+      (selectable(v)
+        ? '<span class="select"><input type="checkbox" data-act="select" id="sel-' + escapeHtml(id) + '"' +
+          (checked ? " checked" : "") + ' /></span>'
+        : "") +
+      '<span class="pills">' + tierPill + kindPill + statusPill + "</span>" +
+      "</div>" +
+      '<div class="proposal-blocks">' +
+      diffBlock(v) +
+      evidenceBlock(v) +
+      gateBlock(v) +
+      signalBlock(v) +
+      "</div>" +
+      metaHtml(v) +
+      actionsHtml(v) +
+      "</div>"
+    );
+  }
+
+  // ---------- Block ① 差异 ----------
+  // Tier A/B proposals can only be additions — ApplyAlias/ApplyDimensionValue/
+  // ApplyRequires never remove anything (see pkg/domain/proposal.go), so the
+  // diff is always the green "+" line; a removal of any kind classifies as
+  // tier C and never reaches this queue.
+  function diffBlock(v) {
+    var body;
+    if (v.kind === "alias") {
+      body = '<div class="diff-line diff-add">+ 「' + escapeHtml(v.phrase) + '」 → ' +
+        escapeHtml(describeRef(v.ref)) + "</div>";
+    } else if (v.kind === "dimension_value") {
+      var dv = v.payload || {};
+      body = '<div class="diff-line diff-add">+ 维度「' + escapeHtml(dv.dimension || "") +
+        '」新增取值「' + escapeHtml(dv.value || "") + '」</div>' +
+        (dv.label ? '<div class="diff-note">说法：' + escapeHtml(dv.label) + "</div>" : "");
+    } else if (v.kind === "requires") {
+      var rq = v.payload || {};
+      body = '<div class="diff-line diff-add">+ 属性「' + escapeHtml(rq.property || "") +
+        '」新增伴随约束：需同时具备「' + escapeHtml(rq.companion || "") + '」</div>';
+    } else {
+      var mf = v.missing_fact || {};
+      body = '<div class="diff-line">属性「' + escapeHtml(mf.property || "") + '」' +
+        (mf.declared ? "已声明，但取值缺失" : "尚未声明") + "</div>" +
+        '<div class="diff-note">场景：' + escapeHtml(scopeText(mf.scope)) + "</div>" +
+        (mf.reason ? '<div class="diff-note">' + escapeHtml(mf.reason) + "</div>" : "");
+    }
+    return '<div class="pblock"><h4>差异</h4><div class="body">' + body + "</div></div>";
+  }
+
+  function scopeText(scope) {
+    if (!scope || typeof scope !== "object") return "未限定";
+    var parts = Object.keys(scope).map(function (k) { return k + "=" + scope[k]; });
+    return parts.length ? parts.join("，") : "未限定";
+  }
+
+  // ---------- Block ② 证据对话 ----------
+  function evidenceBlock(v) {
+    var evidence = Array.isArray(v.evidence) ? v.evidence : [];
+    if (evidence.length === 0) {
+      return '<div class="pblock"><h4>证据对话</h4><div class="body">无对应证据</div></div>';
+    }
+    var items = evidence.map(function (e) {
+      return '<div class="evidence-item">' +
+        (e.conversation_id ? '<span class="convo">会话 <code>' + escapeHtml(e.conversation_id) + "</code></span>" : "") +
+        '<q>' + escapeHtml(e.excerpt || "（无摘录）") + "</q></div>";
+    }).join("");
+    return '<div class="pblock"><h4>证据对话</h4><div class="body">' +
+      '<button class="evidence-toggle" data-act="toggle-evidence">展开 ' + evidence.length + ' 条</button>' +
+      '<div class="evidence-list">' + items + "</div>" +
+      "</div></div>";
+  }
+
+  // ---------- Block ③ 验证门 ----------
+  // v.gate is the gate.Verdict JSON (unica/router/internal/replay/gate.go)
+  // this candidate was queued with — required for tier A, optional evidence
+  // for tier B, absent for tier C (see migration 024's tier_a_gate check).
+  function gateBlock(v) {
+    var g = v.gate;
+    if (!g || typeof g !== "object") {
+      return '<div class="pblock"><h4>验证门</h4><div class="body gate-empty">未经验证门</div></div>';
+    }
+    var passPill = '<span class="pill ' + (g.pass ? "ok" : "bad") + '">' + (g.pass ? "通过" : "未通过") + "</span>";
+    var forcedNote;
+    if (!g.forced_checked) {
+      forcedNote = "无强制转人工样本";
+    } else if (!g.forced_lost || g.forced_lost.length === 0) {
+      forcedNote = g.forced_checked + " 条全部保留";
+    } else {
+      forcedNote = g.forced_checked + " 条中有 " + g.forced_lost.length + " 条未保留";
+    }
+    var rows = [
+      ["改前可削减率", g.compared ? (100 * (g.reducible_before || 0)).toFixed(1) + "%" : "—"],
+      ["改后可削减率", g.compared ? (100 * (g.reducible_after || 0)).toFixed(1) + "%" : "—"],
+      ["符号检验 p 值", typeof g.p_value === "number" ? g.p_value.toFixed(4) : "—"],
+      ["强制类转人工", forcedNote],
+      ["可比较对话数", (g.compared || 0) + (g.small_sample ? "（样本偏小）" : "")]
+    ];
+    var rowsHtml = rows.map(function (r) {
+      return '<div class="row"><span class="k">' + escapeHtml(r[0]) + '</span><span class="v">' + escapeHtml(String(r[1])) + "</span></div>";
+    }).join("");
+    var failuresHtml = Array.isArray(g.failures) && g.failures.length
+      ? "<ul class=\"gate-failures\">" + g.failures.map(function (f) { return "<li>" + escapeHtml(f) + "</li>"; }).join("") + "</ul>"
+      : "";
+    return '<div class="pblock"><h4>验证门 ' + passPill + '</h4><div class="body"><div class="gate-metrics">' +
+      rowsHtml + "</div>" + failuresHtml + "</div></div>";
+  }
+
+  // ---------- Block ④ 签名占比与出现次数 ----------
+  function signalBlock(v) {
+    var occ = "出现 " + (v.occurrences || 0) + " 次";
+    var share = v.share == null ? "占比样本不足，暂不展示" : "占比 " + (100 * v.share).toFixed(1) + "%";
+    return '<div class="pblock"><h4>签名占比与出现次数</h4><div class="body">' +
+      '<div class="diff-line">' + escapeHtml(occ) + "</div>" +
+      '<div class="diff-line">' + escapeHtml(share) + "</div>" +
+      "</div></div>";
+  }
+
+  function metaHtml(v) {
+    var meta = [];
+    if (v.base_ontology_version) meta.push("基于本体版本 <code>v" + escapeHtml(v.base_ontology_version) + "</code>");
+    if (v.published_version) meta.push("已发布至 <code>v" + escapeHtml(v.published_version) + "</code>");
+    if (v.decided_by) {
+      meta.push("处理人 " + escapeHtml(v.decided_by) + (v.decided_at ? " · " + escapeHtml(formatDate(v.decided_at)) : ""));
+    }
+    if (v.decision_note) meta.push("备注：" + escapeHtml(v.decision_note));
+    meta.push(escapeHtml(formatDate(v.created_at)));
+    return '<div class="proposal-meta">' + meta.map(function (m) { return "<span>" + m + "</span>"; }).join("") + "</div>";
+  }
+
+  // Only tier C carries per-card buttons: it has no batch path at all (no
+  // checkbox above), just the three individual decisions the task calls for.
+  function actionsHtml(v) {
+    if (v.tier !== "C" || v.status !== "pending") return "";
+    var property = propertyOf(v);
+    return '<div class="proposal-actions">' +
+      '<a class="action-link" href="' + ontologyHref(property) + '">去补事实</a>' +
+      '<button type="button" data-act="resolve">已补完</button>' +
+      '<button type="button" data-act="reject">驳回</button>' +
+      "</div>";
+  }
+
+  function bindCards() {
+    var cards = els.list.querySelectorAll(".proposal-card");
+    for (var i = 0; i < cards.length; i++) {
+      cards[i].addEventListener("click", onCardClick);
+    }
+  }
+
+  function onCardClick(e) {
+    var toggle = e.target.closest('[data-act="toggle-evidence"]');
+    if (toggle) {
+      var list = toggle.parentElement.querySelector(".evidence-list");
+      if (list) {
+        var open = list.classList.toggle("expanded");
+        toggle.textContent = open ? "收起" : "展开 " + list.children.length + " 条";
+      }
+      return;
+    }
+    var select = e.target.closest('input[data-act="select"]');
+    if (select) {
+      var card = select.closest(".proposal-card");
+      var id = card && card.dataset.id;
+      if (!id) return;
+      if (select.checked) state.selected[id] = true;
+      else delete state.selected[id];
+      card.classList.toggle("selected", select.checked);
+      renderBatchBar();
+      return;
+    }
+    var actBtn = e.target.closest("button[data-act]");
+    if (actBtn && (actBtn.dataset.act === "resolve" || actBtn.dataset.act === "reject")) {
+      var cardEl = actBtn.closest(".proposal-card");
+      var pid = cardEl && cardEl.dataset.id;
+      if (!pid) return;
+      decide([Number(pid)], actBtn.dataset.act === "resolve" ? "resolve" : "reject", actBtn);
+    }
+  }
+
+  // ---------- Batch bar ----------
+  function renderBatchBar() {
+    var ids = Object.keys(state.selected);
+    if (ids.length === 0) {
+      els.batchBarWrap.hidden = true;
+      return;
+    }
+    els.batchBarWrap.hidden = false;
+    els.batchCount.textContent = "已选 " + ids.length + " 条";
+    // Approving publishes, and the tenant's own users may already publish
+    // facts from ontology.html; hiding approve from them here would only send
+    // them round to do the same by hand, without the gate's evidence.
+    els.batchApproveBtn.hidden = false;
+  }
+
+  els.batchRejectBtn.addEventListener("click", function () {
+    var ids = Object.keys(state.selected).map(Number);
+    if (ids.length === 0) return;
+    decide(ids, "reject", els.batchRejectBtn);
+  });
+
+  els.batchApproveBtn.addEventListener("click", function () {
+    var ids = Object.keys(state.selected).map(Number);
+    if (ids.length === 0) return;
+    if (!confirm("采纳会立即发布新版本，可在本体页回滚。确认采纳选中的 " + ids.length + " 条修改建议？")) return;
+    decide(ids, "approve", els.batchApproveBtn);
+  });
+
+  // ---------- Decide ----------
+  function decide(ids, decision, btn) {
+    var original = btn ? btn.textContent : "";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "提交中…";
+    }
+    UnicaAuth.api(tenantPath("/facts/proposals/decide"), {
+      method: "POST",
+      body: JSON.stringify({ ids: ids, decision: decision, note: "" })
+    })
+      .then(function (resp) {
+        state.selected = {};
+        if (decision === "approve") {
+          toast("已采纳 " + ids.length + " 条并发布新版本" +
+            (resp && resp.published_version ? "（v" + resp.published_version + "）" : "") + "。可在本体页回滚。",
+            "success", { href: ontologyHref(), text: "前往确定性事实 →" });
+        } else if (decision === "resolve") {
+          toast("已标记为「已解决」", "success");
+        } else {
+          toast("已驳回", "success");
+        }
+        loadProposals();
+      })
+      .catch(function (err) {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+        reportError("处理失败", err);
+      });
+  }
+
+  // ---------- Utils ----------
+  function formatDate(iso) {
+    if (!iso) return "—";
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString("zh-CN", { hour12: false });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---------- Init ----------
+  UnicaAuth.onSessionLost(function () {
+    showLogin("登录已过期，请重新登录");
+  });
+
+  syncChips(els.statusChips, state.status, "status");
+  syncChips(els.tierChips, state.tier, "tier");
+  if (UnicaAuth.bootstrapTab()) {
+    showApp();
+    bootstrap();
+  } else {
+    showLogin();
+  }
+})();
+</script>

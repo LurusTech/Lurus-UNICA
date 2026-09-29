@@ -234,9 +234,19 @@
     font-size: 0.78rem; border: 1px solid var(--border);
   }
   .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
   .pill.muted { color: var(--text-muted); }
   .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .row-actions button { padding: 5px 10px; font-size: 0.78rem; }
+  /* Post-publish quality, next to each version row: never more than a pill, a
+     sample-size hint and, when suspect, an advisory the operator still has to
+     act on themselves via the existing rollback button below. */
+  td.quality { white-space: normal; min-width: 200px; }
+  .quality-stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .quality-suspect { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .quality-suspect .hint.warn { margin-top: 0; }
+  .quality-rollback-btn { padding: 4px 9px; font-size: 0.76rem; border-color: var(--warn); color: var(--warn); }
   .empty-state { padding: 40px 16px; text-align: center; color: var(--text-muted); }
   .empty-state a { color: var(--primary); text-decoration: none; font-weight: 500; }
   .empty-state a:hover { text-decoration: underline; }
@@ -378,13 +388,14 @@
               <tr>
                 <th>版本</th>
                 <th>状态</th>
+                <th>发布后质量</th>
                 <th>备注</th>
                 <th>创建时间</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody id="version-tbody">
-              <tr><td colspan="5" class="loading-text">加载中…</td></tr>
+              <tr><td colspan="6" class="loading-text">加载中…</td></tr>
             </tbody>
           </table>
         </div>
@@ -480,7 +491,11 @@
     currentTenant: null,
     ontology: null,
     lastValidYaml: null,
-    stashedValidation: null
+    stashedValidation: null,
+    // versionQuality maps a version number to its /quality/versions entry.
+    // Loaded separately from the ontology itself: a slow or failing quality
+    // query must never block editing or publishing.
+    versionQuality: {}
   };
 
   var els = {
@@ -725,8 +740,10 @@
     els.noPlHint.hidden = true;
     els.panels.hidden = false;
     resetEditorFeedback();
+    state.versionQuality = {};
     loadOntology();
     loadConfig();
+    loadVersionQuality();
   }
 
   function findTenant(id) {
@@ -747,7 +764,7 @@
     els.editorLoading.hidden = false;
     els.editorLoading.textContent = "加载中…";
     els.editorBody.hidden = true;
-    els.versionTbody.innerHTML = '<tr><td colspan="5" class="loading-text">加载中…</td></tr>';
+    els.versionTbody.innerHTML = '<tr><td colspan="6" class="loading-text">加载中…</td></tr>';
 
     return UnicaAuth.api(factsPath(""))
       .then(function (data) {
@@ -759,14 +776,47 @@
         renderVersions();
         els.editorLoading.hidden = true;
         els.editorBody.hidden = false;
+        focusRequestedProperty();
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
         els.editorLoading.textContent = "加载失败: " + errorText(err);
         els.versionTbody.innerHTML =
-          '<tr><td colspan="5" class="empty-state">' + escapeHtml(errorText(err)) + "</td></tr>";
+          '<tr><td colspan="6" class="empty-state">' + escapeHtml(errorText(err)) + "</td></tr>";
         reportError("加载本体失败", err);
       });
+  }
+
+  // A missing-fact ticket on proposals.html links here with ?property=<name>.
+  // The editor is plain YAML, so "going to the property" means selecting the
+  // line that declares it; the value itself is still the person's to write.
+  // Done once per page load, so a later reload of the editor does not keep
+  // stealing the caret.
+  var propertyFocused = false;
+  function focusRequestedProperty() {
+    if (propertyFocused) return;
+    var m = /[?&]property=([^&]*)/.exec(window.location.search);
+    if (!m) return;
+    propertyFocused = true;
+    var name = decodeURIComponent(m[1].replace(/\+/g, " "));
+    if (!name) return;
+    var text = els.yamlEditor.value;
+    var escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var re = new RegExp("^[ \\t]+([\"']?)" + escaped + "\\1[ \\t]*:", "m");
+    var hit = re.exec(text);
+    if (!hit) {
+      toast("本体里还没有声明「" + name + "」，请先在 properties 下声明它，再在 assertions 里补上取值", "info");
+      return;
+    }
+    var start = hit.index;
+    var end = text.indexOf("\n", start);
+    if (end < 0) end = text.length;
+    els.yamlEditor.focus();
+    els.yamlEditor.setSelectionRange(start, end);
+    var line = text.slice(0, start).split("\n").length - 1;
+    var lineHeight = parseFloat(window.getComputedStyle(els.yamlEditor).lineHeight) || 18;
+    els.yamlEditor.scrollTop = Math.max(0, (line - 3) * lineHeight);
+    toast("已定位到「" + name + "」：请补上取值后校验并发布，再回修改建议页把工单标为已补完", "info");
   }
 
   function renderActiveMeta() {
@@ -792,7 +842,7 @@
   function renderVersions() {
     var versions = (state.ontology && state.ontology.versions) || [];
     if (versions.length === 0) {
-      els.versionTbody.innerHTML = '<tr><td colspan="5" class="empty-state">尚无版本，校验通过后发布第一版</td></tr>';
+      els.versionTbody.innerHTML = '<tr><td colspan="6" class="empty-state">尚无版本，校验通过后发布第一版</td></tr>';
       return;
     }
     els.versionTbody.innerHTML = versions.map(versionRowHtml).join("");
@@ -801,6 +851,7 @@
       var btn = document.getElementById("rollback-" + v.version);
       if (btn) btn.addEventListener("click", function () { rollback(v); });
     });
+    bindQualityRollbackButtons(versions);
   }
 
   function versionRowHtml(v) {
@@ -814,11 +865,93 @@
       "<tr>" +
       "<td>v" + escapeHtml(v.version) + "</td>" +
       "<td>" + badge + "</td>" +
+      '<td class="quality">' + versionQualityHtml(v) + "</td>" +
       '<td class="note">' + (v.note ? escapeHtml(v.note) : "—") + "</td>" +
       "<td>" + formatDate(v.created_at) + "</td>" +
       '<td><div class="row-actions">' + actions + "</div></td>" +
       "</tr>"
     );
+  }
+
+  // ---------- Post-publish version quality ----------
+  // Loaded separately from the ontology (its own request, its own failure
+  // mode): a slow or erroring quality query must never block viewing or
+  // editing the ontology itself, so a failure here just leaves the column
+  // showing "—" instead of surfacing a toast over the whole page.
+  var VERSION_QUALITY_WINDOW_DAYS = 7;
+
+  function loadVersionQuality() {
+    if (!state.currentTenant) return Promise.resolve();
+    var plId = state.currentTenant.id;
+    return UnicaAuth.api(tenantPath("/quality/versions?window_days=" + VERSION_QUALITY_WINDOW_DAYS))
+      .then(function (data) {
+        if (String(plId) !== String(state.currentTenant.id)) return; // stale response
+        var byVersion = {};
+        ((data && data.versions) || []).forEach(function (q) { byVersion[q.version] = q; });
+        state.versionQuality = byVersion;
+        renderVersions();
+      })
+      .catch(function () {
+        // Silent: the version table already renders fine with an empty
+        // versionQuality map, and this is a secondary observation surface,
+        // not something a publish/rollback decision depends on.
+      });
+  }
+
+  function formatRate(rate) {
+    return (rate * 100).toFixed(1) + "%";
+  }
+
+  function versionQualityHtml(v) {
+    var q = state.versionQuality[v.version];
+    if (!q) return '<span class="hint">—</span>';
+
+    var lines = ['<div class="quality-stack">'];
+    if (q.reducible_rate != null) {
+      lines.push('<span class="pill muted">可削减类转人工率 ' + formatRate(q.reducible_rate) + "</span>");
+    } else {
+      lines.push('<span class="pill muted">发布后暂无会话</span>');
+    }
+    lines.push(
+      '<span class="hint">样本 ' + (q.conversations || 0) + " 会话 · 发布后首 " +
+      (q.window_days || VERSION_QUALITY_WINDOW_DAYS) + " 天" +
+      (q.previous_version ? "，对比 v" + escapeHtml(q.previous_version) : "") + "</span>"
+    );
+
+    if (q.previous_version) {
+      if (q.insufficient) {
+        lines.push('<span class="hint warn">样本不足（两侧均需 ≥30 会话），暂不可信，仅供参考</span>');
+      } else if (q.suspect) {
+        lines.push(
+          '<div class="quality-suspect">' +
+          '<span class="pill warn">⚠ 较 v' + escapeHtml(q.previous_version) + " 显著上升</span>" +
+          '<span class="hint warn">' + escapeHtml(q.advisory || "建议人工确认是否回滚") + "</span>" +
+          '<button class="quality-rollback-btn" type="button" data-target-version="' +
+          escapeAttr(String(q.previous_version)) + '">回滚到 v' + escapeHtml(q.previous_version) + "</button>" +
+          "</div>"
+        );
+      }
+    }
+    lines.push("</div>");
+    return lines.join("");
+  }
+
+  // Suspect cells carry their own rollback button, wired to the same
+  // confirm()-guarded rollback() the version history's own button uses: this
+  // never rolls back on its own, it only saves a person the scroll.
+  function bindQualityRollbackButtons(versions) {
+    var buttons = els.versionTbody.querySelectorAll(".quality-rollback-btn");
+    for (var i = 0; i < buttons.length; i++) {
+      (function (btn) {
+        var target = btn.dataset.targetVersion;
+        var targetVersion = null;
+        for (var j = 0; j < versions.length; j++) {
+          if (String(versions[j].version) === String(target)) { targetVersion = versions[j]; break; }
+        }
+        if (!targetVersion) return;
+        btn.addEventListener("click", function () { rollback(targetVersion); });
+      })(buttons[i]);
+    }
   }
 
   // ---------- Validate ----------

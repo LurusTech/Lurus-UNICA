@@ -221,6 +221,12 @@
       <p>复核 AI 回答与确定性事实冲突的证据，并回流到本体修正。</p>
       <span class="go">进入复核 →</span>
     </a>
+    <a class="card" id="card-proposals" href="./proposals.html">
+      <div class="icon">🧬</div>
+      <h3>修改建议</h3>
+      <p>复核从客服对话里挖掘出的本体修改建议：别名、结构化改动与待补的事实缺口。</p>
+      <span class="go">进入复核 →</span>
+    </a>
   </div>
 </main>
 
@@ -258,7 +264,7 @@
 
   // Cards that open another page of this portal; an administrator acting for a
   // tenant carries that tenant across to them.
-  var PAGE_CARDS = ["card-knowledge", "card-channels", "card-facts", "card-ai-settings", "card-violations"];
+  var PAGE_CARDS = ["card-knowledge", "card-channels", "card-facts", "card-ai-settings", "card-violations", "card-proposals"];
 
   // ---------- Toasts ----------
   function toast(message, kind) {

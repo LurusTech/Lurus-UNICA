@@ -23,6 +23,13 @@ type signalStore interface {
 	HandoffStatsSince(ctx context.Context, productLineID string, since time.Time) (*domain.HandoffStats, error)
 	GetHandoffEvent(ctx context.Context, id int64) (*domain.HandoffEventRecord, error)
 	AnnotateHandoffEvent(ctx context.Context, id int64, reason, annotator string) (*domain.HandoffEventRecord, error)
+
+	// VersionQuality and Northstar back the post-publish observation surface:
+	// how each ontology version fared after it went live, and the three
+	// north-star numbers with their sample sizes. Both are read-only and both
+	// are satisfied by *domain.Store.
+	VersionQuality(ctx context.Context, productLineID string, window time.Duration) ([]domain.VersionWindow, error)
+	Northstar(ctx context.Context, productLineID string, since time.Time) (*domain.NorthstarStats, error)
 }
 
 // SignalsHandler serves the read-only observation layer: where violations

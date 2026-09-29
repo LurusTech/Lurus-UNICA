@@ -34,6 +34,7 @@ import (
 	"github.com/kefu/unica/admin/internal/tenant/channels"
 	"github.com/kefu/unica/admin/internal/tenant/facts"
 	"github.com/kefu/unica/admin/internal/tenant/knowledge"
+	"github.com/kefu/unica/admin/internal/tenant/proposals"
 	"github.com/kefu/unica/admin/internal/tenant/quality"
 	"github.com/kefu/unica/admin/internal/tenant/workbench"
 	"github.com/kefu/unica/pkg/difyapp"
@@ -322,6 +323,7 @@ func main() {
 	// The observation layer: violation concentration, dead-constraint coverage,
 	// and the structured "why did this leave the AI" trail with its annotations.
 	signalsHandler := quality.NewSignalsHandler(domainStore, plRepo, auditLogger)
+	proposalsHandler := proposals.NewHandler(domainStore, plRepo, auditLogger)
 
 	// The workbench trades the caller's own portal account for a password-free
 	// Chatwoot session, provisioning the agent it signs in as when the account
@@ -508,6 +510,9 @@ func main() {
 		violationStats:   http.HandlerFunc(signalsHandler.HandleViolationStats),
 		handoffs:         http.HandlerFunc(signalsHandler.HandleHandoffs),
 		handoffAnnotate:  http.HandlerFunc(signalsHandler.HandleAnnotate),
+		proposals:        http.HandlerFunc(proposalsHandler.Handle),
+		versionQuality:   http.HandlerFunc(signalsHandler.HandleVersionQuality),
+		northstar:        http.HandlerFunc(signalsHandler.HandleNorthstar),
 		workbench:        http.HandlerFunc(workbenchHandler.Handle),
 		productLineModel: http.HandlerFunc(modelOverrideHandler.Handle),
 	}
@@ -664,6 +669,9 @@ type tenantRouter struct {
 	violationStats   http.Handler
 	handoffs         http.Handler
 	handoffAnnotate  http.Handler
+	proposals        http.Handler
+	versionQuality   http.Handler
+	northstar        http.Handler
 	workbench        http.Handler
 	productLineModel http.Handler
 }
@@ -744,6 +752,13 @@ func (t *tenantRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		t.serve(w, r, t.channel, joinPath(legacyChannelsPrefix, sub))
 	case "facts":
+		// The proposal queue is its own module with an open subtree
+		// (proposals/{id}, proposals/decide), so it is matched before the
+		// closed list of ontology paths.
+		if sub == "proposals" || strings.HasPrefix(sub, "proposals/") {
+			t.serve(w, r, t.proposals, joinPath(legacyProductLinesPrefix+tenantID, sub))
+			return
+		}
 		mapped, ok := factsPaths[sub]
 		if !ok {
 			handler.ErrorJSON(w, http.StatusNotFound, "unknown facts sub-path: "+sub)
@@ -768,6 +783,17 @@ func (t *tenantRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		t.serve(w, r, t.handoffAnnotate, joinPath(legacyHandoffEventsPrefix, sub))
+	case "quality":
+		// Read-only observation: how each ontology version fared after it
+		// went live, and the north-star numbers with their sample sizes.
+		switch sub {
+		case "versions":
+			t.serve(w, r, t.versionQuality, joinPath(legacyProductLinesPrefix+tenantID, "quality/versions"))
+		case "northstar":
+			t.serve(w, r, t.northstar, joinPath(legacyProductLinesPrefix+tenantID, "quality/northstar"))
+		default:
+			handler.ErrorJSON(w, http.StatusNotFound, "unknown quality sub-path: "+sub)
+		}
 	case "product-lines":
 		// A sibling subtree of ai-settings, not a member of it: the closed list
 		// above governs the ai-settings names only, and adding this one there
