@@ -25,7 +25,8 @@ func (r Run) Markdown(sampleSize int, seed string) string {
 	fmt.Fprintf(&b, "| 强制类转人工 | %d |\n", s.Forced)
 	fmt.Fprintf(&b, "| 投递答复 | %d |\n", s.Delivered)
 	fmt.Fprintf(&b, "| 错误作答（a）违规数 | %d（其中肯定了否定项 %d） |\n", s.Violations, s.AffirmedDenied)
-	fmt.Fprintf(&b, "| 与坐席参照不一致（b） | %d 轮待人看 |\n\n", s.ReferenceMismatches)
+	fmt.Fprintf(&b, "| 与坐席参照不一致（b） | %d 轮待人看 |\n", s.ReferenceMismatches)
+	fmt.Fprintf(&b, "| 每轮都交付且零违规（pass^k） | %.1f%% |\n\n", 100*s.DeliveredCleanPassK)
 
 	if len(s.ByReason) > 0 {
 		b.WriteString("## 转人工原因分布\n\n| 原因 | 类别 | 次数 |\n|---|---|---|\n")
@@ -80,6 +81,13 @@ func (v Verdict) Markdown() string {
 		b.WriteString("\n")
 	}
 
+	if v.SmallSample {
+		fmt.Fprintf(&b, "⚠️ 样本量小（可比较 %d 轮 < 30），结论仅供参考。\n\n", v.Compared)
+	}
+	if v.FingerprintWarning != "" {
+		fmt.Fprintf(&b, "⚠️ %s\n\n", v.FingerprintWarning)
+	}
+
 	fmt.Fprintf(&b, "改动级别：%s\n\n", tierLabel(v))
 	for _, c := range v.Changes {
 		fmt.Fprintf(&b, "- [%s] %s\n", c.Tier, c.What)
@@ -90,16 +98,50 @@ func (v Verdict) Markdown() string {
 	fmt.Fprintf(&b, "| 其中肯定了否定项 | %d | %d |\n", v.AffirmedDeniedBefore, v.AffirmedDeniedAfter)
 	fmt.Fprintf(&b, "| 强制类转人工逐条保留 | %d 条需保留 | 丢失 %d 条 |\n\n", v.ForcedChecked, len(v.ForcedLost))
 
-	for _, id := range v.ForcedLost {
-		fmt.Fprintf(&b, "- 丢失的强制转人工：`%s`\n", id)
+	fmt.Fprintf(&b, "统计门控：符号检验 p = %.4f（改进 %d 例，退步 %d 例，α = %.2f）；"+
+		"候选相对基线的可削减率净变化 95%% 区间 [%.1f%%, %.1f%%]（自助法，仅供参考，不参与门控）。\n\n",
+		v.PValue, v.Improved, v.RegressedCount, v.Alpha, 100*v.DiffCI[0], 100*v.DiffCI[1])
+
+	if len(v.ConfigMismatch) > 0 {
+		b.WriteString("## 配置指纹不一致\n\n")
+		for _, m := range v.ConfigMismatch {
+			fmt.Fprintf(&b, "- %s\n", m)
+		}
+		b.WriteString("\n")
 	}
+
+	if len(v.NewViolations) > 0 {
+		b.WriteString("## 候选本体下新出现的违规\n\n")
+		for _, id := range v.NewViolations {
+			fmt.Fprintf(&b, "- `%s`\n", id)
+		}
+		b.WriteString("\n")
+	}
+
+	if len(v.CandidateErrors) > 0 {
+		b.WriteString("## 候选请求失败，结论不可信\n\n")
+		for _, id := range v.CandidateErrors {
+			fmt.Fprintf(&b, "- `%s`\n", id)
+		}
+		b.WriteString("\n")
+	}
+
+	if len(v.ForcedLost) > 0 {
+		b.WriteString("## 丢失的强制转人工\n\n")
+		for _, id := range v.ForcedLost {
+			fmt.Fprintf(&b, "- `%s`\n", id)
+		}
+		b.WriteString("\n")
+	}
+
 	if len(v.Fixed) > 0 || len(v.Regressed) > 0 {
-		fmt.Fprintf(&b, "\n新解决 %d 轮，新转人工 %d 轮。\n", len(v.Fixed), len(v.Regressed))
+		fmt.Fprintf(&b, "新解决 %d 轮，新转人工 %d 轮。\n", len(v.Fixed), len(v.Regressed))
 		for _, id := range v.Regressed {
 			fmt.Fprintf(&b, "- 新转人工：`%s`\n", id)
 		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\n> " + honestyNote + "\n")
+	b.WriteString("> " + honestyNote + "\n")
 	return b.String()
 }
 

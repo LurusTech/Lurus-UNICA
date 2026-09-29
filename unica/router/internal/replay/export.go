@@ -139,6 +139,17 @@ type Case struct {
 	// Reference is the first human agent reply after this turn, if any: the
 	// answer a person gave to the same question.
 	Reference string `json:"reference,omitempty"`
+	// OntologyVersion is the version the live system judged this turn under,
+	// from the matching trace. Zero when the turn has no trace (an untraced
+	// handoff) or the export predates this field. cmd/evolve uses it to warn
+	// when a chosen sample was logged under a different ontology version than
+	// the one being evaluated.
+	OntologyVersion int `json:"ontology_version,omitempty"`
+	// LoggedViolations are what the live validator found in the answer it
+	// judged, from the matching trace. Mining reads the undeclared-property
+	// ones as missing-fact signals; the replay never uses them, since it
+	// re-validates its own answers.
+	LoggedViolations []domain.Violation `json:"logged_violations,omitempty"`
 }
 
 // Outcome is a routing decision and its reason.
@@ -163,9 +174,11 @@ func Cases(convs []Conversation) []Case {
 
 func casesOf(c Conversation) []Case {
 	type turn struct {
-		at     time.Time
-		query  string
-		logged Outcome
+		at              time.Time
+		query           string
+		logged          Outcome
+		ontologyVersion int
+		violations      []domain.Violation
 	}
 	var turns []turn
 
@@ -177,7 +190,7 @@ func casesOf(c Conversation) []Case {
 		if strings.TrimSpace(t.CustomerMessage) == "" {
 			continue
 		}
-		turns = append(turns, turn{t.At, t.CustomerMessage, Outcome{t.Decision, t.Reason}})
+		turns = append(turns, turn{t.At, t.CustomerMessage, Outcome{t.Decision, t.Reason}, t.OntologyVersion, t.Violations})
 	}
 	for _, h := range c.Handoffs {
 		if h.CorrelationID != "" && traced[h.CorrelationID] {
@@ -186,7 +199,7 @@ func casesOf(c Conversation) []Case {
 		if strings.TrimSpace(h.CustomerMessage) == "" {
 			continue
 		}
-		turns = append(turns, turn{h.At, h.CustomerMessage, Outcome{"handoff", h.Reason}})
+		turns = append(turns, turn{h.At, h.CustomerMessage, Outcome{"handoff", h.Reason}, 0, nil})
 	}
 	sort.SliceStable(turns, func(i, j int) bool { return turns[i].at.Before(turns[j].at) })
 
@@ -199,13 +212,15 @@ func casesOf(c Conversation) []Case {
 			until = turns[i+1].at
 		}
 		out = append(out, Case{
-			ID:             fmt.Sprintf("%s#%d", c.ConversationID, i+1),
-			ConversationID: c.ConversationID,
-			ProductLine:    c.ProductLine,
-			History:        customerMessagesBefore(c.Messages, t.at, t.query),
-			Query:          t.query,
-			Logged:         t.logged,
-			Reference:      firstHumanReplyBetween(c.Messages, t.at, until),
+			ID:               fmt.Sprintf("%s#%d", c.ConversationID, i+1),
+			ConversationID:   c.ConversationID,
+			ProductLine:      c.ProductLine,
+			History:          customerMessagesBefore(c.Messages, t.at, t.query),
+			Query:            t.query,
+			Logged:           t.logged,
+			Reference:        firstHumanReplyBetween(c.Messages, t.at, until),
+			OntologyVersion:  t.ontologyVersion,
+			LoggedViolations: t.violations,
 		})
 	}
 	return out

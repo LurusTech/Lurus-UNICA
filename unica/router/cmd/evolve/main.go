@@ -32,6 +32,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,6 +66,10 @@ func main() {
 		err = cmdEval(os.Args[2:])
 	case "gate":
 		err = cmdGate(os.Args[2:])
+	case "propose":
+		err = cmdPropose(os.Args[2:])
+	case "enqueue":
+		err = cmdEnqueue(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -80,7 +86,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: evolve redact|split|eval|gate [flags]   (evolve <cmd> -h for flags)")
+	fmt.Fprintln(os.Stderr, "usage: evolve redact|split|eval|gate|propose|enqueue [flags]   (evolve <cmd> -h for flags)")
 }
 
 // cmdRedact masks personal data and refuses to write anything if the strict
@@ -158,12 +164,14 @@ func cmdEval(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
 	in := fs.String("in", "", "redacted export")
 	line := fs.String("line", "", "product line name")
-	ontologyArg := fs.String("ontology", "", "ontology YAML to evaluate, or \"active\" for the published version (needs POSTGRES_URL)")
+	ontologyArg := fs.String("ontology", "",
+		"ontology YAML to evaluate, \"active\" for the published version, or \"version:N\" for a specific stored version (the latter two need POSTGRES_URL)")
 	side := fs.String("split", string(replay.SplitHoldout), "holdout | train | all")
 	manifestPath := fs.String("manifest", "", "restrict to the conversations listed (frozen baseline set)")
 	outPath := fs.String("out", "", "write the run as JSON (input to gate)")
 	mdPath := fs.String("md", "", "write a markdown report")
 	history := fs.Int("history", 2, "earlier customer messages replayed per turn for multi-turn context")
+	repeat := fs.Int("repeat", 1, "times each case is replayed; more than 1 feeds the gate's statistical test and its stricter pass^k forced-handoff check")
 	concurrency := fs.Int("concurrency", 3, "concurrent turns")
 	timeout := fs.Duration("timeout", 120*time.Second, "per-turn timeout, history included")
 	validationFlag := fs.String("validation", "", "override the line's validation mode (off|shadow|enforce)")
@@ -184,9 +192,12 @@ func cmdEval(args []string) error {
 	if *seed == "" {
 		*seed = time.Now().Format("2006-01-02")
 	}
+	if *repeat < 1 {
+		*repeat = 1
+	}
 
 	ctx := context.Background()
-	lc, difyCfg, active, err := resolveLine(ctx, *line, *baseURL, *apiKey, *ontologyArg == "active")
+	lc, difyCfg, stored, err := resolveLine(ctx, *line, *baseURL, *apiKey, *ontologyArg)
 	if err != nil {
 		return err
 	}
@@ -201,8 +212,8 @@ func cmdEval(args []string) error {
 		}
 	}
 
-	o := active
-	if *ontologyArg != "active" {
+	o := stored
+	if *ontologyArg != "active" && !strings.HasPrefix(*ontologyArg, "version:") {
 		if o, err = domain.LoadYAMLFile(*ontologyArg); err != nil {
 			return err
 		}
@@ -240,6 +251,9 @@ func cmdEval(args []string) error {
 		return fmt.Errorf("no replayable turns for %s on the %s side", *line, split)
 	}
 
+	predictedCalls := len(cases) * *repeat * (*history + 1)
+	fmt.Fprintf(os.Stderr, "预计模型调用次数：%d 用例 × %d 次重复 × (%d 历史 + 1) = %d\n",
+		len(cases), *repeat, *history, predictedCalls)
 	fmt.Fprintf(os.Stderr, "replaying %d turn(s) of %s (%s) under ontology v%d, validation %s, triage %s...\n",
 		len(cases), *line, split, o.Version, lc.Validation, lc.Triage)
 	run, err := replay.Execute(ctx, cases, replay.DifyAnswerer{
@@ -247,6 +261,7 @@ func cmdEval(args []string) error {
 	}, replay.RunConfig{
 		ProductLine: *line, Split: split, Ontology: o, Line: lc,
 		Concurrency: *concurrency, Timeout: *timeout,
+		History: *history, Repeat: *repeat,
 	})
 	if err != nil {
 		return err
@@ -268,23 +283,56 @@ func cmdEval(args []string) error {
 	s := run.Summary
 	fmt.Fprintf(os.Stderr, "reducible %d (%.1f%%), forced %d, violations %d, errored %d\n",
 		s.Reducible, 100*s.ReducibleRate, s.Forced, s.Violations, s.Errored)
+	warnOntologyVersionSpread(cases, o.Version)
 	return nil
 }
 
+// warnOntologyVersionSpread flags a sample whose traces were logged under an
+// ontology version other than the one just evaluated — the comparison such a
+// mix produces is not necessarily fair to either side.
+func warnOntologyVersionSpread(cases []replay.Case, evaluated int) {
+	dist := map[int]int{}
+	for _, c := range cases {
+		dist[c.OntologyVersion]++
+	}
+	var mismatched []string
+	for v, n := range dist {
+		if v != 0 && v != evaluated {
+			mismatched = append(mismatched, fmt.Sprintf("v%d×%d", v, n))
+		}
+	}
+	if len(mismatched) == 0 {
+		return
+	}
+	sort.Strings(mismatched)
+	fmt.Fprintf(os.Stderr, "warning: 所选用例记录时的本体版本与本次评测的 v%d 不同：%s；对比可能不公平\n",
+		evaluated, strings.Join(mismatched, "、"))
+}
+
 // resolveLine reads how the line routes live: its Dify app and config_json
-// from product_lines, triage from platform_settings, and optionally the active
-// ontology. Without POSTGRES_URL, explicit Dify flags and defaults are used,
-// and the report says which.
-func resolveLine(ctx context.Context, line, baseURL, apiKey string, wantActive bool) (replay.LineConfig, bridge.DifyConfig, *domain.Ontology, error) {
+// from product_lines, triage from platform_settings, and — when ontologyArg is
+// "active" or "version:N" — the stored ontology itself. Without POSTGRES_URL,
+// explicit Dify flags and defaults are used, and the report says which.
+func resolveLine(ctx context.Context, line, baseURL, apiKey, ontologyArg string) (replay.LineConfig, bridge.DifyConfig, *domain.Ontology, error) {
 	lc := replay.LineConfig{
 		Guardrail:  guardrail.DefaultGuardrailConfig(),
 		Validation: domain.ValidationShadow,
 		Triage:     guardrail.DefaultTriageMode,
 	}
+	wantVersion := 0
+	wantStored := ontologyArg == "active"
+	if strings.HasPrefix(ontologyArg, "version:") {
+		v, err := strconv.Atoi(strings.TrimPrefix(ontologyArg, "version:"))
+		if err != nil {
+			return lc, bridge.DifyConfig{}, nil, fmt.Errorf("invalid -ontology %q: %w", ontologyArg, err)
+		}
+		wantStored, wantVersion = true, v
+	}
+
 	dsn := os.Getenv("POSTGRES_URL")
 	if dsn == "" {
-		if wantActive {
-			return lc, bridge.DifyConfig{}, nil, fmt.Errorf("-ontology active needs POSTGRES_URL")
+		if wantStored {
+			return lc, bridge.DifyConfig{}, nil, fmt.Errorf("-ontology %s needs POSTGRES_URL", ontologyArg)
 		}
 		if baseURL == "" || apiKey == "" {
 			return lc, bridge.DifyConfig{}, nil, fmt.Errorf("set POSTGRES_URL, or pass -dify-base-url and -dify-api-key")
@@ -326,13 +374,28 @@ func resolveLine(ctx context.Context, line, baseURL, apiKey string, wantActive b
 		dify.APIKey = apiKey
 	}
 
-	var active *domain.Ontology
-	if wantActive {
-		if active, _, err = domain.NewStore(db, time.Minute).Active(cctx, rec.ID); err != nil {
+	var stored *domain.Ontology
+	switch {
+	case ontologyArg == "active":
+		if stored, _, err = domain.NewStore(db, time.Minute).Active(cctx, rec.ID); err != nil {
 			return lc, dify, nil, fmt.Errorf("load active ontology: %w", err)
 		}
+	case wantStored: // version:N
+		var compiled []byte
+		err := db.QueryRowContext(cctx,
+			`SELECT compiled FROM ontology_versions WHERE product_line_id = $1 AND version = $2`,
+			rec.ID, wantVersion).Scan(&compiled)
+		if err == sql.ErrNoRows {
+			return lc, dify, nil, fmt.Errorf("product line %q has no ontology version %d", line, wantVersion)
+		}
+		if err != nil {
+			return lc, dify, nil, fmt.Errorf("load ontology version %d: %w", wantVersion, err)
+		}
+		if stored, err = domain.Decompile(compiled); err != nil {
+			return lc, dify, nil, fmt.Errorf("ontology v%d for %s is unusable: %w", wantVersion, line, err)
+		}
 	}
-	return lc, dify, active, nil
+	return lc, dify, stored, nil
 }
 
 func cmdGate(args []string) error {
@@ -341,6 +404,9 @@ func cmdGate(args []string) error {
 	candPath := fs.String("candidate", "", "candidate run JSON")
 	mdPath := fs.String("md", "", "write the verdict as markdown")
 	jsonPath := fs.String("json", "", "write the verdict as JSON")
+	alpha := fs.Float64("alpha", replay.DefaultGateOptions().Alpha, "one-sided sign-test significance threshold to pass the gate")
+	allowConfigMismatch := fs.Bool("allow-config-mismatch", false,
+		"pass even if the baseline and candidate routed under different guardrail/validation/triage/history/repeat settings")
 	fs.Parse(args)
 	if *basePath == "" || *candPath == "" {
 		return fmt.Errorf("-baseline and -candidate are required")
@@ -360,7 +426,10 @@ func cmdGate(args []string) error {
 		fmt.Fprintln(os.Stderr, "warning: these runs are not on the holdout split; a verdict on training data is not evidence")
 	}
 
-	v, err := replay.Gate(base, cand)
+	opts := replay.DefaultGateOptions()
+	opts.Alpha = *alpha
+	opts.AllowConfigMismatch = *allowConfigMismatch
+	v, err := replay.GateWith(base, cand, opts)
 	if err != nil {
 		return err
 	}

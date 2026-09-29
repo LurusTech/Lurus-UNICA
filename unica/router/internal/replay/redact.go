@@ -25,9 +25,12 @@ type redactRule struct {
 	// "订单号：123" — so the text still says what was masked.
 	keep bool
 	mask string
-	// strict rules also run as the residual check after redaction; contextual
-	// rules would re-fire on their own placeholders' labels and are
-	// redaction-only.
+	// strict rules also run as the residual check after redaction. Most
+	// contextual (keep=true) rules would re-fire on their own placeholder's
+	// label and stay redaction-only; address_labelled and name_labelled are
+	// the exception — their content class excludes 〔, so a clean redaction
+	// never matches again, and a second match only happens when something
+	// was genuinely left behind.
 	strict bool
 }
 
@@ -43,18 +46,30 @@ var redactRules = []redactRule{
 	{name: "bank_card", re: regexp.MustCompile(`\b\d{16,19}\b`), mask: "〔卡号〕", strict: true},
 	{name: "long_number", re: regexp.MustCompile(`\b[A-Za-z]{0,4}\d{10,}\b`), mask: "〔单号〕", strict: true},
 	{name: "landline", re: regexp.MustCompile(`\b0\d{2,3}[- ]?\d{7,8}\b`), mask: "〔电话〕", strict: true},
+	// address_labelled captures up to the next sentence separator or 80
+	// runes (Go's regexp character classes count runes, not bytes, so this
+	// is 80 Chinese characters, not 80 bytes), whichever comes first, and
+	// replaces the whole span — a bound short enough to reject a run-on
+	// sentence would instead leave the tail of a long real address unmasked.
+	// It is strict: after a clean redaction the label is immediately
+	// followed by its placeholder, so this same pattern only matches again
+	// if something was left behind.
 	{name: "address_labelled",
-		re:   regexp.MustCompile(`((?:收货地址|收件地址|详细地址|地址|住址|寄到|送到)[:：\s]*)([^\s，。,；;！!？?〔]{4,40})`),
-		keep: true, mask: "〔地址〕"},
+		re:   regexp.MustCompile(`((?:收货地址|收件地址|详细地址|地址|住址|寄到|送到)[:：\s]*)([^\s，。,；;！!？?〔]{4,80})`),
+		keep: true, mask: "〔地址〕", strict: true},
 	{name: "address",
 		re:   regexp.MustCompile(`\p{Han}{2,8}(?:省|市|自治区)\p{Han}{0,12}(?:区|县|镇|乡|街道)[\p{Han}\d\-]{0,20}(?:路|街|道|巷|弄|村|号|栋|幢|单元|室|楼)[\p{Han}\d\-号栋幢单元室楼]*`),
 		mask: "〔地址〕"},
 	{name: "street",
 		re:   regexp.MustCompile(`\p{Han}{1,10}(?:路|街|大道|巷|弄)\d+号[\p{Han}\d\-号栋幢单元室楼]*`),
 		mask: "〔地址〕"},
+	// name_labelled: same "capture to the next separator or 80 runes" shape
+	// as address_labelled, and strict for the same reason — a fixed 2-3 Han
+	// character cap truncated (and left residue from) any name longer than a
+	// common compound surname.
 	{name: "name_labelled",
-		re:   regexp.MustCompile(`((?:我叫|本人姓名|姓名|收货人|收件人|联系人|户名)[:：\s]*)(\p{Han}{2,3})`),
-		keep: true, mask: "〔姓名〕"},
+		re:   regexp.MustCompile(`((?:我叫|本人姓名|姓名|收货人|收件人|联系人|户名)[:：\s]*)([^\s，。,；;！!？?〔]{2,80})`),
+		keep: true, mask: "〔姓名〕", strict: true},
 	{name: "honorific",
 		re:   regexp.MustCompile(`\p{Han}(先生|女士|小姐)`),
 		mask: "〔姓〕$1"},

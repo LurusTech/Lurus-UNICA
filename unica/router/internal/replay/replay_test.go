@@ -12,6 +12,7 @@ import (
 	"github.com/kefu/unica/pkg/domain"
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/guardrail"
+	"github.com/kefu/unica/router/internal/routing"
 )
 
 const ontologyDir = "../../../../deploy/config/ontology"
@@ -132,6 +133,25 @@ func TestClassifyReason(t *testing.T) {
 	}
 }
 
+// TestReasonNamesMatchRouter pins the names domain spells out to the router's
+// own constants: a renamed router reason would otherwise fall through to
+// Forced, which is safe, or be missed as Other, which is not.
+func TestReasonNamesMatchRouter(t *testing.T) {
+	pairs := map[string]string{
+		domain.HandoffReasonLowConfidence:  guardrail.ReasonLowConfidence,
+		domain.HandoffReasonEmptyAnswer:    routing.ReasonEmptyAnswer,
+		domain.HandoffReasonModelRequested: guardrail.ReasonModelRequested,
+		domain.HandoffReasonClaimConflict:  guardrail.ReasonClaimConflict,
+		domain.HandoffReasonAIUnavailable:  guardrail.ReasonAIUnavailable,
+		domain.HandoffReasonConfidenceOK:   guardrail.ReasonConfidenceOK,
+	}
+	for spelled, constant := range pairs {
+		if spelled != constant {
+			t.Errorf("domain spells %q, router constant is %q", spelled, constant)
+		}
+	}
+}
+
 // stubAnswerer answers by query; a query mapped to "" errors.
 type stubAnswerer struct {
 	answers map[string]string
@@ -221,11 +241,27 @@ func candidateWithAlias(t *testing.T, o *domain.Ontology) *domain.Ontology {
 	return cand
 }
 
+// manyFixed builds n paired cases, ids fix1..fixN, each handed off for
+// low_confidence at the baseline and answered by the candidate: enough
+// discordant pairs, at a clean 5:0, to clear the sign test's default alpha
+// (SignTestOneSided(5, 0) = 1/32).
+func manyFixed(n int) (base, cand []CaseResult) {
+	for i := 1; i <= n; i++ {
+		id := fmt.Sprintf("fix%d", i)
+		base = append(base, handedOff(id, "low_confidence"))
+		cand = append(cand, sent(id, "签收后24小时内拍照申报即可"))
+	}
+	return base, cand
+}
+
 func TestGate_PassesAnAliasThatResolvesAReducibleHandoff(t *testing.T) {
 	base := freshMart(t)
 	cand := candidateWithAlias(t, base)
-	b := gateRun(t, base, handedOff("a", "low_confidence"), handedOff("b", "safety_incident"), sent("c", "好的"))
-	c := gateRun(t, cand, sent("a", "签收后24小时内拍照申报即可"), handedOff("b", "safety_incident"), sent("c", "好的"))
+	baseFixed, candFixed := manyFixed(5)
+	baseResults := append(baseFixed, handedOff("b", "safety_incident"), sent("c", "好的"))
+	candResults := append(candFixed, handedOff("b", "safety_incident"), sent("c", "好的"))
+	b := gateRun(t, base, baseResults...)
+	c := gateRun(t, cand, candResults...)
 
 	v, err := Gate(b, c)
 	if err != nil {
@@ -234,7 +270,10 @@ func TestGate_PassesAnAliasThatResolvesAReducibleHandoff(t *testing.T) {
 	if !v.Pass || v.Tier != domain.TierAlias || v.ForcedChecked != 1 {
 		t.Errorf("verdict = %+v", v)
 	}
-	if len(v.Fixed) != 1 || v.Fixed[0] != "a" {
+	if v.PValue > 0.05 {
+		t.Errorf("5 improved against 0 regressed should clear the default alpha: p=%v", v.PValue)
+	}
+	if len(v.Fixed) != 5 {
 		t.Errorf("fixed = %v", v.Fixed)
 	}
 	if !strings.Contains(v.Markdown(), "通过") {
@@ -248,22 +287,32 @@ func TestGate_AForcedHandoffLostFails(t *testing.T) {
 	base := freshMart(t)
 	cand := candidateWithAlias(t, base)
 
-	for name, candB := range map[string]CaseResult{
-		"answered": sent("b", "别担心，喝点热水"),
-		"errored":  {CaseID: "b", Err: "timeout"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			b := gateRun(t, base, handedOff("a", "low_confidence"), handedOff("b", "safety_incident"))
-			c := gateRun(t, cand, sent("a", "好的"), candB)
-			v, err := Gate(b, c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if v.Pass || len(v.ForcedLost) != 1 || v.ForcedLost[0] != "b" {
-				t.Errorf("verdict = %+v", v)
-			}
-		})
-	}
+	t.Run("answered", func(t *testing.T) {
+		b := gateRun(t, base, handedOff("a", "low_confidence"), handedOff("b", "safety_incident"))
+		c := gateRun(t, cand, sent("a", "好的"), sent("b", "别担心，喝点热水"))
+		v, err := Gate(b, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Pass || len(v.ForcedLost) != 1 || v.ForcedLost[0] != "b" {
+			t.Errorf("verdict = %+v", v)
+		}
+	})
+
+	// An error is not evidence the candidate let the turn through — it means
+	// the run cannot be trusted at all, so it is reported separately and must
+	// never be folded into (or read as clearing) the forced-handoff check.
+	t.Run("errored", func(t *testing.T) {
+		b := gateRun(t, base, handedOff("a", "low_confidence"), handedOff("b", "safety_incident"))
+		c := gateRun(t, cand, sent("a", "好的"), CaseResult{CaseID: "b", Err: "timeout"})
+		v, err := Gate(b, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Pass || len(v.ForcedLost) != 0 || len(v.CandidateErrors) != 1 || v.CandidateErrors[0] != "b" {
+			t.Errorf("verdict = %+v", v)
+		}
+	})
 }
 
 // A turn the live system handed off for a forced reason is protected even if
@@ -285,8 +334,8 @@ func TestGate_ReducibleRateMustFallStrictly(t *testing.T) {
 	cand := candidateWithAlias(t, base)
 	b := gateRun(t, base, handedOff("a", "low_confidence"), sent("c", "好的"))
 	c := gateRun(t, cand, handedOff("a", "low_confidence"), sent("c", "好的"))
-	if v, _ := Gate(b, c); v.Pass {
-		t.Errorf("an unchanged rate must not pass: %+v", v)
+	if v, _ := Gate(b, c); v.Pass || v.Improved != 0 || v.RegressedCount != 0 || v.PValue != 1 {
+		t.Errorf("an unchanged rate has no discordant pairs, so the sign test cannot reject: %+v", v)
 	}
 }
 
@@ -303,8 +352,11 @@ func TestGate_ViolationsMustNotRise(t *testing.T) {
 		t.Errorf("a new affirmed denial must fail the gate: %+v", v)
 	}
 
-	b = gateRun(t, base, handedOff("a", "low_confidence"), sent("c", "本店商品可以保修一年。"))
-	c = gateRun(t, cand, sent("a", "好的"), sent("c", "本店商品可以保修一年。"))
+	baseFixed, candFixed := manyFixed(5)
+	baseResults := append(baseFixed, sent("c", "本店商品可以保修一年。"))
+	candResults := append(candFixed, sent("c", "本店商品可以保修一年。"))
+	b = gateRun(t, base, baseResults...)
+	c = gateRun(t, cand, candResults...)
 	v, _ = Gate(b, c)
 	if v.ViolationsBefore != 1 || v.ViolationsAfter != 1 || !v.Pass {
 		t.Errorf("the baseline's 保修 answer must be counted under the candidate's alias too: %+v", v)
