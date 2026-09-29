@@ -86,6 +86,12 @@ type handoffRecorder interface {
 	RecordHandoffEvent(ctx context.Context, ev domain.HandoffEvent)
 }
 
+// traceRecorder persists one row per judged answer for the ontology evolution
+// loop, only while evolve_capture is on. Best-effort like handoffRecorder.
+type traceRecorder interface {
+	RecordAnswerTrace(ctx context.Context, tr domain.AnswerTrace)
+}
+
 // Router consumes inbound messages, resolves routes, calls AI, and publishes responses.
 type Router struct {
 	rdb               *redis.Client
@@ -99,6 +105,7 @@ type Router struct {
 	switches          *Switches
 	ontology          ontologySource
 	handoffLog        handoffRecorder
+	traceLog          traceRecorder
 	breaker           *domain.Breaker
 	marketingTracker  *marketing.Tracker
 	surveyHandler     *survey.Handler
@@ -197,8 +204,10 @@ func (r *Router) SetOntology(store *domain.Store) {
 	}
 	r.ontology = store
 	// The same store carries the handoff-event bypass, so wiring the ontology
-	// is what turns structured handoff recording on.
+	// is what turns structured handoff recording on. Answer traces ride along,
+	// gated at write time by evolve_capture.
 	r.handoffLog = store
+	r.traceLog = store
 }
 
 // Start begins consuming inbound messages with the configured number of workers.
@@ -572,6 +581,47 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	r.recordJudgement(ctx, config, convID, workerID, ac, &judgement, difyResp)
 	r.deliverJudgement(ctx, config, msg, convID, workerID, query, ac, &judgement,
 		difyResp, difyDuration, guardrailCfg.HoldingMessage)
+	r.recordAnswerTrace(ctx, config, msg, convID, ac, &judgement, difyResp)
+}
+
+// recordAnswerTrace keeps what a later replay of this judgement needs: the raw
+// answer with its tags, the retrieval scores, and the ontology version. It
+// runs after delivery, so a slow insert costs evidence rather than the
+// customer's reply, and only while evolve_capture is on.
+func (r *Router) recordAnswerTrace(ctx context.Context, config *RouteConfig, msg *model.StandardMessage,
+	convID string, ac *aiCallContext, j *Judgement, difyResp *bridge.DifyResponse) {
+	if r.traceLog == nil || !r.switches.Capture() {
+		return
+	}
+	sources := make([]domain.TraceSource, 0, len(difyResp.RetrieverResources))
+	for _, res := range difyResp.RetrieverResources {
+		sources = append(sources, domain.TraceSource{
+			DatasetID:    res.DatasetID,
+			DatasetName:  res.DatasetName,
+			DocumentID:   res.DocumentID,
+			DocumentName: res.DocumentName,
+			Score:        res.Score,
+		})
+	}
+	version := 0
+	if ac.ontology != nil {
+		version = ac.ontologyVersion
+	}
+	r.traceLog.RecordAnswerTrace(ctx, domain.AnswerTrace{
+		ConversationID:  convID,
+		ProductLineID:   config.ProductLineID,
+		CorrelationID:   msg.Data.CorrelationID,
+		CustomerMessage: msg.Data.Content.Text,
+		RawAnswer:       difyResp.Answer,
+		Retrieval:       sources,
+		OntologyVersion: version,
+		FactsInjected:   ac.factsInjected,
+		Decision:        string(j.Result.Decision),
+		Reason:          j.Result.Reason,
+		Confidence:      j.Confidence,
+		Violations:      j.Violations,
+		Enforced:        j.Enforced,
+	})
 }
 
 // aiCallContext is what the pre-call preparation stage decided: the inputs the
@@ -1132,14 +1182,30 @@ func (r *Router) publishHandoffEvent(ctx context.Context, msg *model.StandardMes
 		if detail == "" && evalResult.MatchedKeyword != "" {
 			detail = "keyword: " + evalResult.MatchedKeyword
 		}
-		r.handoffLog.RecordHandoffEvent(ctx, domain.HandoffEvent{
+		ev := domain.HandoffEvent{
 			ConversationID:   convID,
 			ProductLineID:    productLineID,
 			Reason:           evalResult.Reason,
 			Detail:           detail,
 			Confidence:       evalResult.Confidence,
 			AnswerSuppressed: suppressed,
-		})
+		}
+		// Under evolve_capture the row also keeps the message that triggered
+		// the handoff and the answer that was withheld — the two things the
+		// evolution loop learns from, which until now lived only in this
+		// stream event and were gone once it was consumed. A delivered answer
+		// (send_and_handoff) is not repeated here: it is in messages already.
+		if r.switches.Capture() {
+			capture := &domain.HandoffCapture{
+				CorrelationID:   msg.Data.CorrelationID,
+				CustomerMessage: msg.Data.Content.Text,
+			}
+			if suppressed {
+				capture.SuppressedAnswer = answer
+			}
+			ev.Capture = capture
+		}
+		r.handoffLog.RecordHandoffEvent(ctx, ev)
 	}
 
 	event := handoffEvent{

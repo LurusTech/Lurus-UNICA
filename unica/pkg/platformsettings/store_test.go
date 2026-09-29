@@ -30,11 +30,18 @@ var (
 	sourceCheck   = regexp.MustCompile(`(?is)platform_settings_source_check\s*\n?\s*CHECK\s*\(\s*source\s+IN\s*\(([^)]*)\)`)
 )
 
-// migrationText returns the body of the migration that defines this table,
+// migrationText returns the body of the last migration that matches def,
 // found the way the audit vocabulary test finds its own: by globbing the
-// migrations directory and keeping the last file that defines the constraint,
-// so a later migration that widens the vocabulary wins.
+// migrations directory in order, so a later migration that widens the
+// vocabulary wins. Each constraint is looked up separately because a widening
+// migration (023) replaces one constraint and leaves the rest where 022 put
+// them.
 func migrationText(t *testing.T) string {
+	t.Helper()
+	return migrationDefining(t, keyValueCheck)
+}
+
+func migrationDefining(t *testing.T, def *regexp.Regexp) string {
 	t.Helper()
 
 	dir := filepath.Join("..", "..", "router", "migrations")
@@ -53,14 +60,14 @@ func migrationText(t *testing.T) string {
 		if rerr != nil {
 			t.Fatalf("read %s: %v", path, rerr)
 		}
-		if keyValueCheck.Match(body) {
+		if def.Match(body) {
 			text, source = string(body), path
 		}
 	}
 	if text == "" {
-		t.Fatal("no migration defines platform_settings_key_value_check")
+		t.Fatalf("no migration matches %s", def)
 	}
-	t.Logf("vocabulary read from %s", source)
+	t.Logf("%s read from %s", def, source)
 	return text
 }
 
@@ -106,7 +113,7 @@ func TestAllowedValuesMatchTheMigrationExactly(t *testing.T) {
 }
 
 func TestSourceVocabularyMatchesTheMigration(t *testing.T) {
-	m := sourceCheck.FindStringSubmatch(migrationText(t))
+	m := sourceCheck.FindStringSubmatch(migrationDefining(t, sourceCheck))
 	if m == nil {
 		t.Fatal("could not find platform_settings_source_check")
 	}
@@ -122,7 +129,7 @@ func TestSourceVocabularyMatchesTheMigration(t *testing.T) {
 // migration ledger, and the documented way to apply migrations is a loop over
 // every file.
 func TestMigrationIsRerunnable(t *testing.T) {
-	if !strings.Contains(migrationText(t), "CREATE TABLE IF NOT EXISTS platform_settings") {
+	if !strings.Contains(migrationDefining(t, sourceCheck), "CREATE TABLE IF NOT EXISTS platform_settings") {
 		t.Error("022 must be re-runnable: migrations here are applied by looping over every file")
 	}
 }

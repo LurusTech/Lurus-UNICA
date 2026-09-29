@@ -26,6 +26,9 @@ const (
 	KeyIntentTriage      = "intent_triage"
 	KeySceneMode         = "scene_mode"
 	KeyIndexingTechnique = "dify_indexing_technique"
+	// KeyEvolveCapture turns on the capture the ontology evolution loop learns
+	// from (migration 023). No process seeds it: no row means off.
+	KeyEvolveCapture = "evolve_capture"
 )
 
 // Where a row's current value came from. 'seed' means it arrived from a
@@ -51,6 +54,7 @@ var allowedValues = map[string][]string{
 	KeyIntentTriage:      {"off", "shadow", "on"},
 	KeySceneMode:         {"off", "shadow", "on"},
 	KeyIndexingTechnique: {"high_quality", "economy"},
+	KeyEvolveCapture:     {"off", "on"},
 }
 
 // Keys returns every known setting key, sorted.

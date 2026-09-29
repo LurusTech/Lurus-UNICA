@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -371,4 +372,38 @@ func TestUnloadedSwitchesAnswerWithTheBuiltInDefaults(t *testing.T) {
 	if got := s.Scene(); got != DefaultSceneMode {
 		t.Errorf("scene = %q, want %q", got, DefaultSceneMode)
 	}
+}
+
+// evolve_capture is never seeded, defaults to off with no row, follows the
+// stored value without a restart, and is not turned on by a failed read.
+func TestSwitchPoller_EvolveCapture(t *testing.T) {
+	f := newFakeSettings()
+	p := NewSwitchPoller(context.Background(), f, envShadow(guardrail.TriageOff, false, SceneOff, false), 5*time.Millisecond)
+	p.Start(context.Background())
+	defer p.Stop()
+
+	for _, call := range f.seedCalls() {
+		if strings.HasPrefix(call, platformsettings.KeyEvolveCapture+"=") {
+			t.Errorf("evolve_capture must not be seeded, got %s", call)
+		}
+	}
+	if p.Switches().Capture() {
+		t.Fatal("no row must mean off")
+	}
+	if src := p.Switches().Snapshot().Sources[platformsettings.KeyEvolveCapture]; src != SwitchSourceDefault {
+		t.Errorf("source with no row = %q, want %q", src, SwitchSourceDefault)
+	}
+
+	f.set(platformsettings.KeyEvolveCapture, "on", platformsettings.SourceConsole)
+	waitFor(t, "capture on", func() bool { return p.Switches().Capture() })
+
+	f.fail(errors.New("db down"))
+	time.Sleep(20 * time.Millisecond)
+	if !p.Switches().Capture() {
+		t.Error("a failed read should keep the last value read, not flip capture off mid-collection")
+	}
+
+	f.fail(nil)
+	f.set(platformsettings.KeyEvolveCapture, "off", platformsettings.SourceConsole)
+	waitFor(t, "capture off", func() bool { return !p.Switches().Capture() })
 }

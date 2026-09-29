@@ -31,6 +31,11 @@ const (
 	// this, it is a statement about this process, and it exists so a console
 	// never presents a fallback as though it were a stored decision.
 	SwitchSourceEnvFallback = "env_fallback"
+
+	// SwitchSourceDefault means no row is stored and no environment variable
+	// stands behind the setting, so the built-in default is in force. It is
+	// how evolve_capture reads until someone turns it on.
+	SwitchSourceDefault = "default"
 )
 
 // SwitchSnapshot is one consistent reading of the platform switches.
@@ -42,6 +47,12 @@ const (
 type SwitchSnapshot struct {
 	Triage guardrail.TriageMode
 	Scene  SceneMode
+
+	// Capture reports whether evolve_capture is on: whether the router keeps
+	// the customer message and withheld answer on each handoff and writes an
+	// answer trace per judgement. Off unless a row says "on" — there is no
+	// environment variable behind it, and a failed read never turns it on.
+	Capture bool
 
 	// Sources maps a setting key to where its current value came from:
 	// 'seed', 'console', or SwitchSourceEnvFallback.
@@ -87,8 +98,9 @@ func StaticSwitches(triage guardrail.TriageMode, scene SceneMode) *Switches {
 		Triage: triage,
 		Scene:  scene,
 		Sources: map[string]string{
-			platformsettings.KeyIntentTriage: SwitchSourceEnvFallback,
-			platformsettings.KeySceneMode:    SwitchSourceEnvFallback,
+			platformsettings.KeyIntentTriage:  SwitchSourceEnvFallback,
+			platformsettings.KeySceneMode:     SwitchSourceEnvFallback,
+			platformsettings.KeyEvolveCapture: SwitchSourceDefault,
 		},
 	})
 	return s
@@ -121,6 +133,14 @@ func (s *Switches) Scene() SceneMode {
 		return snap.Scene
 	}
 	return DefaultSceneMode
+}
+
+// Capture reports whether evolve_capture is on. Off when never loaded.
+func (s *Switches) Capture() bool {
+	if snap := s.load(); snap != nil {
+		return snap.Capture
+	}
+	return false
 }
 
 // Snapshot returns a copy of the current reading, for reporting. The maps are
@@ -294,7 +314,8 @@ func (p *SwitchPoller) refresh(ctx context.Context, first bool) {
 		return
 	}
 
-	stored, err := p.loader.Load(ctx, platformsettings.KeyIntentTriage, platformsettings.KeySceneMode)
+	stored, err := p.loader.Load(ctx, platformsettings.KeyIntentTriage, platformsettings.KeySceneMode,
+		platformsettings.KeyEvolveCapture)
 	if err != nil {
 		if previous == nil {
 			// Nothing was ever read, so there is no earlier value to keep and
@@ -354,6 +375,15 @@ func (p *SwitchPoller) refresh(ctx context.Context, first bool) {
 		snap.Sources[platformsettings.KeySceneMode] = SwitchSourceEnvFallback
 	}
 
+	// evolve_capture has no environment behind it and no seed: a missing row
+	// is simply off. An illegal value cannot pass the CHECK; if one did, off.
+	if row, ok := stored[platformsettings.KeyEvolveCapture]; ok {
+		snap.Capture = row.Value == "on"
+		snap.Sources[platformsettings.KeyEvolveCapture] = row.Source
+	} else {
+		snap.Sources[platformsettings.KeyEvolveCapture] = SwitchSourceDefault
+	}
+
 	if p.env.TriageSet && snap.Triage != p.env.Triage {
 		snap.EnvShadowed["INTENT_TRIAGE"] = string(p.env.Triage)
 	}
@@ -379,8 +409,9 @@ func (p *SwitchPoller) envFallbackSnapshot(reason string) *SwitchSnapshot {
 		Triage: p.env.Triage,
 		Scene:  p.env.Scene,
 		Sources: map[string]string{
-			platformsettings.KeyIntentTriage: SwitchSourceEnvFallback,
-			platformsettings.KeySceneMode:    SwitchSourceEnvFallback,
+			platformsettings.KeyIntentTriage:  SwitchSourceEnvFallback,
+			platformsettings.KeySceneMode:     SwitchSourceEnvFallback,
+			platformsettings.KeyEvolveCapture: SwitchSourceDefault,
 		},
 		Err: reason,
 	}
@@ -391,9 +422,10 @@ func (p *SwitchPoller) envFallbackSnapshot(reason string) *SwitchSnapshot {
 // messages routed on either side of it.
 func (p *SwitchPoller) announce(previous, snap *SwitchSnapshot, first bool) {
 	if first {
-		log.Printf("[router] platform switches: intent_triage=%s (%s) scene_mode=%s (%s)",
+		log.Printf("[router] platform switches: intent_triage=%s (%s) scene_mode=%s (%s) evolve_capture=%s (%s)",
 			snap.Triage, snap.Sources[platformsettings.KeyIntentTriage],
-			snap.Scene, snap.Sources[platformsettings.KeySceneMode])
+			snap.Scene, snap.Sources[platformsettings.KeySceneMode],
+			onOffWord(snap.Capture), snap.Sources[platformsettings.KeyEvolveCapture])
 		for name, ignored := range snap.EnvShadowed {
 			log.Printf("[router] WARNING: %s=%s in this process's environment is being ignored; "+
 				"the stored value is in force. Remove it from the deployment config to stop the disagreement",
@@ -415,4 +447,15 @@ func (p *SwitchPoller) announce(previous, snap *SwitchSnapshot, first bool) {
 		log.Printf("[router] scene_mode %s -> %s (source %s)",
 			previous.Scene, snap.Scene, snap.Sources[platformsettings.KeySceneMode])
 	}
+	if previous.Capture != snap.Capture {
+		log.Printf("[router] evolve_capture %s -> %s (source %s)",
+			onOffWord(previous.Capture), onOffWord(snap.Capture), snap.Sources[platformsettings.KeyEvolveCapture])
+	}
+}
+
+func onOffWord(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }

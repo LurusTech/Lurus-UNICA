@@ -19,5 +19,21 @@ SELECT ensure_partitions(months_ahead => 3) AS partitions_created;
 -- Audit logs are retained for 90 days.
 SELECT drop_month_partitions_before('audit_logs', 90) AS audit_partitions_dropped;
 
--- Conversation history has no retention policy yet. When one is agreed, add:
---   SELECT drop_month_partitions_before('messages', <days>);
+-- Conversation history and answer traces (023) are kept 180 days by default,
+-- the retention agreed for the ontology evolution loop: long enough for a
+-- held-out replay set and a seven-day post-publish observation window, short
+-- enough that customer wording does not accumulate indefinitely. A deployment
+-- with a different agreement overrides either per run:
+--   psql ... -v messages_retain_days=365 -v answer_traces_retain_days=90 -f maintain_partitions.sql
+-- A table that does not exist (answer_traces before 023) drops nothing.
+\if :{?messages_retain_days}
+\else
+\set messages_retain_days 180
+\endif
+\if :{?answer_traces_retain_days}
+\else
+\set answer_traces_retain_days 180
+\endif
+
+SELECT drop_month_partitions_before('messages', :messages_retain_days) AS message_partitions_dropped;
+SELECT drop_month_partitions_before('answer_traces', :answer_traces_retain_days) AS answer_trace_partitions_dropped;

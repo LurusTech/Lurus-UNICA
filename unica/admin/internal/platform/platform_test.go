@@ -1417,3 +1417,28 @@ func TestHandle_TechniqueAndItsProvenanceComeFromOneRead(t *testing.T) {
 			got.Compiled.Knowledge.IndexingStored, got.Compiled.Knowledge.IndexingTechnique)
 	}
 }
+
+// evolve_capture is accepted through the same audited path as the other
+// switches, and refuses anything but off/on.
+func TestHandleSwitches_EvolveCapture(t *testing.T) {
+	store := newStubSettings()
+	trail := &rosterAudit{}
+	router := &invalidatingSwitches{sw: &bridge.RuntimeSwitches{SwitchPollInterval: "10s"}}
+	h := NewSettingsHandler(SettingsConfig{Router: router, Settings: store, Audit: trail})
+
+	if w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{"evolve_capture": "maybe"}); w.Code != http.StatusBadRequest {
+		t.Fatalf("an illegal value: status = %d, want 400", w.Code)
+	}
+	w := putSwitches(t, h, rbac.RoleAdmin, map[string]interface{}{"evolve_capture": "on", "note": "客户已书面同意"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeSwitchWrite(t, w)
+	if resp.Stored[platformsettings.KeyEvolveCapture].Value != "on" {
+		t.Errorf("stored = %+v", resp.Stored)
+	}
+	row := trail.rowFor(t, platformsettings.KeyEvolveCapture)
+	if after, _ := row.after.(map[string]interface{}); after["note"] != "客户已书面同意" {
+		t.Errorf("the audit row should carry the note: %+v", row.after)
+	}
+}

@@ -18,6 +18,21 @@ type HandoffEvent struct {
 	Detail           string
 	Confidence       float64
 	AnswerSuppressed bool
+
+	// Capture carries what the ontology evolution loop learns from. Nil —
+	// always, unless evolve_capture is on — records the row exactly as before
+	// migration 023, through the statement that predates it, so a deployment
+	// that has not applied 023 is unaffected by the switch being off.
+	Capture *HandoffCapture
+}
+
+// HandoffCapture is the handoff moment as the evolution loop needs it: which
+// inbound message triggered it, what that message said, and the answer that
+// was withheld, if one was.
+type HandoffCapture struct {
+	CorrelationID    string
+	CustomerMessage  string
+	SuppressedAnswer string
 }
 
 // HandoffEventRecord is a stored handoff decision plus its human annotation.
@@ -53,11 +68,22 @@ func (s *Store) RecordHandoffEvent(ctx context.Context, ev HandoffEvent) {
 	if s == nil || s.db == nil {
 		return
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO handoff_events
-		 (conversation_id, product_line_id, reason, detail, confidence_score, ai_response_suppressed)
-		 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)`,
-		ev.ConversationID, ev.ProductLineID, ev.Reason, ev.Detail, ev.Confidence, ev.AnswerSuppressed)
+	var err error
+	if c := ev.Capture; c != nil {
+		_, err = s.db.ExecContext(ctx,
+			`INSERT INTO handoff_events
+			 (conversation_id, product_line_id, reason, detail, confidence_score, ai_response_suppressed,
+			  correlation_id, customer_message, suppressed_answer)
+			 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''))`,
+			ev.ConversationID, ev.ProductLineID, ev.Reason, ev.Detail, ev.Confidence, ev.AnswerSuppressed,
+			c.CorrelationID, c.CustomerMessage, c.SuppressedAnswer)
+	} else {
+		_, err = s.db.ExecContext(ctx,
+			`INSERT INTO handoff_events
+			 (conversation_id, product_line_id, reason, detail, confidence_score, ai_response_suppressed)
+			 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)`,
+			ev.ConversationID, ev.ProductLineID, ev.Reason, ev.Detail, ev.Confidence, ev.AnswerSuppressed)
+	}
 	if err != nil {
 		log.Printf("[domain] failed to record handoff event for conversation %s: %v",
 			ev.ConversationID, err)

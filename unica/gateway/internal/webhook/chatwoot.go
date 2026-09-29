@@ -18,6 +18,7 @@ import (
 
 	"github.com/kefu/unica/gateway/internal/metrics"
 	"github.com/kefu/unica/pkg/model"
+	"github.com/kefu/unica/pkg/platformsettings"
 )
 
 const (
@@ -39,6 +40,30 @@ type ChatwootWebhookHandler struct {
 	rdb    *redis.Client
 	db     *sql.DB // optional; when set, first agent reply timestamps are recorded
 	config ChatwootWebhookConfig
+
+	// capture and replies keep agent replies as reference answers for the
+	// ontology evolution loop, only while evolve_capture is on. Both are set
+	// by SetDB; without a database there is nowhere to keep them.
+	capture captureFlag
+	replies agentReplyRecorder
+}
+
+// captureFlag reports whether evolve_capture is on.
+type captureFlag interface {
+	On(ctx context.Context) bool
+}
+
+// agentReplyRecorder stores one human agent reply.
+type agentReplyRecorder interface {
+	RecordAgentReply(ctx context.Context, reply agentReply) error
+}
+
+// agentReply is a human agent's reply as stored in messages.
+type agentReply struct {
+	ConversationID string
+	Content        model.MessageContent
+	PlatformMsgID  string
+	CorrelationID  string
 }
 
 // NewChatwootWebhookHandler creates a new Chatwoot webhook handler.
@@ -54,6 +79,33 @@ func NewChatwootWebhookHandler(rdb *redis.Client, config ChatwootWebhookConfig) 
 // recording is skipped.
 func (h *ChatwootWebhookHandler) SetDB(db *sql.DB) {
 	h.db = db
+	if db != nil {
+		h.capture = platformsettings.NewFlag(platformsettings.NewStore(db),
+			platformsettings.KeyEvolveCapture, platformsettings.DefaultFlagTTL)
+		h.replies = sqlReplyRecorder{db: db}
+	}
+}
+
+// sqlReplyRecorder writes agent replies into messages.
+type sqlReplyRecorder struct{ db *sql.DB }
+
+// RecordAgentReply inserts the reply with sender_type 'human'. platform_msg_id
+// is the Chatwoot message id, so a webhook redelivered by Chatwoot lands on
+// the same partition's dedup index and is skipped rather than stored twice.
+func (s sqlReplyRecorder) RecordAgentReply(ctx context.Context, reply agentReply) error {
+	content, err := json.Marshal(reply.Content)
+	if err != nil {
+		return fmt.Errorf("marshal agent reply: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO messages (conversation_id, direction, sender_type, content_json, platform_msg_id, correlation_id)
+		 VALUES ($1, 'outbound', 'human', $2, $3, $4)
+		 ON CONFLICT DO NOTHING`,
+		reply.ConversationID, content, reply.PlatformMsgID, reply.CorrelationID)
+	if err != nil {
+		return fmt.Errorf("insert agent reply: %w", err)
+	}
+	return nil
 }
 
 // cwWebhookPayload represents the top-level Chatwoot webhook event payload.
@@ -241,7 +293,32 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 		}
 	}
 
+	h.captureAgentReply(ctx, outMsg)
 	return nil
+}
+
+// captureAgentReply keeps the reply as the reference answer the evolution loop
+// compares the AI against, while evolve_capture is on. It runs after the reply
+// has been forwarded and never fails the webhook: this is observation, and a
+// customer's reply must not wait on it.
+//
+// Replies arriving after the Chatwoot-to-UNICA mapping has expired (72h) never
+// get here — the lookup above fails, is logged, and the reply is dropped, as
+// it always has been.
+func (h *ChatwootWebhookHandler) captureAgentReply(ctx context.Context, outMsg model.StandardMessage) {
+	if h.replies == nil || h.capture == nil || !h.capture.On(ctx) {
+		return
+	}
+	err := h.replies.RecordAgentReply(ctx, agentReply{
+		ConversationID: outMsg.Data.ConversationID,
+		Content:        outMsg.Data.Content,
+		PlatformMsgID:  outMsg.Data.PlatformMsgID,
+		CorrelationID:  outMsg.Data.CorrelationID,
+	})
+	if err != nil {
+		log.Printf("[chatwoot-webhook] warning: failed to capture agent reply for %s: %v",
+			outMsg.Data.ConversationID, err)
+	}
 }
 
 // handleConversationStatusChanged processes conversation status change events.

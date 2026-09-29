@@ -526,13 +526,14 @@ func rowOf(rows map[string]platformsettings.Setting, key string) *storedSetting 
 	return &out
 }
 
-// switchRows is the two behaviour switches only. The indexing technique shares
-// the table but not the section: it belongs beside the retrieval settings it
-// decides, and listing it among the router's switches would suggest the router
-// reads it, which it does not.
+// switchRows is the router's switches only: the two behaviour switches and
+// evolve_capture. The indexing technique shares the table but not the section:
+// it belongs beside the retrieval settings it decides, and listing it among the
+// router's switches would suggest the router reads it, which it does not.
 func switchRows(rows map[string]platformsettings.Setting) map[string]storedSetting {
-	out := make(map[string]storedSetting, 2)
-	for _, key := range []string{platformsettings.KeyIntentTriage, platformsettings.KeySceneMode} {
+	out := make(map[string]storedSetting, 3)
+	for _, key := range []string{platformsettings.KeyIntentTriage, platformsettings.KeySceneMode,
+		platformsettings.KeyEvolveCapture} {
 		if row, ok := rows[key]; ok {
 			out[key] = storedSettingOf(row)
 		}
@@ -973,6 +974,11 @@ type switchWriteRequest struct {
 	IntentTriage      *string `json:"intent_triage"`
 	SceneMode         *string `json:"scene_mode"`
 	IndexingTechnique *string `json:"dify_indexing_technique"`
+	// EvolveCapture turns on the capture the ontology evolution loop learns
+	// from: customer messages and withheld answers on handoffs, one trace per
+	// judged answer, and agent replies. It stores conversation text, so it is
+	// the deployment owner's decision; the audit row records who made it.
+	EvolveCapture *string `json:"evolve_capture"`
 	// AcknowledgeExistingNotMigrated must be set to change the indexing
 	// technique. Changing it does nothing to the documents already indexed —
 	// they keep the technique they were built with, and retrieval against them
@@ -1063,6 +1069,7 @@ func (h *Handler) HandleSwitches(w http.ResponseWriter, r *http.Request) {
 		{platformsettings.KeyIntentTriage, req.IntentTriage},
 		{platformsettings.KeySceneMode, req.SceneMode},
 		{platformsettings.KeyIndexingTechnique, req.IndexingTechnique},
+		{platformsettings.KeyEvolveCapture, req.EvolveCapture},
 	} {
 		if field.value == nil {
 			continue
@@ -1071,7 +1078,7 @@ func (h *Handler) HandleSwitches(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(pending) == 0 {
 		errorJSON(w, http.StatusBadRequest,
-			"没有要修改的设置项：请至少给出 intent_triage、scene_mode 或 dify_indexing_technique 之一")
+			"没有要修改的设置项：请至少给出 intent_triage、scene_mode、dify_indexing_technique 或 evolve_capture 之一")
 		return
 	}
 
