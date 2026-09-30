@@ -189,7 +189,7 @@ func main() {
 			// to know how the value got here and how old it is.
 			"intent_triage":        string(snap.Triage),
 			"scene_mode":           string(snap.Scene),
-			"evolve_capture":       snap.Capture,
+			"evolve_capture":       routing.OnOffWord(snap.Capture),
 			"switch_sources":       snap.Sources,
 			"switch_poll_interval": switchPoller.Interval().String(),
 			"ontology_enabled":     cfg.ontologyEnabled,

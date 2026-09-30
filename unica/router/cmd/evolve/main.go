@@ -70,6 +70,8 @@ func main() {
 		err = cmdPropose(os.Args[2:])
 	case "enqueue":
 		err = cmdEnqueue(os.Args[2:])
+	case "cases":
+		err = cmdCases(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -86,7 +88,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: evolve redact|split|eval|gate|propose|enqueue [flags]   (evolve <cmd> -h for flags)")
+	fmt.Fprintln(os.Stderr, "usage: evolve redact|split|eval|gate|propose|enqueue|cases [flags]   (evolve <cmd> -h for flags)")
 }
 
 // cmdRedact masks personal data and refuses to write anything if the strict

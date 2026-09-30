@@ -453,6 +453,11 @@ func (p *SwitchPoller) announce(previous, snap *SwitchSnapshot, first bool) {
 	}
 }
 
+// OnOffWord is the "on"/"off" spelling the platform settings use for the
+// capture switch, exported so /configz reports it in the same words the
+// console stores and compares.
+func OnOffWord(on bool) string { return onOffWord(on) }
+
 func onOffWord(on bool) string {
 	if on {
 		return "on"

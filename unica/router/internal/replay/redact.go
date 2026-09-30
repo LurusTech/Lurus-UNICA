@@ -55,7 +55,7 @@ var redactRules = []redactRule{
 	// followed by its placeholder, so this same pattern only matches again
 	// if something was left behind.
 	{name: "address_labelled",
-		re:   regexp.MustCompile(`((?:收货地址|收件地址|详细地址|地址|住址|寄到|送到)[:：\s]*)([^\s，。,；;！!？?〔]{4,80})`),
+		re:   regexp.MustCompile(`((?:收货地址|收件地址|详细地址|地址|住址|寄到|送到)[:：\s]*)([^\s，。,；;！!？?〔〕]{4,80})`),
 		keep: true, mask: "〔地址〕", strict: true},
 	{name: "address",
 		re:   regexp.MustCompile(`\p{Han}{2,8}(?:省|市|自治区)\p{Han}{0,12}(?:区|县|镇|乡|街道)[\p{Han}\d\-]{0,20}(?:路|街|道|巷|弄|村|号|栋|幢|单元|室|楼)[\p{Han}\d\-号栋幢单元室楼]*`),
@@ -63,12 +63,16 @@ var redactRules = []redactRule{
 	{name: "street",
 		re:   regexp.MustCompile(`\p{Han}{1,10}(?:路|街|大道|巷|弄)\d+号[\p{Han}\d\-号栋幢单元室楼]*`),
 		mask: "〔地址〕"},
+	// Both labelled rules also stop at 〕: the label inside an already-written
+	// placeholder (the 姓名 in 〔姓名〕) must not re-trigger the rule on the
+	// words that follow it, or an agent's "〔姓名〕您好" would be masked twice.
+	//
 	// name_labelled: same "capture to the next separator or 80 runes" shape
 	// as address_labelled, and strict for the same reason — a fixed 2-3 Han
 	// character cap truncated (and left residue from) any name longer than a
 	// common compound surname.
 	{name: "name_labelled",
-		re:   regexp.MustCompile(`((?:我叫|本人姓名|姓名|收货人|收件人|联系人|户名)[:：\s]*)([^\s，。,；;！!？?〔]{2,80})`),
+		re:   regexp.MustCompile(`((?:我叫|本人姓名|姓名|收货人|收件人|联系人|户名)[:：\s]*)([^\s，。,；;！!？?〔〕]{2,80})`),
 		keep: true, mask: "〔姓名〕", strict: true},
 	{name: "honorific",
 		re:   regexp.MustCompile(`\p{Han}(先生|女士|小姐)`),

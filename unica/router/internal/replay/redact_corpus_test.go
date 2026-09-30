@@ -92,3 +92,22 @@ func TestRedactText_LeavesLegitimateBusinessTextAlone(t *testing.T) {
 		})
 	}
 }
+
+// TestRedact_PlaceholderLabelDoesNotRetrigger covers the agent greeting the
+// in-database name substitution produces: 〔姓名〕您好. The 姓名 inside the
+// placeholder is not a label, so the greeting after it must survive and the
+// text must count as clean.
+func TestRedact_PlaceholderLabelDoesNotRetrigger(t *testing.T) {
+	for _, s := range []string{
+		"〔姓名〕您好，请问现在身体怎么样？",
+		"〔姓名〕您好，签收24小时内申报即可，已为您登记",
+		"收货地址：〔地址〕，明天送达",
+	} {
+		if got := RedactText(s, RedactStats{}); got != s {
+			t.Errorf("RedactText(%q) = %q, want unchanged", s, got)
+		}
+		if r := Residual(s); len(r) != 0 {
+			t.Errorf("Residual(%q) = %v, want none", s, r)
+		}
+	}
+}
