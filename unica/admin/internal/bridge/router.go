@@ -24,8 +24,12 @@ import (
 // save take effect, and Invalidate exists so the gap is not widened by this
 // service's own cache.
 type RuntimeSwitches struct {
-	IntentTriage     string `json:"intent_triage"`
-	SceneMode        string `json:"scene_mode"`
+	IntentTriage string `json:"intent_triage"`
+	SceneMode    string `json:"scene_mode"`
+	// EvolveCapture is "off" or "on", like the two above; a router that
+	// predates it omits the field, which the console shows as unreadable
+	// rather than as off.
+	EvolveCapture    string `json:"evolve_capture,omitempty"`
 	OntologyEnabled  bool   `json:"ontology_enabled"`
 	OntologyCacheTTL string `json:"ontology_cache_ttl"`
 	RouteCacheTTL    string `json:"route_cache_ttl"`

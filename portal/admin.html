@@ -1221,6 +1221,17 @@
         ["on", "判定并注入提示词",
           "把该阶段的策略正文注入提示词，改变答复的说法——可陈述的内容不变。"]
       ]
+    },
+    {
+      key: "evolve_capture",
+      title: "本体演化采集",
+      values: [
+        ["off", "不采集",
+          "转人工事件只记原因，不存客户原话、被拦下的草稿、答复轨迹和坐席回复。"],
+        ["on", "采集用于本体演化",
+          "开始把客户原话、被拦下的草稿、答复轨迹和坐席回复留在本机数据库，" +
+          "用于之后生成本体修改建议；数据不出机器。"]
+      ]
     }
   ];
 
@@ -3299,7 +3310,15 @@
     state.tenants.forEach(function (t) {
       var delBtn = document.getElementById("del-" + t.id);
       if (delBtn) delBtn.addEventListener("click", function () { openDeleteModal(t); });
+      var wsBtn = document.getElementById("ws-" + t.id);
+      if (wsBtn) wsBtn.addEventListener("click", function () { goTenantWorkspace(t.id); });
     });
+  }
+
+  // Jumps an administrator into the tenant's own workbench, addressed by
+  // ?tenant=<id> — home.html already resolves that for an admin account.
+  function goTenantWorkspace(tenantId) {
+    window.location.href = "./home.html?tenant=" + encodeURIComponent(tenantId);
   }
 
   function tenantRowHtml(t) {
@@ -3316,6 +3335,7 @@
       "<td>" + cw + "</td>" +
       "<td>" + formatDate(t.created_at) + "</td>" +
       '<td><div class="row-actions">' +
+      '<button id="ws-' + escapeAttr(t.id) + '">进入工作台</button>' +
       '<button class="danger" id="del-' + escapeAttr(t.id) + '">删除租户</button>' +
       "</div></td>" +
       "</tr>"
@@ -3853,7 +3873,10 @@
         "</div>";
     }
 
+    var tenantId = data.product_line_id || data.id || "";
+
     html += '<div class="modal-actions">' +
+      (tenantId ? '<button type="button" id="onboard-workspace">进入租户工作台</button>' : "") +
       '<button type="button" id="onboard-copy-all">复制全部</button>' +
       '<button type="button" class="primary" id="onboard-close">关闭</button>' +
       "</div>";
@@ -3868,6 +3891,10 @@
         copyBtn.addEventListener("click", function () { copyText(c.value, "密码已复制"); });
       }
     });
+    var workspaceBtn = document.getElementById("onboard-workspace");
+    if (workspaceBtn) {
+      workspaceBtn.addEventListener("click", function () { goTenantWorkspace(tenantId); });
+    }
     var copyAllBtn = document.getElementById("onboard-copy-all");
     if (copyAllBtn) {
       copyAllBtn.addEventListener("click", function () { copyText(state.onboardSummary, "开户结果已复制"); });

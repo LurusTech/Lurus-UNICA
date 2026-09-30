@@ -27,6 +27,7 @@ import (
 	"github.com/kefu/unica/admin/internal/handler"
 	"github.com/kefu/unica/admin/internal/identity"
 	_ "github.com/kefu/unica/admin/internal/metrics" // register Prometheus metrics
+	"github.com/kefu/unica/admin/internal/opsdigest"
 	"github.com/kefu/unica/admin/internal/platform"
 	"github.com/kefu/unica/admin/internal/repository"
 	"github.com/kefu/unica/admin/internal/routecache"
@@ -619,6 +620,23 @@ func main() {
 	knowledgeRosterHandler := platform.NewKnowledgeHandler(knowledgeRosterConfig)
 	mux.Handle("/api/v1/platform/knowledge", authMW(http.HandlerFunc(knowledgeRosterHandler.HandleList)))
 
+	// The operator to-do push: what needs a person's attention, read from
+	// signals that already exist (violations, proposals, version quality,
+	// the north-star numbers) and either previewed here or pushed to a chat
+	// webhook on a schedule — see opsdigest's package doc. The preview route
+	// is always wired, so a deployment with no webhook still has a page to
+	// read the same backlog from; the scheduler only starts when
+	// OPS_DIGEST_WEBHOOK_URL says where to send it.
+	digestCfg := opsdigest.ConfigFromEnv()
+	digestBuilder := opsdigest.NewBuilder(domainStore, plRepo, digestCfg.PortalBaseURL)
+	digestHandler := platform.NewDigestHandler(digestBuilder, digestCfg.Weekday)
+	mux.Handle("/api/v1/platform/digest", authMW(http.HandlerFunc(digestHandler.HandleList)))
+	if digestCfg.WebhookURL != "" {
+		digest := opsdigest.New(digestBuilder, digestCfg, nil)
+		digest.Start(ctx)
+		defer digest.Stop()
+	}
+
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      mux,
@@ -713,6 +731,7 @@ var factsPaths = map[string]string{
 	"validate": "ontology/validate",
 	"publish":  "ontology/publish",
 	"rollback": "ontology/rollback",
+	"tryrun":   "ontology/tryrun",
 	"config":   "ontology-config",
 }
 

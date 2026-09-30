@@ -1164,8 +1164,10 @@
         if (!item || item.id == null) throw new Error("复核响应异常");
         replaceItem(item);
         if (status === "ontology_wrong") {
+          var ontologyHref = "./ontology.html?tenant=" + encodeURIComponent(tenantSegment()) +
+            (item.property ? "&property=" + encodeURIComponent(item.property) : "");
           toast("已标记为「本体错了」。请修正本体并重新发布，同类回答才会真正停止。", "success", {
-            href: "./ontology.html",
+            href: ontologyHref,
             text: "前往确定性事实 →"
           });
         } else if (status === "pending") {

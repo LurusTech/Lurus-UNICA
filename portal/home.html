@@ -117,6 +117,7 @@
     gap: 20px;
   }
   .card {
+    position: relative;
     background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
     padding: 24px; text-decoration: none; color: var(--text); box-shadow: var(--shadow);
     transition: transform 0.15s ease, border-color 0.15s ease;
@@ -133,6 +134,18 @@
   .card h3 { margin: 0; font-size: 1.05rem; font-weight: 600; }
   .card p { margin: 0; color: var(--text-muted); font-size: 0.86rem; line-height: 1.55; }
   .card .go { margin-top: auto; font-size: 0.82rem; color: var(--primary); font-weight: 500; }
+  /* Read-only completeness hints, filled in after the cards render and hidden
+     until their own request answers — a card must never block on this. */
+  .card-badge {
+    position: absolute; top: 16px; right: 16px;
+    font-size: 0.72rem; color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 3px 10px; background: var(--bg);
+  }
+  /* Reserved for counts a person still owes a decision on, so it reads apart
+     from the merely descriptive badges (document counts, channel counts). */
+  .card-badge.attn {
+    color: var(--warn); border-color: var(--warn); font-weight: 600;
+  }
 
   footer { text-align: center; color: var(--text-muted); font-size: 0.8rem; padding: 20px; }
 
@@ -183,18 +196,21 @@
 
   <div class="cards">
     <a class="card" id="card-knowledge" href="./knowledge.html">
+      <span class="card-badge" id="badge-knowledge" hidden></span>
       <div class="icon">📚</div>
       <h3>我的知识库</h3>
       <p>上传与维护文档，跟踪索引进度。索引完成后 AI 才会引用。</p>
       <span class="go">进入管理 →</span>
     </a>
     <a class="card" id="card-channels" href="./channels.html">
+      <span class="card-badge" id="badge-channels" hidden></span>
       <div class="icon">🔌</div>
       <h3>渠道接入</h3>
       <p>接入小红书等平台账号，配置凭证与回调地址。</p>
       <span class="go">进入配置 →</span>
     </a>
     <a class="card" id="card-facts" href="./ontology.html">
+      <span class="card-badge" id="badge-facts" hidden></span>
       <div class="icon">🧩</div>
       <h3>确定性事实</h3>
       <p>声明政策、时效、价目、资质等确定口径，校验、发布与回滚。</p>
@@ -216,12 +232,14 @@
       <span class="go" id="workbench-go">免密进入 →</span>
     </button>
     <a class="card" id="card-violations" href="./violations.html">
+      <span class="card-badge" id="badge-violations" hidden></span>
       <div class="icon">🔍</div>
       <h3>质量复核</h3>
       <p>复核 AI 回答与确定性事实冲突的证据，并回流到本体修正。</p>
       <span class="go">进入复核 →</span>
     </a>
     <a class="card" id="card-proposals" href="./proposals.html">
+      <span class="card-badge" id="badge-proposals" hidden></span>
       <div class="icon">🧬</div>
       <h3>修改建议</h3>
       <p>复核从客服对话里挖掘出的本体修改建议：别名、结构化改动与待补的事实缺口。</p>
@@ -259,7 +277,12 @@
     workbenchBanner: document.getElementById("workbench-banner"),
     workbenchCard: document.getElementById("card-workbench"),
     workbenchGo: document.getElementById("workbench-go"),
-    toastHost: document.getElementById("toast-host")
+    toastHost: document.getElementById("toast-host"),
+    badgeKnowledge: document.getElementById("badge-knowledge"),
+    badgeChannels: document.getElementById("badge-channels"),
+    badgeFacts: document.getElementById("badge-facts"),
+    badgeViolations: document.getElementById("badge-violations"),
+    badgeProposals: document.getElementById("badge-proposals")
   };
 
   // Cards that open another page of this portal; an administrator acting for a
@@ -386,6 +409,62 @@
     el.hidden = false;
   }
 
+  // ---------- Card completeness badges ----------
+  // Read-only hints, each from a request this page did not otherwise need to
+  // make. None of them may block the cards or report an error: a card is a
+  // link to a page that already tells the full story, and a badge that could
+  // not be read is simply not shown rather than guessed at.
+  function setCardBadge(el, text, attn) {
+    if (!el) return;
+    el.textContent = text;
+    el.className = "card-badge" + (attn ? " attn" : "");
+    el.hidden = false;
+  }
+
+  function loadCardBadges() {
+    api(tenantPath("/knowledge?limit=1"))
+      .then(function (data) {
+        var total = data && typeof data.total === "number" ? data.total : null;
+        if (total === null) return;
+        setCardBadge(els.badgeKnowledge, total > 0 ? total + " 篇文档" : "还没有文档", total === 0);
+      })
+      .catch(function () {});
+
+    api(tenantPath("/channels"))
+      .then(function (data) {
+        var list = Array.isArray(data) ? data : null;
+        if (!list) return;
+        setCardBadge(els.badgeChannels, list.length > 0 ? list.length + " 个渠道" : "还没有接入渠道", list.length === 0);
+      })
+      .catch(function () {});
+
+    api(tenantPath("/facts"))
+      .then(function (data) {
+        var active = data && typeof data.active_version === "number" ? data.active_version : null;
+        if (active === null) return;
+        setCardBadge(els.badgeFacts, active > 0 ? "已发布 v" + active : "尚未发布", active === 0);
+      })
+      .catch(function () {});
+
+    // The violations endpoint's filter key is review_status, not status — the
+    // list page itself sends review_status; matched here for the same total.
+    api(tenantPath("/violations?review_status=pending&limit=1"))
+      .then(function (data) {
+        var total = data && typeof data.total === "number" ? data.total : null;
+        if (total === null) return;
+        setCardBadge(els.badgeViolations, total > 0 ? total + " 条待复核" : "无待复核", total > 0);
+      })
+      .catch(function () {});
+
+    api(tenantPath("/facts/proposals?status=pending&limit=1"))
+      .then(function (data) {
+        var total = data && typeof data.total === "number" ? data.total : null;
+        if (total === null) return;
+        setCardBadge(els.badgeProposals, total > 0 ? total + " 条待审" : "无待审", total > 0);
+      })
+      .catch(function () {});
+  }
+
   // ---------- Workbench ----------
   // The agent workbench is a separate deployment whose address the server mints
   // a one-time signed link for; nothing about it is hardcoded here.
@@ -477,5 +556,6 @@
   }
 
   loadTenant();
+  loadCardBadges();
 })();
 </script>

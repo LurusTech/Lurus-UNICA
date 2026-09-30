@@ -341,8 +341,7 @@
         <p class="card-sub" id="active-meta">本体声明本租户的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。</p>
 
         <div class="flow-hint" id="empty-hint" hidden>
-          该租户还没有发布过本体。编写指南见仓库中的 <code>doc/ontology-schema.md</code>，
-          建议先从最小可用本体开始，校验通过后再发布。
+          该租户还没有发布过本体。可以点击下方「插入最小模板」开始，把里面的〔请填写〕都换成真实内容后校验、发布。
         </div>
 
         <div id="editor-loading" class="loading-text">加载中…</div>
@@ -354,8 +353,20 @@
 
           <div class="actions-row">
             <button class="primary" id="validate-btn">校验</button>
+            <button type="button" id="insert-template-btn">插入最小模板</button>
+            <button type="button" id="tryrun-btn">发布前试跑</button>
             <span class="spacer"></span>
             <span class="hint" id="editor-hint"></span>
+          </div>
+
+          <div class="flow-hint" id="template-tips">
+            <strong>怎么写：</strong>
+            <ul style="margin: 6px 0 0; padding-left: 18px;">
+              <li>properties 声明「有哪些事实要交代」，range 限定取值类型；functional 表示这个属性只能有一个值。</li>
+              <li>assertions 给出具体取值；同一属性在不同商品类别、客户身份等情形下取值不同时，用 classes 或 dimensions 限定作用域。</li>
+              <li>denies 专门用来堵住模型会脑补的「听起来合理」的承诺——不写的话模型会自己编一个。</li>
+              <li>先点「校验」再「发布」；报错会带着「第 N 行」，点一下就能跳到对应位置。</li>
+            </ul>
           </div>
 
           <div class="result-box" id="validate-result" hidden></div>
@@ -364,6 +375,28 @@
             <h3>渲染预览</h3>
             <pre class="rendered" id="preview-pre"></pre>
             <div class="hint" id="preview-stats"></div>
+          </div>
+
+          <!-- Try-run: a fixed test set DeriveProbes derives straight from the
+               ontology, graded by the same deterministic checker the runtime
+               uses — never by asking a model to judge another model. -->
+          <div id="tryrun-block" hidden>
+            <h3>发布前试跑</h3>
+            <p class="hint">这只能抓到本体表达得出来的错。</p>
+            <div class="hint" id="tryrun-summary"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>问题</th>
+                    <th>答复</th>
+                    <th>判定</th>
+                    <th>原因</th>
+                  </tr>
+                </thead>
+                <tbody id="tryrun-tbody"></tbody>
+              </table>
+            </div>
           </div>
 
           <div class="publish-row">
@@ -525,10 +558,15 @@
     yamlEditor: document.getElementById("yaml-editor"),
     editorHint: document.getElementById("editor-hint"),
     validateBtn: document.getElementById("validate-btn"),
+    insertTemplateBtn: document.getElementById("insert-template-btn"),
     validateResult: document.getElementById("validate-result"),
     previewBlock: document.getElementById("preview-block"),
     previewPre: document.getElementById("preview-pre"),
     previewStats: document.getElementById("preview-stats"),
+    tryrunBtn: document.getElementById("tryrun-btn"),
+    tryrunBlock: document.getElementById("tryrun-block"),
+    tryrunSummary: document.getElementById("tryrun-summary"),
+    tryrunTbody: document.getElementById("tryrun-tbody"),
     publishNote: document.getElementById("publish-note"),
     publishBtn: document.getElementById("publish-btn"),
 
@@ -811,11 +849,7 @@
     var start = hit.index;
     var end = text.indexOf("\n", start);
     if (end < 0) end = text.length;
-    els.yamlEditor.focus();
-    els.yamlEditor.setSelectionRange(start, end);
-    var line = text.slice(0, start).split("\n").length - 1;
-    var lineHeight = parseFloat(window.getComputedStyle(els.yamlEditor).lineHeight) || 18;
-    els.yamlEditor.scrollTop = Math.max(0, (line - 3) * lineHeight);
+    selectEditorRange(start, end);
     toast("已定位到「" + name + "」：请补上取值后校验并发布，再回修改建议页把工单标为已补完", "info");
   }
 
@@ -954,6 +988,78 @@
     }
   }
 
+  // ---------- Minimal template ----------
+  // Structure only: every value a person would need to type is an obvious
+  // placeholder (〔请填写…〕), never a real-looking fact. Prefilling anything
+  // that reads like an actual policy is exactly the shortcut that gets
+  // published by mistake — the value is always the operator's to write.
+  var ONTOLOGY_MIN_TEMPLATE =
+    "product_line: 〔请填写产品线名称，必须与后台配置的产品线名称完全一致〕\n" +
+    "version: 1\n" +
+    "\n" +
+    "properties:\n" +
+    "  〔请填写属性名，例如：退货窗口〕:\n" +
+    "    label: 〔面向客户的措辞，会出现在 AI 回答的上下文里〕\n" +
+    "    range: {type: string, values: [\"〔请填写可选取值〕\"]}\n" +
+    "    functional: true        # 只能有一个值时保留这行；允许同时成立多个值就删掉它\n" +
+    "\n" +
+    "assertions:\n" +
+    "  - values:\n" +
+    "      〔请填写属性名，需与上面 properties 里的名字一致〕: 〔请填写取值〕\n" +
+    "\n" +
+    "denies:\n" +
+    "  - term: 〔请填写要明确否认的说法，例如：包过审〕\n" +
+    "    note: 〔请填写否认理由〕\n";
+
+  els.insertTemplateBtn.addEventListener("click", function () {
+    var current = els.yamlEditor.value;
+    if (current.trim() && !confirm("编辑区已有内容，插入最小模板会覆盖当前内容，确认继续？")) {
+      return;
+    }
+    els.yamlEditor.value = ONTOLOGY_MIN_TEMPLATE;
+    resetEditorFeedback();
+    els.yamlEditor.focus();
+    els.yamlEditor.setSelectionRange(0, 0);
+    toast("已插入最小模板，请把「〔请填写…〕」换成真实内容", "info");
+  });
+
+  // ---------- Editor selection / scroll ----------
+  // Both "jump to a property a ticket asked about" (focusRequestedProperty)
+  // and "jump to the line a validate/publish error named" select a range in
+  // the textarea and scroll it a few lines above the fold. One function does
+  // that math so there is exactly one place that knows how, instead of two
+  // copies drifting apart.
+  function selectEditorRange(start, end) {
+    els.yamlEditor.focus();
+    els.yamlEditor.setSelectionRange(start, end);
+    var line = els.yamlEditor.value.slice(0, start).split("\n").length - 1;
+    var lineHeight = parseFloat(window.getComputedStyle(els.yamlEditor).lineHeight) || 18;
+    els.yamlEditor.scrollTop = Math.max(0, (line - 3) * lineHeight);
+  }
+
+  // Selects the full text of a 1-indexed line, the same unit a translated
+  // YAML/validation error names ("第 N 行：…").
+  function selectEditorLine(lineNo) {
+    var lines = els.yamlEditor.value.split("\n");
+    var idx = lineNo - 1;
+    if (idx < 0 || idx >= lines.length) return false;
+    var start = 0;
+    for (var i = 0; i < idx; i++) start += lines[i].length + 1;
+    selectEditorRange(start, start + lines[idx].length);
+    return true;
+  }
+
+  // A friendly YAML error keeps the line number the underlying yaml.v3/
+  // Validate error carried; not every error has one (most Validate errors
+  // are structural, not tied to a line), so this is a no-op when there is
+  // none to find.
+  function highlightErrorFromMessage(message) {
+    if (!message) return;
+    var m = /第\s*(\d+)\s*行/.exec(message);
+    if (!m) return;
+    selectEditorLine(parseInt(m[1], 10));
+  }
+
   // ---------- Validate ----------
   function resetEditorFeedback() {
     els.validateResult.hidden = true;
@@ -997,6 +1103,7 @@
           els.validateResult.className = "result-box bad";
           els.validateResult.textContent = data.error || "校验未通过";
           els.validateResult.hidden = false;
+          highlightErrorFromMessage(data.error);
         }
       })
       .catch(function (err) {
@@ -1004,6 +1111,7 @@
         els.validateResult.className = "result-box bad";
         els.validateResult.textContent = errorText(err);
         els.validateResult.hidden = false;
+        highlightErrorFromMessage(errorText(err));
         reportError("校验失败", err);
       })
       .finally(function () {
@@ -1045,11 +1153,83 @@
         els.validateResult.textContent = errorText(err);
         els.validateResult.hidden = false;
         els.previewBlock.hidden = true;
+        highlightErrorFromMessage(errorText(err));
         reportError("发布失败", err);
       })
       .finally(function () {
         els.publishBtn.disabled = false;
         els.publishBtn.textContent = "发布";
+      });
+  });
+
+  // ---------- Try-run ----------
+  // A fixed set of questions DeriveProbes derives straight from the ontology
+  // being edited, put to the tenant's real Dify app and graded by the same
+  // deterministic checker the runtime uses. Nobody writes a word of it: the
+  // questions, the expected reference and the pass/fail line are all pulled
+  // from what the ontology already declares.
+  var verdictLabel = { pass: "通过", fail: "不通过", unclear: "不确定" };
+  var verdictPillClass = { pass: "ok", fail: "bad", unclear: "warn" };
+  var verdictOrder = { fail: 0, unclear: 1, pass: 2 };
+
+  function renderTryRun(data) {
+    data = data || {};
+    var summary = data.summary || {};
+    els.tryrunSummary.textContent =
+      "通过 " + (summary.pass || 0) + " · 不通过 " + (summary.fail || 0) +
+      " · 不确定 " + (summary.unclear || 0) +
+      (data.truncated ? "（探针数超过上限，已截断）" : "");
+
+    var probes = (data.probes || []).slice().sort(function (a, b) {
+      var oa = verdictOrder[a.verdict] != null ? verdictOrder[a.verdict] : 3;
+      var ob = verdictOrder[b.verdict] != null ? verdictOrder[b.verdict] : 3;
+      return oa - ob;
+    });
+
+    if (!probes.length) {
+      els.tryrunTbody.innerHTML = '<tr><td colspan="4" class="empty-state">没有可试跑的探针</td></tr>';
+    } else {
+      els.tryrunTbody.innerHTML = probes.map(function (p) {
+        return "<tr>" +
+          '<td class="note">' + escapeHtml(p.question || "") + "</td>" +
+          '<td class="note">' + escapeHtml(p.answer || "") + "</td>" +
+          '<td><span class="pill ' + (verdictPillClass[p.verdict] || "muted") + '">' +
+            escapeHtml(verdictLabel[p.verdict] || p.verdict || "—") + "</span></td>" +
+          '<td class="note">' + escapeHtml(p.reason || "") + "</td>" +
+          "</tr>";
+      }).join("");
+    }
+    els.tryrunBlock.hidden = false;
+  }
+
+  // Editing the draft invalidates whatever the last try-run said about it —
+  // a separate listener from the one that resets the validate/preview
+  // feedback, so this stays a pure addition next to that logic rather than a
+  // change inside it.
+  els.yamlEditor.addEventListener("input", function () {
+    if (!els.tryrunBlock.hidden) els.tryrunBlock.hidden = true;
+  });
+
+  els.tryrunBtn.addEventListener("click", function () {
+    var yaml = els.yamlEditor.value;
+    if (!yaml.trim()) {
+      toast("本体内容为空", "warn");
+      return;
+    }
+    els.tryrunBtn.disabled = true;
+    els.tryrunBtn.textContent = "试跑中…";
+
+    UnicaAuth.api(factsPath("/tryrun"), { method: "POST", body: JSON.stringify({ yaml: yaml }) })
+      .then(function (data) {
+        renderTryRun(data);
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        reportError("试跑失败", err);
+      })
+      .finally(function () {
+        els.tryrunBtn.disabled = false;
+        els.tryrunBtn.textContent = "发布前试跑";
       });
   });
 

@@ -96,7 +96,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.publish(w, r, pl)
 		case len(segments) == 3 && segments[2] == "rollback" && r.Method == http.MethodPost:
 			h.rollback(w, r, pl)
-		case len(segments) == 2 || (len(segments) == 3 && (segments[2] == "validate" || segments[2] == "publish" || segments[2] == "rollback")):
+		case len(segments) == 3 && segments[2] == "tryrun" && r.Method == http.MethodPost:
+			h.tryRun(w, r, pl)
+		case len(segments) == 2 || (len(segments) == 3 && (segments[2] == "validate" || segments[2] == "publish" || segments[2] == "rollback" || segments[2] == "tryrun")):
 			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 		default:
 			errorJSON(w, http.StatusNotFound, "not found")
@@ -181,10 +183,15 @@ type validateResponse struct {
 // the product line it is being edited for. A mismatched product_line is the
 // easiest way to publish one line's policy onto another, so it is rejected
 // here rather than discovered in production.
+//
+// A parse/validate failure goes through friendlyCheckYAMLError before it
+// reaches the response: domain.ParseYAML's own errors are yaml.v3 and Go
+// struct-tag wording, which is not something a business operator authoring
+// YAML in the portal should have to decode.
 func checkYAML(yamlText string, pl *repository.ProductLine) (*domain.Ontology, string) {
 	o, err := domain.ParseYAML([]byte(yamlText))
 	if err != nil {
-		return nil, err.Error()
+		return nil, friendlyCheckYAMLError(err)
 	}
 	if o.ProductLine != pl.Name {
 		return nil, "YAML 的 product_line (" + o.ProductLine + ") 与该产品线名称 (" + pl.Name + ") 不符"

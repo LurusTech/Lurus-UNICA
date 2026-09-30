@@ -1149,6 +1149,77 @@ func (b *DifyBridge) SendTestMessage(ctx context.Context, apiKey string, message
 	return &result, nil
 }
 
+// SendTestMessageWithInputs sends a test chat message to a Dify app carrying
+// explicit `inputs`, alongside the query and user SendTestMessage already
+// sends. It exists for the ontology try-run: that caller needs the draft
+// ontology's rendered facts_context delivered as an input variable, exactly as
+// the router delivers it in production, and SendTestMessage always sends an
+// empty inputs map.
+func (b *DifyBridge) SendTestMessageWithInputs(ctx context.Context, apiKey string, message string, userID string, inputs map[string]any) (*TestMessageResponse, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("API key is empty")
+	}
+	if inputs == nil {
+		inputs = map[string]interface{}{}
+	}
+
+	reqBody := map[string]interface{}{
+		"inputs":        inputs,
+		"query":         message,
+		"user":          userID,
+		"response_mode": "blocking",
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := b.config.APIBaseURL + "/chat-messages"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	start := time.Now()
+	resp, err := b.chatClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send test message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	elapsed := time.Since(start)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	log.Printf("[dify-bridge] test message (with inputs) -> %d (%s)", resp.StatusCode, elapsed)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d from test message: %s", resp.StatusCode, string(body))
+	}
+
+	var result TestMessageResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal test response: %w", err)
+	}
+
+	if retrieved := result.Retrieved(); len(retrieved) > 0 {
+		maxScore := 0.0
+		for _, rr := range retrieved {
+			if rr.Score > maxScore {
+				maxScore = rr.Score
+			}
+		}
+		result.Confidence = maxScore
+	}
+
+	return &result, nil
+}
+
 // --- Internal helpers ---
 
 // doAdminRequest performs an HTTP request to the Dify Console (admin) API using the
