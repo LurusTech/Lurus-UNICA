@@ -115,6 +115,17 @@ var (
 		Help: "Total commercial-stage classifications on AI-bound messages",
 	}, []string{"stage", "reason", "source", "mode"})
 
+	// SubjectCarryTotal counts subject-carry decisions on AI-bound messages.
+	// Under shadow mode would_rewrite is the only observable effect: it says how
+	// many follow-ups would have reached retrieval with the customer's earlier
+	// object attached, before a single query is actually changed. no_subject
+	// separates "nothing to carry yet" from kept, a message that named its own
+	// object or was not a follow-up.
+	SubjectCarryTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_subject_carry_total",
+		Help: "Subject-carry decisions on AI-bound messages by mode and outcome",
+	}, []string{"mode", "outcome"})
+
 	// IntentTriageHandoffTotal counts handoffs decided before any model call, so
 	// the saved Dify calls are directly countable.
 	IntentTriageHandoffTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -139,6 +150,35 @@ var (
 	ClaimViolationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "router_claim_violations_total",
 		Help: "Total answer claims that contradicted the product line ontology",
+	}, []string{"kind", "mode"})
+
+	// CommitmentFindingsTotal counts what the commitment firewall found, by
+	// kind and by the mode it ran under, so a line watching shadow mode can
+	// see how often enforce would have held an answer before switching it on.
+	// ungrounded_figure lives only here: it is never written to the review
+	// queue.
+	CommitmentFindingsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_commitment_findings_total",
+		Help: "Total commitment firewall findings by kind and mode",
+	}, []string{"kind", "mode"})
+
+	// CommitmentCorpusEmptyTotal counts firewall-checked answers whose
+	// retrieval hit documents but returned no passage text. The firewall can
+	// only credit a figure it can read, so with the app not returning quoted
+	// passages every figure looks unbacked; this counter is how that
+	// misconfiguration shows up before enforce holds every priced answer.
+	CommitmentCorpusEmptyTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_commitment_corpus_empty_total",
+		Help: "Firewall-checked answers whose retrieval hits carried no passage text",
+	}, []string{"product_line"})
+
+	// HumanAccessSignalsTotal counts the human-access checks that fired — a
+	// quick entry, a repeated question, a customer asking for priority — by
+	// kind and by the mode they ran under. Under shadow this is the whole
+	// effect, so a line can see how often "on" would hand off before it does.
+	HumanAccessSignalsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_human_access_signals_total",
+		Help: "Total human-access signals by kind and mode",
 	}, []string{"kind", "mode"})
 
 	// HandoffEventsProcessed counts total handoff events processed.
@@ -296,4 +336,13 @@ var (
 		Name: "router_partition_maintenance_errors_total",
 		Help: "Total failed partition provisioning passes",
 	})
+
+	// AuditAppendFailuresTotal counts evidence ledger rows that could not be
+	// written for a product line that has the ledger on. The reply was not
+	// affected, but the row is missing from the chain for good, so any
+	// increase deserves a look.
+	AuditAppendFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "router_audit_append_failures_total",
+		Help: "Total evidence ledger rows that failed to be written",
+	}, []string{"kind"})
 )

@@ -543,6 +543,8 @@ const thresholdRangeMessage = "threshold must be greater than 0 and at most 1 (t
 //	PUT    ai-settings/threshold      confidence threshold
 //	PUT    ai-settings/handoff-rules  handoff keywords and blocked topics
 //	PUT    ai-settings/survey         satisfaction survey switch and thresholds
+//	GET    ai-settings/subject-carry  follow-up subject carry switch and object names
+//	PUT    ai-settings/subject-carry  write either or both
 //	POST   ai-settings/variables/repair  declare the router inputs the app is missing
 //	POST   ai-settings/dataset/bind   re-bind the knowledge dataset
 //	POST   ai-settings/dataset/retrieval  realign the search method with the index
@@ -691,6 +693,15 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.updateSurvey(w, r, pl)
+	case "subject-carry":
+		switch r.Method {
+		case http.MethodGet:
+			h.getSubjectCarry(w, r, pl)
+		case http.MethodPut:
+			h.updateSubjectCarry(w, r, pl)
+		default:
+			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
 	case "test":
 		if r.Method != http.MethodPost {
 			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1858,14 +1869,17 @@ func (h *Handler) AuditState(ctx context.Context, tenantID string) (json.RawMess
 	}
 	return json.Marshal(struct {
 		guardrailConfig
-		Survey    *survey.Config        `json:"survey"`
-		Prompt    *promptDigest         `json:"prompt"`
-		Origin    *difyapp.PromptOrigin `json:"prompt_origin"`
-		Retrieval *knowledgeStatus      `json:"retrieval"`
+		Survey       *survey.Config            `json:"survey"`
+		Conversation domain.ConversationConfig `json:"conversation"`
+		Prompt       *promptDigest             `json:"prompt"`
+		Origin       *difyapp.PromptOrigin     `json:"prompt_origin"`
+		Retrieval    *knowledgeStatus          `json:"retrieval"`
 	}{
 		guardrailConfig: loadGuardrail(raw),
 		Survey:          survey.Load(raw),
-		Prompt:          h.promptDigest(ctx, tenantID),
+		// The subject-carry switch and object names, as the router reads them.
+		Conversation: domain.LoadConversationConfig(raw),
+		Prompt:       h.promptDigest(ctx, tenantID),
 		// Every block this module writes to config_json belongs in the snapshot,
 		// or a write that only moves this one leaves an audit row whose before
 		// and after are the same.

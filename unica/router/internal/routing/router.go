@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,6 +107,7 @@ type Router struct {
 	ontology          ontologySource
 	handoffLog        handoffRecorder
 	traceLog          traceRecorder
+	ledger            LedgerAppender
 	breaker           *domain.Breaker
 	marketingTracker  *marketing.Tracker
 	surveyHandler     *survey.Handler
@@ -487,11 +489,18 @@ const DifyConvTTL = 24 * time.Hour
 // difyConvSession holds the Dify conversation tracking data stored in Redis.
 // Stage rides along so the conversation's commercial phase expires together
 // with the model's own multi-turn memory: when one is gone, both are.
+//
+// Subject rides along for the same reason: the object the customer last named
+// is only meaningful while the model still remembers the conversation it was
+// named in. omitempty keeps the stored JSON unchanged for a line with subject
+// carry off, and a session written before the field existed reads as "no
+// subject yet".
 type difyConvSession struct {
 	DifyConversationID string `json:"dify_conversation_id"`
 	MessageCount       int    `json:"message_count"`
 	LastActive         string `json:"last_active"`
 	Stage              string `json:"stage,omitempty"`
+	Subject            string `json:"subject,omitempty"`
 }
 
 // getDifySession retrieves the Dify conversation tracking data from Redis.
@@ -510,15 +519,16 @@ func (r *Router) getDifySession(ctx context.Context, convID string) difyConvSess
 
 // setDifyConvID stores the Dify conversation ID in Redis for multi-turn
 // context. The write replaces the whole session object, so the caller must
-// pass the stage through — omitting it would erase the sticky stage on every
-// turn.
-func (r *Router) setDifyConvID(ctx context.Context, convID string, difyConvID string, msgCount int, stage string) {
+// pass the stage and subject through — omitting either would erase it on
+// every turn.
+func (r *Router) setDifyConvID(ctx context.Context, convID string, difyConvID string, msgCount int, stage, subject string) {
 	key := difyConvKeyPrefix + convID
 	session := difyConvSession{
 		DifyConversationID: difyConvID,
 		MessageCount:       msgCount,
 		LastActive:         time.Now().UTC().Format(time.RFC3339),
 		Stage:              stage,
+		Subject:            subject,
 	}
 	data, err := json.Marshal(session)
 	if err != nil {
@@ -538,6 +548,14 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 	query := msg.Data.Content.Text
 	if query == "" {
 		log.Printf("[router] worker %d: message has no text content for AI, skipping Dify call", workerID)
+		return
+	}
+
+	// Human access comes first: a customer typing the quick entry, asking the
+	// same question again after the AI answered it, or saying they need extra
+	// help is going to a person whatever triage would make of the words. Off
+	// unless the product line turned it on; shadow only counts.
+	if r.humanAccessHandoff(ctx, config, msg, convID, workerID) {
 		return
 	}
 
@@ -567,6 +585,9 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 
 	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
 	judgement := JudgeAnswer(JudgeInput{
+		// The customer's original text, never ac.modelQuery: keyword, harm and
+		// forced-handoff rules must judge what the customer wrote, so a
+		// subject-carry prefix can neither trigger nor mask any of them.
 		Query:              query,
 		Resp:               difyResp,
 		Ontology:           ac.ontology,
@@ -576,12 +597,49 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		FactsInjected:      ac.factsInjected,
 		ExperienceInjected: ac.experienceInjected,
 		ProductLineID:      config.ProductLineID,
+		GroundingTexts:     groundingTexts(difyResp, ac),
 	}, r.evaluator, r.breaker)
 
 	r.recordJudgement(ctx, config, convID, workerID, ac, &judgement, difyResp)
 	r.deliverJudgement(ctx, config, msg, convID, workerID, query, ac, &judgement,
 		difyResp, difyDuration, guardrailCfg.HoldingMessage)
 	r.recordAnswerTrace(ctx, config, msg, convID, ac, &judgement, difyResp)
+	r.recordJudgedAudit(ctx, config, msg, convID, ac, &judgement, difyResp)
+}
+
+// groundingTexts collects what the commitment firewall may credit a figure
+// to: each retrieval passage and the recalled knowledge context, verbatim.
+// experience_context is left out on purpose — it is earlier AI answers, and a
+// figure the model once invented must not back itself the next time.
+func groundingTexts(difyResp *bridge.DifyResponse, ac *aiCallContext) []string {
+	if !ac.ontologyCfg.CommitmentChecks() {
+		return nil
+	}
+	out := make([]string, 0, len(difyResp.RetrieverResources)+1)
+	for _, res := range difyResp.RetrieverResources {
+		if strings.TrimSpace(res.Content) != "" {
+			out = append(out, res.Content)
+		}
+	}
+	if kc := ac.inputs["knowledge_context"]; kc != "" {
+		out = append(out, kc)
+	}
+	return out
+}
+
+// retrievalTextMissing reports that retrieval hit documents but none of the
+// hits carried passage text — the app is not returning quoted passages, and
+// the firewall has nothing from the knowledge base to credit.
+func retrievalTextMissing(difyResp *bridge.DifyResponse) bool {
+	if len(difyResp.RetrieverResources) == 0 {
+		return false
+	}
+	for _, res := range difyResp.RetrieverResources {
+		if strings.TrimSpace(res.Content) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // recordAnswerTrace keeps what a later replay of this judgement needs: the raw
@@ -636,11 +694,32 @@ type aiCallContext struct {
 	ontologyCfg        *domain.Config
 	factsInjected      bool
 	experienceInjected bool
+	// modelQuery is what retrieval and the model receive: the customer's text,
+	// or under subject carry "on" that text with the earlier object prefixed.
+	// Everything that judges or records the message uses the original instead.
+	modelQuery string
+	// subject is the subject-carry state; the zero value means carry is off.
+	subject subjectState
+	// deliveredAnswer is the text the customer received, set once an answer
+	// is published: the judged answer with the AI label attached when
+	// disclosure is on. The judgement, the experience sample and the handoff
+	// draft keep the answer as the model wrote it; only the record of what was
+	// delivered reads this.
+	deliveredAnswer string
+}
+
+// queryForModel returns the query to send to retrieval and the model,
+// falling back to the original when no rewrite was prepared.
+func (ac *aiCallContext) queryForModel(query string) string {
+	if ac.modelQuery == "" {
+		return query
+	}
+	return ac.modelQuery
 }
 
 // prepareAIContext assembles the Dify inputs for one message: customer
-// identity, the multi-turn session, recalled experience/knowledge, and the
-// ontology facts block.
+// identity, the multi-turn session, the ontology facts block, the carried
+// subject, and recalled experience/knowledge.
 func (r *Router) prepareAIContext(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, query string) *aiCallContext {
 	// One Redis read serves both multi-turn context and the sticky stage.
 	session := r.getDifySession(ctx, convID)
@@ -678,27 +757,25 @@ func (r *Router) prepareAIContext(ctx context.Context, config *RouteConfig, msg 
 		}
 	}
 
-	// Recall experience/knowledge context from the acest kb-server and inject
-	// it as Dify app variables. Fail-open: on error or timeout the inputs are
-	// simply absent and the Dify app proceeds without them.
-	if r.acest != nil {
-		experienceCtx, knowledgeCtx := r.recallKnowledge(ctx, query)
-		if experienceCtx != "" {
-			ac.inputs["experience_context"] = experienceCtx
-			ac.experienceInjected = true
-		}
-		if knowledgeCtx != "" {
-			ac.inputs["knowledge_context"] = knowledgeCtx
-		}
-	}
-
 	// Domain ontology: deterministic facts for this product line, injected with
-	// a stated precedence over the retrieved context above. Both halves are
+	// a stated precedence over the retrieved context below. Both halves are
 	// opt-in per product line and both fail open — a product line that has not
 	// adopted the feature, or whose ontology cannot be loaded, proceeds exactly
 	// as it did before.
+	//
+	// It is loaded before the knowledge recall rather than after because the
+	// subject-carry lexicon is partly built from it, and the recall has to be
+	// sent the carried query: recalled with the bare follow-up, the knowledge
+	// context would come back about whichever object scores best, which is D10
+	// again one input over. The two steps are independent reads, so with
+	// subject carry off the reorder changes nothing either receives.
 	ac.ontologyCfg = domain.LoadConfig(config.ConfigJSON)
-	if r.ontology != nil && ac.ontologyCfg.Active() {
+	// The commitment firewall does not need an ontology — retrieval alone can
+	// back a figure — but a published one backs more, so it is loaded for the
+	// firewall too. Active() itself is unchanged: injection and claim
+	// checking still key off it alone, and with the firewall off this
+	// condition is exactly what it was.
+	if r.ontology != nil && loadsOntology(ac.ontologyCfg) {
 		var err error
 		ac.ontology, ac.ontologyVersion, err = r.ontology.Active(ctx, config.ProductLineID)
 		if err != nil {
@@ -713,7 +790,59 @@ func (r *Router) prepareAIContext(ctx context.Context, config *RouteConfig, msg 
 			metrics.OntologyFactsInjectedTotal.WithLabelValues(config.ProductLineID).Inc()
 		}
 	}
+
+	ac.subject = r.loadSubjectState(ctx, config, session, query, ac)
+	ac.modelQuery = carrySubject(ac.subject, query, workerID, convID)
+
+	// Recall experience/knowledge context from the acest kb-server and inject
+	// it as Dify app variables. Fail-open: on error or timeout the inputs are
+	// simply absent and the Dify app proceeds without them.
+	if r.acest != nil {
+		experienceCtx, knowledgeCtx := r.recallKnowledge(ctx, ac.queryForModel(query))
+		if experienceCtx != "" {
+			ac.inputs["experience_context"] = experienceCtx
+			ac.experienceInjected = true
+		}
+		if knowledgeCtx != "" {
+			ac.inputs["knowledge_context"] = knowledgeCtx
+		}
+	}
 	return ac
+}
+
+// loadSubjectState reads the line's subject-carry settings and, when they are
+// on or in shadow, builds the lexicon. It returns the zero value — carry off —
+// otherwise, without touching the ontology store.
+//
+// The ontology is reused when the facts path already loaded it. When it did
+// not, it is read here into a local only: ac.ontology is what the judgement
+// and the answer trace key off, and subject carry must not change either.
+func (r *Router) loadSubjectState(ctx context.Context, config *RouteConfig, session difyConvSession, query string, ac *aiCallContext) subjectState {
+	cfg := domain.LoadConversationConfig(config.ConfigJSON)
+	if !cfg.Tracks() {
+		return subjectState{}
+	}
+	onto := ac.ontology
+	if onto == nil && r.ontology != nil {
+		var err error
+		if onto, _, err = r.ontology.Active(ctx, config.ProductLineID); err != nil {
+			// The operator's list still works without the ontology.
+			log.Printf("[router] ontology unavailable for subject lexicon of product line %s: %v",
+				config.ProductLineID, err)
+		}
+	}
+	return subjectState{
+		cfg:           cfg,
+		lexicon:       domain.BuildSubjectLexicon(cfg.Subjects, onto, nil),
+		prev:          session.Subject,
+		customerQuery: query,
+	}
+}
+
+// loadsOntology decides whether a message needs the published ontology. With
+// the firewall off it is exactly Active(), the condition this load always had.
+func loadsOntology(cfg *domain.Config) bool {
+	return cfg.Active() || cfg.CommitmentChecks()
 }
 
 // callDify performs the model call and turns its two failure modes — an API
@@ -725,7 +854,7 @@ func (r *Router) callDify(ctx context.Context, config *RouteConfig, msg *model.S
 	difyResp, err := r.difyClient.Chat(ctx, bridge.DifyConfig{
 		BaseURL: config.DifyBaseURL,
 		APIKey:  config.DifyAPIKey,
-	}, query, ac.userID, ac.difyConvID, ac.inputs)
+	}, ac.queryForModel(query), ac.userID, ac.difyConvID, ac.inputs)
 	difyDuration := time.Since(difyStart)
 	metrics.DifyCallDuration.Observe(difyDuration.Seconds())
 
@@ -775,14 +904,17 @@ func (r *Router) recordJudgement(ctx context.Context, config *RouteConfig, convI
 	}
 
 	// Store Dify conversation ID for multi-turn context, carrying the sticky
-	// stage along so the whole-object write cannot erase it.
+	// stage and the subject along so the whole-object write cannot erase them.
+	// The subject is decided from the customer's text and the retrieved
+	// document names only; j.Answer is deliberately not consulted.
 	if difyResp.ConversationID != "" {
 		session := r.getDifySession(ctx, convID)
 		msgCount := 1
 		if session.DifyConversationID != "" {
 			msgCount = session.MessageCount + 1
 		}
-		r.setDifyConvID(ctx, convID, difyResp.ConversationID, msgCount, string(ac.stage))
+		r.setDifyConvID(ctx, convID, difyResp.ConversationID, msgCount, string(ac.stage),
+			nextSubject(ac.subject, difyResp))
 	}
 
 	// Track retrieval metrics
@@ -834,6 +966,20 @@ func (r *Router) recordJudgement(ctx context.Context, config *RouteConfig, convI
 			workerID, convID, j.Result.Reason, j.Confidence, len(difyResp.Answer))
 	}
 
+	if ac.ontologyCfg.CommitmentChecks() {
+		mode := string(ac.ontologyCfg.Commitment)
+		for _, f := range j.Commitments {
+			metrics.CommitmentFindingsTotal.WithLabelValues(string(f.Kind), mode).Inc()
+		}
+		if retrievalTextMissing(difyResp) {
+			metrics.CommitmentCorpusEmptyTotal.WithLabelValues(config.ProductLineID).Inc()
+		}
+		if len(j.Commitments) > 0 {
+			log.Printf("[router] worker %d: %d commitment finding(s) for conversation %s (mode=%s, withheld=%t): %s",
+				workerID, len(j.Commitments), convID, mode, j.CommitmentWithheld, domain.Summary(j.Commitments))
+		}
+	}
+
 	metrics.GuardrailDecisionsTotal.WithLabelValues(string(j.Result.Decision), j.Result.Reason).Inc()
 }
 
@@ -844,7 +990,7 @@ func (r *Router) deliverJudgement(ctx context.Context, config *RouteConfig, msg 
 	switch j.Result.Decision {
 	case guardrail.DecisionSend:
 		// Normal flow: publish AI response to outbound stream
-		r.publishAIResponse(ctx, config, msg, convID, workerID, j.Answer, float32(j.Confidence),
+		ac.deliveredAnswer = r.publishAIResponse(ctx, config, msg, convID, workerID, j.Answer, float32(j.Confidence),
 			difyResp.Metadata.Usage.TotalTokens, len(difyResp.RetrieverResources), difyDuration)
 
 		// Feed the delivered answer back into the experience KB as a success
@@ -870,7 +1016,7 @@ func (r *Router) deliverJudgement(ctx context.Context, config *RouteConfig, msg 
 		log.Printf("[router] worker %d: model-raised escalation for conversation %s (reason=%s, tagged=%t, confidence=%.3f)",
 			workerID, convID, j.Result.Reason, j.EscalationTagged, j.Result.Confidence)
 
-		r.publishAIResponse(ctx, config, msg, convID, workerID, j.Answer, float32(j.Confidence),
+		ac.deliveredAnswer = r.publishAIResponse(ctx, config, msg, convID, workerID, j.Answer, float32(j.Confidence),
 			difyResp.Metadata.Usage.TotalTokens, len(difyResp.RetrieverResources), difyDuration)
 		r.publishHandoffEvent(ctx, msg, convID, config.ProductLineID, j.Result, j.Answer)
 
@@ -928,6 +1074,38 @@ func (r *Router) deliverJudgement(ctx context.Context, config *RouteConfig, msg 
 		r.ontology.RecordViolations(ctx, convID, config.ProductLineID, ac.ontologyVersion,
 			j.Violations, j.Enforced)
 	}
+	r.recordCommitments(ctx, convID, config.ProductLineID, j)
+}
+
+// recordCommitments writes the firewall's findings to the review queue.
+//
+// The ontology version is written as 0, which the store turns into NULL: a
+// firewall finding says nothing about any ontology version, and attributing it
+// to one would charge the firewall's holds to that version's post-publish
+// observation. ungrounded_figure is never written — one row per stray number
+// would bury the rows a reviewer has to act on — and is counted in metrics
+// only. Flag-only phrases never held anything, so their rows say so even when
+// another finding in the same answer did.
+func (r *Router) recordCommitments(ctx context.Context, convID, productLineID string, j *Judgement) {
+	if r.ontology == nil || len(j.Commitments) == 0 {
+		return
+	}
+	var holding, recordOnly []domain.Violation
+	for _, f := range j.Commitments {
+		switch {
+		case f.Kind == domain.ViolationUngroundedFigure:
+		case domain.IsBlockingFinding(f.Kind):
+			holding = append(holding, f)
+		default:
+			recordOnly = append(recordOnly, f)
+		}
+	}
+	if len(holding) > 0 {
+		r.ontology.RecordViolations(ctx, convID, productLineID, 0, holding, j.CommitmentWithheld)
+	}
+	if len(recordOnly) > 0 {
+		r.ontology.RecordViolations(ctx, convID, productLineID, 0, recordOnly, false)
+	}
 }
 
 // handoffBeforeAI routes a message to a human without calling the model.
@@ -977,6 +1155,10 @@ func (r *Router) handoffWithoutAnswer(ctx context.Context, config *RouteConfig,
 		log.Printf("[router] worker %d: failed to transition conversation %s to human_processing: %v",
 			workerID, convID, err)
 	}
+
+	// Last, after the handoff is complete: pre_ai for a triage interception,
+	// no_answer for a model that produced nothing.
+	r.recordNoAnswerAudit(ctx, config, msg, convID, reason)
 }
 
 // retrievalDatasets returns the deduplicated RAG dataset names that
@@ -1036,7 +1218,13 @@ func (r *Router) requeue(ctx context.Context, entry redis.XMessage) bool {
 // check belongs there and not here: this function is the last of several
 // delivery paths, and per-path checks are what let D18 through the
 // send_and_handoff branch after the plain send branch had one.
-func (r *Router) publishAIResponse(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, answer string, confidenceF32 float32, totalTokens int, ragSources int, difyDuration time.Duration) {
+//
+// It returns the text it delivered: the answer with the product line's AI
+// label attached when disclosure is on, the answer unchanged otherwise. The
+// same labelled text is what the messages table stores, so the record of the
+// conversation shows what the customer actually saw.
+func (r *Router) publishAIResponse(ctx context.Context, config *RouteConfig, msg *model.StandardMessage, convID string, workerID int, answer string, confidenceF32 float32, totalTokens int, ragSources int, difyDuration time.Duration) string {
+	answer = r.applyDisclosure(ctx, config, convID, answer)
 	outMsg := model.StandardMessage{
 		ID:      uuid.New().String(),
 		Type:    model.MessageTypeOutbound,
@@ -1060,7 +1248,7 @@ func (r *Router) publishAIResponse(ctx context.Context, config *RouteConfig, msg
 	outJSON, err := json.Marshal(outMsg)
 	if err != nil {
 		log.Printf("[router] worker %d: failed to marshal outbound message: %v", workerID, err)
-		return
+		return answer
 	}
 
 	_, err = r.rdb.XAdd(ctx, &redis.XAddArgs{
@@ -1074,7 +1262,7 @@ func (r *Router) publishAIResponse(ctx context.Context, config *RouteConfig, msg
 	}).Result()
 	if err != nil {
 		log.Printf("[router] worker %d: failed to publish outbound message: %v", workerID, err)
-		return
+		return answer
 	}
 
 	// Store AI response message in DB with confidence score
@@ -1095,6 +1283,7 @@ func (r *Router) publishAIResponse(ctx context.Context, config *RouteConfig, msg
 
 	log.Printf("[router] worker %d: AI response published for conversation %s (tokens=%d, confidence=%.3f, rag_sources=%d, took=%s)",
 		workerID, convID, totalTokens, confidenceF32, ragSources, difyDuration)
+	return answer
 }
 
 // publishHoldingMessage sends a holding message to the customer during handoff.

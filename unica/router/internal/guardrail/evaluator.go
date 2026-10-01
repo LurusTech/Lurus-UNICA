@@ -55,6 +55,12 @@ const (
 	// call failed or came back empty. It is a availability failure, not a
 	// judgement about an answer, so it never feeds the experience KB.
 	ReasonAIUnavailable = "ai_unavailable"
+	// ReasonCommitmentUnbacked is set when the commitment firewall withholds an
+	// answer: a refund, compensation, price or guarantee nothing on record
+	// backs. The draft goes to the agent to confirm, so it is a policy hold,
+	// not a quality signal, and it is forced — no ontology change may count
+	// removing it as an improvement (domain.ClassifyHandoffReason).
+	ReasonCommitmentUnbacked = "commitment_unbacked"
 
 	// The reasons below are raised by the model itself through the
 	// [HANDOFF:...] tag protocol (see pkg/domain/escalation.go). They say

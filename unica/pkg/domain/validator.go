@@ -39,6 +39,29 @@ const (
 	// explicitly does not offer. Unlike the others it is detected in the answer
 	// text, so it still fires when the model emits no claim tags at all.
 	ViolationDenied ViolationKind = "denied_capability"
+
+	// The kinds below come from the commitment firewall (commitment.go,
+	// redline.go), not from the ontology. They share this table and the
+	// review queue because a person judges them the same way, but they are
+	// excluded from every per-version and compliance statistic: they say
+	// nothing about whether an ontology is right.
+
+	// ViolationUnbackedCommitment is a refund, compensation or guarantee
+	// sentence whose figure or absolute wording nothing on record backs, or —
+	// under the money scope — any unbacked money or percentage figure.
+	ViolationUnbackedCommitment ViolationKind = "unbacked_commitment"
+	// ViolationDeferredFigure is a figure the knowledge base deliberately
+	// left to a person ("具体税费需咨询") and the answer stated anyway.
+	ViolationDeferredFigure ViolationKind = "deferred_figure"
+	// ViolationRedline is a phrase from a withhold pack.
+	ViolationRedline ViolationKind = "redline_phrase"
+	// ViolationRedlineFlag is a phrase from a flag-only pack: recorded for
+	// review, never held.
+	ViolationRedlineFlag ViolationKind = "redline_flagged"
+	// ViolationUngroundedFigure is an unbacked figure outside any commitment.
+	// It is counted in metrics only and never written to the review queue:
+	// one row per number would bury the rows that matter.
+	ViolationUngroundedFigure ViolationKind = "ungrounded_figure"
 )
 
 // Violation is one conflict between an answer and the ontology.

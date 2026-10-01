@@ -3,8 +3,8 @@ package routing
 import (
 	"strings"
 
-	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/marketing"
 )
@@ -62,6 +62,13 @@ type JudgeInput struct {
 
 	// ProductLineID keys the breaker window.
 	ProductLineID string
+
+	// GroundingTexts are the passages the commitment firewall may credit a
+	// figure to: the retrieval passages and the recalled knowledge context,
+	// verbatim. Recalled experience notes are deliberately not among them —
+	// they are earlier AI answers, and crediting them would let an invented
+	// figure back itself. Only read while the firewall is on.
+	GroundingTexts []string
 }
 
 // Judgement is everything the decision chain concluded about one answer.
@@ -101,6 +108,32 @@ type Judgement struct {
 	// the original reason whenever one already existed, so the reason alone
 	// cannot count the occurrences.
 	EmptyAnswerWithheld bool
+
+	// Commitments is what the commitment firewall found, recorded under shadow
+	// as well as enforce. Nil while the firewall is off.
+	Commitments []domain.Violation
+	// CommitmentWithheld reports that the firewall took a deliverable answer
+	// away and handed it to a person to confirm.
+	CommitmentWithheld bool
+}
+
+// commitmentWithheld builds the verdict for an answer the firewall holds.
+//
+// The answer text is never touched. There is no "corrected" figure the system
+// could supply — a figure nothing backs is exactly one the system does not
+// know — so the only honest move is the one the empty-answer branch makes: copy
+// the verdict, stop delivery, and hand the draft to an agent along with the
+// list of what to check. A send becomes commitment_unbacked; an escalation the
+// model already raised keeps its reason, because "the customer wants a payout"
+// is still why a person is needed, and only the delivery changes.
+func commitmentWithheld(prev *guardrail.EvalResult, findings []domain.Violation) *guardrail.EvalResult {
+	withheld := *prev
+	withheld.Decision = guardrail.DecisionHandoff
+	if prev.Decision == guardrail.DecisionSend {
+		withheld.Reason = guardrail.ReasonCommitmentUnbacked
+	}
+	withheld.Detail = strings.TrimSpace(domain.CommitmentDetail(findings) + " " + prev.Detail)
+	return &withheld
 }
 
 // JudgeAnswer runs the single decision chain shared by the live router and the
@@ -110,9 +143,11 @@ type Judgement struct {
 // breaker. Keeping it in one function is what stops the two callers from
 // drifting apart — they did once, and the divergence was only found by reading.
 //
-// Suppression happens in exactly one place: the enforcement override below,
-// which fires only under ValidationEnforce and only while the breaker allows
-// it. Shadow mode records violations but routes precisely as ValidationOff
+// Ontology suppression happens in exactly one place: the enforcement override
+// below, which fires only under ValidationEnforce and only while the breaker
+// allows it. The commitment firewall is the one other hold, under its own
+// switch, and it is deliberately outside the breaker (see the comment at it).
+// Shadow mode records violations but routes precisely as ValidationOff
 // would — GroundedConfidence deliberately carries no contradiction penalty,
 // because a penalty there would suppress answers through the low_confidence
 // path, which the breaker cannot stop and which shadow mode promises not to
@@ -224,6 +259,56 @@ func JudgeAnswer(in JudgeInput, evaluator *guardrail.Evaluator, breaker *domain.
 			Reason:     guardrail.ReasonClaimConflict,
 			Confidence: confidenceContradicted,
 			Detail:     domain.Summary(j.Violations),
+		}
+	}
+
+	// The commitment firewall runs after enforcement and before the empty
+	// check. After enforcement, so an answer the ontology already took away
+	// keeps the more specific claim_conflict reason; before the empty check,
+	// because a held answer is not delivered and the emptiness question no
+	// longer arises.
+	//
+	// It is not bounded by the breaker, on purpose. The breaker trades wrong
+	// answers reaching customers for a human queue that does not collapse,
+	// which is a fair trade for a mis-authored fact and not for a money
+	// promise nobody wrote down: the business is bound by what its agent
+	// promised. For the same reason, while the breaker has switched ordinary
+	// enforcement off, a violation on a property marked Commitment is still
+	// withheld; every other violation is let through as before.
+	//
+	// Off is a no-op and shadow only records: neither touches j.Result, so
+	// routing under both is exactly what it was before the firewall existed.
+	if in.OntologyCfg.CommitmentChecks() {
+		j.Commitments = domain.CheckCommitments(j.Answer,
+			domain.CreditableClaims(j.Claims, j.Violations, checked),
+			domain.GroundingSources{
+				CustomerMessage: in.Query,
+				Retrieved:       in.GroundingTexts,
+				Ontology:        in.Ontology,
+			},
+			in.OntologyCfg.CommitmentScopeOrDefault())
+		j.Commitments = append(j.Commitments, domain.ScanRedlines(j.Answer, in.OntologyCfg.RedlinePacks)...)
+	}
+	if in.OntologyCfg.CommitmentEnforces() && j.Result.Decision.Delivers() {
+		var holding []domain.Violation
+		for _, f := range j.Commitments {
+			if domain.IsBlockingFinding(f.Kind) {
+				holding = append(holding, f)
+			}
+		}
+		var committed []domain.Violation
+		if j.BreakerBypassed {
+			committed = domain.CommitmentPropertyViolations(in.Ontology, j.Violations)
+		}
+		if len(holding) > 0 || len(committed) > 0 {
+			j.Result = commitmentWithheld(j.Result, append(holding, committed...))
+			j.CommitmentWithheld = true
+			if len(committed) > 0 {
+				// The ontology violations did suppress this answer after all,
+				// so the evidence rows say so and the bypass is not counted.
+				j.Enforced = true
+				j.BreakerBypassed = false
+			}
 		}
 	}
 

@@ -144,11 +144,46 @@ func TestReasonNamesMatchRouter(t *testing.T) {
 		domain.HandoffReasonClaimConflict:  guardrail.ReasonClaimConflict,
 		domain.HandoffReasonAIUnavailable:  guardrail.ReasonAIUnavailable,
 		domain.HandoffReasonConfidenceOK:   guardrail.ReasonConfidenceOK,
+		// Forced rather than reducible, but pinned all the same: a rename on
+		// either side would otherwise go unnoticed until a gate miscounted.
+		domain.HandoffReasonCommitmentUnbacked: guardrail.ReasonCommitmentUnbacked,
 	}
 	for spelled, constant := range pairs {
 		if spelled != constant {
 			t.Errorf("domain spells %q, router constant is %q", spelled, constant)
 		}
+	}
+}
+
+// TestExecute_NeverRunsTheCommitmentFirewall pins that the replay judges with
+// the firewall off. Whether the firewall holds an answer depends on the exact
+// words sampled each time, so counting its holds in the "forced handoffs must
+// survive every trial" gate would read sampling noise as a regression — and
+// the firewall is not something an ontology change tunes in the first place.
+// run.go builds its domain.Config without the field, so the zero value (off)
+// is what applies; this test fails if that ever changes.
+func TestExecute_NeverRunsTheCommitmentFirewall(t *testing.T) {
+	cases := []Case{{ID: "f#1", ConversationID: "f", Query: "能退多少"}}
+	ans := &stubAnswerer{answers: map[string]string{
+		"能退多少": "不满意可以全额退款，另外再补偿您500元。",
+	}}
+	run, err := Execute(context.Background(), cases, ans, RunConfig{
+		ProductLine: "FreshMart", Split: SplitHoldout, Ontology: freshMart(t),
+		Line: LineConfig{
+			Validation: domain.ValidationEnforce,
+			Triage:     guardrail.TriageOff,
+			Guardrail:  &guardrail.GuardrailConfig{ConfidenceThreshold: 0},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := run.Cases[0]
+	if got.Reason == guardrail.ReasonCommitmentUnbacked {
+		t.Fatalf("the replay must never hold an answer through the firewall: %+v", got)
+	}
+	if got.Decision != string(guardrail.DecisionSend) {
+		t.Errorf("with the threshold at zero and nothing contradicted the answer should send, got %s/%s", got.Decision, got.Reason)
 	}
 }
 

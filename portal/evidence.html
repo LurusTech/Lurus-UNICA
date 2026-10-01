@@ -1,0 +1,837 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>判定证据 - UNICA 统一管理门户</title>
+<style>
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root {
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+    --lt-accent: #FF5D1F;
+    --lt-on-accent: #14130F;
+  }
+  :root {
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --ok: var(--lt-ok);
+    --bad: var(--lt-err);
+    --warn: var(--lt-warn);
+    --info: var(--lt-info);
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --lt-paper: #14130F;
+      --lt-bg:    #0A0908;
+      --lt-ink:   #F0EDE4;
+      --lt-rule:  #25221C;
+      --lt-ok:    #3FA876;
+      --lt-warn:  #E0A040;
+      --lt-err:   #EE6F5E;
+      --lt-info:  #5A7BC7;
+      --bg: var(--lt-paper);
+      --surface: var(--lt-bg);
+      --text: var(--lt-ink);
+      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+      --border: var(--lt-rule);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1100px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--primary); outline-offset: 2px;
+  }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.8rem; resize: vertical; }
+  input[type="checkbox"] { width: auto; padding: 0; }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+
+  #login-view {
+    max-width: 380px; margin: 10vh auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; box-shadow: var(--shadow);
+  }
+  #login-view h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  #login-view p.sub { color: var(--text-muted); margin: 0 0 22px; font-size: 0.88rem; }
+  #login-error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
+  }
+  #login-view .remember { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  #login-view .remember label { margin-bottom: 0; font-weight: 400; color: var(--text-muted); }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; margin-bottom: 20px; }
+  .toolbar .field { margin-bottom: 0; min-width: 220px; }
+  .toolbar .field.grow { flex: 1; min-width: 300px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 20px;
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .card h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  .card-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 14px; line-height: 1.7; }
+  .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 0.82em; word-break: break-all;
+  }
+  code { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.info { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+
+  .chain-status { border-left: 4px solid var(--border); padding: 12px 16px; border-radius: 10px; background: var(--bg); line-height: 1.7; }
+  .chain-status.ok { border-left-color: var(--ok); }
+  .chain-status.bad { border-left-color: var(--bad); }
+  .chain-status .title { font-weight: 600; }
+  .chain-status.ok .title { color: var(--ok); }
+  .chain-status.bad .title { color: var(--bad); }
+  .chain-status .meta { font-size: 0.82rem; color: var(--text-muted); }
+
+  .timeline { list-style: none; margin: 0; padding: 0; }
+  .turn {
+    border: 1px solid var(--border); border-radius: 12px; background: var(--bg);
+    padding: 14px 16px; margin-bottom: 14px; break-inside: avoid;
+  }
+  .turn-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
+  .turn-head .when { font-size: 0.82rem; color: var(--text-muted); }
+  .turn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px) { .turn-grid { grid-template-columns: 1fr; } }
+  .block { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
+  .block h4 { margin: 0 0 6px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); letter-spacing: 0.03em; }
+  .block .text { white-space: pre-wrap; word-break: break-word; font-size: 0.9rem; line-height: 1.7; }
+  .block.delivered { border-left: 3px solid var(--ok); }
+  .block.withheld { border-left: 3px solid var(--bad); }
+  .block.full { grid-column: 1 / -1; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.82rem; color: var(--text-muted); margin-top: 10px; }
+  .facts b { color: var(--text); font-weight: 500; }
+  table.sources { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  table.sources th, table.sources td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.sources th { color: var(--text-muted); font-weight: 600; }
+  ul.findings { margin: 0; padding-left: 18px; font-size: 0.86rem; line-height: 1.7; }
+  .hashes { margin-top: 10px; font-size: 0.75rem; color: var(--text-muted); line-height: 1.6; }
+
+  .empty-state { padding: 32px 16px; text-align: center; color: var(--text-muted); line-height: 1.8; }
+
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 340px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow); line-height: 1.6;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  [hidden] { display: none !important; }
+
+  /* Printing keeps the evidence and its chain status only: the controls,
+     the switch and the sign-in chrome are not part of the record. */
+  @media print {
+    header, .toolbar, #config-card, #anchor-card, .no-print, #toast-host { display: none !important; }
+    body { background: #fff; color: #000; }
+    main { max-width: none; padding: 0; }
+    .card, .turn, .block { box-shadow: none; background: #fff; }
+    .print-only { display: block !important; }
+  }
+  .print-only { display: none; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
+    <h1>判定证据</h1>
+  </div>
+  <div id="user-info" hidden>
+    <span id="tenant-name"></span>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <section id="login-view">
+    <h2>登录</h2>
+    <p class="sub">请使用管理账号登录以查看判定证据</p>
+    <div id="login-error"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <div class="remember">
+        <input id="remember" type="checkbox" />
+        <label for="remember">记住我（7 天内免登录）</label>
+      </div>
+      <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
+    </form>
+  </section>
+
+  <section id="app-view" hidden>
+    <div class="toolbar">
+      <div class="field" id="pl-field" hidden>
+        <label for="pl-select">租户</label>
+        <select id="pl-select"><option value="">请选择租户</option></select>
+      </div>
+      <div class="field grow">
+        <label for="conv-input">会话 ID</label>
+        <input id="conv-input" placeholder="例如 3f2a…-…（在工作台或转人工记录里可以找到）" autocomplete="off" spellcheck="false" />
+      </div>
+      <button class="primary" id="query-btn">查看证据</button>
+    </div>
+
+    <div class="card" id="config-card" hidden>
+      <div class="card-head">
+        <h2>证据链</h2>
+        <span class="pill muted" id="config-pill">—</span>
+      </div>
+      <p class="card-sub">
+        开启后，本租户每一次 AI 判定（发出、转人工、分流转人工、模型无答复）都会写入一条证据：
+        客户原话、决策与原因、所用本体版本、命中片段的内容哈希、发出或被拦下的答复。
+        记录按顺序串成哈希链，记录写入后若被改动，校验时可以发现。证据只记录已经发生的事，不改变任何答复或转人工决定。
+        证据里含客户原话，删除租户时一并删除；按月保留期由运维显式清理。
+      </p>
+      <div class="row-actions">
+        <button id="config-toggle">—</button>
+      </div>
+    </div>
+
+    <div class="card" id="anchor-card" hidden>
+      <div class="card-head">
+        <h2>链头摘要（外部留存）</h2>
+      </div>
+      <p class="card-sub">
+        链头摘要是当前链尾的一行指纹。建议每天下载一份保存在本系统之外。日后有人即使改动记录并重算了整条链，
+        也无法让它与您留存的摘要对上——把留存的摘要粘贴到下面比对即可发现。
+      </p>
+      <div class="row-actions" style="margin-bottom:12px">
+        <button id="head-download">下载今日链头摘要</button>
+      </div>
+      <div class="field">
+        <label for="digest-input">比对留存的链头摘要</label>
+        <textarea id="digest-input" rows="2" placeholder="粘贴以 unica-answer-audit-head/ 开头的那一行"></textarea>
+      </div>
+      <div class="row-actions">
+        <button id="digest-check">比对</button>
+      </div>
+      <div id="digest-result" class="chain-status" style="margin-top:12px" hidden></div>
+    </div>
+
+    <div class="card" id="evidence-card" hidden>
+      <div class="card-head">
+        <h2 id="evidence-title">会话证据</h2>
+        <div class="row-actions no-print">
+          <button id="print-btn">打印 / 另存 PDF</button>
+          <button id="export-btn">导出 JSON</button>
+        </div>
+      </div>
+      <p class="print-only" id="print-meta"></p>
+      <div id="chain-status" class="chain-status" style="margin-bottom:16px"></div>
+      <ol class="timeline" id="timeline"></ol>
+    </div>
+
+    <div class="card empty-state" id="empty-box">输入会话 ID 查看该会话每一轮的判定证据</div>
+  </section>
+</main>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script src="./auth.js?v=1"></script>
+<script>
+(function () {
+  "use strict";
+
+  var DIGEST_PREFIX = "unica-answer-audit-head/";
+
+  var DECISION_LABELS = {
+    send: { text: "发出", cls: "ok" },
+    send_and_handoff: { text: "发出并转人工", cls: "info" },
+    handoff: { text: "转人工", cls: "warn" }
+  };
+
+  var KIND_LABELS = {
+    judged: "AI 作答后判定",
+    pre_ai: "未调用模型（分流转人工）",
+    no_answer: "模型无可用答复"
+  };
+
+  var CLASS_LABELS = {
+    forced: { text: "强制转人工", cls: "bad" },
+    reducible: { text: "可削减", cls: "info" },
+    other: { text: "其他", cls: "muted" },
+    none: { text: "—", cls: "muted" }
+  };
+
+  // Operator-facing wording for known reasons; anything else shows its code.
+  var REASON_LABELS = {
+    confidence_ok: "置信度达标",
+    low_confidence: "置信度不足",
+    empty_answer: "答复为空",
+    model_requested: "模型请求转人工",
+    claim_conflict: "与本体事实冲突",
+    commitment_unbacked: "承诺或数字无出处",
+    human_quick_entry: "快捷入口要求人工",
+    repeat_unresolved: "重复追问未解决",
+    vulnerable_priority: "优先接待",
+    ai_unavailable: "AI 服务不可用",
+    keyword_match: "命中转人工关键词",
+    blocked_topic: "禁答话题",
+    safety_incident: "安全事件",
+    funds_at_risk: "资金风险",
+    payout_request: "赔付请求",
+    liability_payout: "责任赔付",
+    regulator_threat: "投诉或监管威胁"
+  };
+
+  var VALIDATION_LABELS = { off: "未校验", shadow: "只记录", enforce: "拦截" };
+
+  var state = {
+    tenants: [],
+    currentTenant: null,
+    lastEvidence: null,
+    ledgerEnabled: null
+  };
+
+  var els = {
+    loginView: document.getElementById("login-view"),
+    appView: document.getElementById("app-view"),
+    loginForm: document.getElementById("login-form"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
+    remember: document.getElementById("remember"),
+    userInfo: document.getElementById("user-info"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    backLink: document.getElementById("back-link"),
+    tenantName: document.getElementById("tenant-name"),
+    plField: document.getElementById("pl-field"),
+    plSelect: document.getElementById("pl-select"),
+    convInput: document.getElementById("conv-input"),
+    queryBtn: document.getElementById("query-btn"),
+    configCard: document.getElementById("config-card"),
+    configPill: document.getElementById("config-pill"),
+    configToggle: document.getElementById("config-toggle"),
+    anchorCard: document.getElementById("anchor-card"),
+    headDownload: document.getElementById("head-download"),
+    digestInput: document.getElementById("digest-input"),
+    digestCheck: document.getElementById("digest-check"),
+    digestResult: document.getElementById("digest-result"),
+    evidenceCard: document.getElementById("evidence-card"),
+    evidenceTitle: document.getElementById("evidence-title"),
+    printMeta: document.getElementById("print-meta"),
+    chainStatus: document.getElementById("chain-status"),
+    timeline: document.getElementById("timeline"),
+    printBtn: document.getElementById("print-btn"),
+    exportBtn: document.getElementById("export-btn"),
+    emptyBox: document.getElementById("empty-box"),
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () { el.remove(); }, 3600);
+  }
+
+  // ---------- Tenant scope ----------
+  var TENANT_ME = "me";
+
+  function accountRole() {
+    var claims = UnicaAuth.decodeClaims(UnicaAuth.accessToken());
+    return claims && typeof claims.role === "string" ? claims.role : "";
+  }
+
+  function isAdmin() { return accountRole() === "admin"; }
+
+  function queryParam(name) {
+    var m = new RegExp("[?&]" + name + "=([^&]*)").exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  function requestedTenant() { return isAdmin() ? queryParam("tenant") : ""; }
+
+  function tenantSegment() {
+    if (!isAdmin()) return TENANT_ME;
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function tenantPath(suffix) {
+    return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
+  }
+
+  // The tenant's own id, which the head digest names. A user addresses its
+  // tenant as "me", so the id comes from the tenant record.
+  function tenantId() {
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function showLogin(message) {
+    UnicaAuth.dropTab();
+    els.appView.hidden = true;
+    els.userInfo.hidden = true;
+    els.loginView.hidden = false;
+    if (message) {
+      els.loginError.textContent = message;
+      els.loginError.style.display = "block";
+    }
+  }
+
+  function showApp() {
+    els.loginView.hidden = true;
+    els.appView.hidden = false;
+    els.userInfo.hidden = false;
+  }
+
+  function errorText(err) {
+    if (err && err.status === 403) {
+      return "无权限：" + ((err.data && err.data.error) || "当前账号不能查看这个租户的证据");
+    }
+    return (err && err.message) || "请求失败";
+  }
+
+  function reportError(prefix, err) {
+    if (err && err.message === "unauthorized") return;
+    toast(prefix + "：" + errorText(err), "error");
+  }
+
+  // ---------- Login ----------
+  els.loginForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    els.loginError.style.display = "none";
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "登录中…";
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+    UnicaAuth.login(email, password, els.remember.checked)
+      .then(function () {
+        els.userEmail.textContent = email;
+        showApp();
+        bootstrap();
+      })
+      .catch(function (err) {
+        els.loginError.textContent = err.message || "登录失败，请检查网络";
+        els.loginError.style.display = "block";
+      })
+      .finally(function () {
+        els.loginSubmit.disabled = false;
+        els.loginSubmit.textContent = "登 录";
+      });
+  });
+
+  els.logoutBtn.addEventListener("click", function () {
+    UnicaAuth.logout();
+    showLogin();
+  });
+
+  // ---------- Bootstrap ----------
+  function bootstrap() {
+    var conv = queryParam("conversation_id");
+    if (conv) els.convInput.value = conv;
+    loadTenants();
+  }
+
+  function loadTenants() {
+    if (!isAdmin()) {
+      return UnicaAuth.api("/api/v1/tenants/" + TENANT_ME)
+        .then(function (tenant) {
+          state.tenants = tenant ? [tenant] : [];
+          renderTenantOptions();
+        })
+        .catch(function (err) { reportError("加载租户失败", err); });
+    }
+    return UnicaAuth.api("/api/v1/tenants")
+      .then(function (data) {
+        state.tenants = Array.isArray(data) ? data : [];
+        renderTenantOptions();
+      })
+      .catch(function (err) { reportError("加载租户失败", err); });
+  }
+
+  function findTenant(id) {
+    for (var i = 0; i < state.tenants.length; i++) {
+      if (String(state.tenants[i].id) === String(id)) return state.tenants[i];
+    }
+    return null;
+  }
+
+  function renderTenantOptions() {
+    els.plField.hidden = !isAdmin();
+    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
+    if (state.tenants.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无租户</option>';
+      els.emptyBox.textContent = "还没有租户";
+      return;
+    }
+    els.plSelect.innerHTML = state.tenants.map(function (pl) {
+      return '<option value="' + escapeHtml(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
+    }).join("");
+    var initial = findTenant(requestedTenant()) || state.tenants[0];
+    els.plSelect.value = String(initial.id);
+    selectTenant(els.plSelect.value);
+  }
+
+  els.plSelect.addEventListener("change", function () { selectTenant(els.plSelect.value); });
+
+  function selectTenant(id) {
+    state.currentTenant = findTenant(id);
+    els.tenantName.textContent = state.currentTenant
+      ? (state.currentTenant.display_name || state.currentTenant.name) : "";
+    els.evidenceCard.hidden = true;
+    els.emptyBox.hidden = false;
+    els.digestResult.hidden = true;
+    state.lastEvidence = null;
+    if (!state.currentTenant) {
+      els.configCard.hidden = true;
+      els.anchorCard.hidden = true;
+      return;
+    }
+    els.anchorCard.hidden = false;
+    loadConfig();
+    if (els.convInput.value.trim()) loadEvidence();
+  }
+
+  // ---------- Switch ----------
+  function loadConfig() {
+    UnicaAuth.api(tenantPath("/evidence/config"))
+      .then(function (cfg) { renderConfig(!!(cfg && cfg.enabled)); })
+      .catch(function (err) {
+        els.configCard.hidden = true;
+        reportError("读取证据链开关失败", err);
+      });
+  }
+
+  function renderConfig(enabled) {
+    state.ledgerEnabled = enabled;
+    els.configCard.hidden = false;
+    els.configPill.textContent = enabled ? "已开启" : "未开启";
+    els.configPill.className = "pill " + (enabled ? "ok" : "muted");
+    els.configToggle.textContent = enabled ? "关闭证据链" : "开启证据链";
+  }
+
+  els.configToggle.addEventListener("click", function () {
+    var next = !state.ledgerEnabled;
+    var question = next
+      ? "开启后，每次判定都会记录客户原话和答复，用于事后举证。确认开启？"
+      : "关闭后不再记录新的判定证据，已有记录保留。确认关闭？";
+    if (!window.confirm(question)) return;
+    els.configToggle.disabled = true;
+    UnicaAuth.api(tenantPath("/evidence/config"), {
+      method: "PUT",
+      body: JSON.stringify({ enabled: next })
+    })
+      .then(function (cfg) {
+        renderConfig(!!(cfg && cfg.enabled));
+        if (cfg && cfg.cache_invalidated === false) {
+          toast("已保存，但路由缓存未能刷新：新设置会在缓存过期后生效", "error");
+        } else {
+          toast(next ? "证据链已开启" : "证据链已关闭", "success");
+        }
+      })
+      .catch(function (err) { reportError("保存失败", err); })
+      .finally(function () { els.configToggle.disabled = false; });
+  });
+
+  // ---------- Head digest ----------
+  function today() {
+    var d = new Date();
+    function pad(n) { return n < 10 ? "0" + n : String(n); }
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  function downloadBlob(text, filename, type) {
+    var blob = new Blob([text], { type: type });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  els.headDownload.addEventListener("click", function () {
+    els.headDownload.disabled = true;
+    UnicaAuth.api(tenantPath("/evidence/head"))
+      .then(function (head) {
+        if (!head || !head.digest) throw new Error("没有拿到链头摘要");
+        if (head.consistent === false) {
+          toast("注意：" + (head.note || "链头与最后一条记录不一致"), "error");
+        }
+        var lines = [
+          head.digest,
+          "# 生成时间（UTC）：" + head.generated_at,
+          "# 链头更新时间（UTC）：" + (head.updated_at || "尚无记录"),
+          "# 第一行是链头摘要。日后把它粘贴到“比对留存的链头摘要”，即可检查这条记录及其之前的记录是否被改动过。"
+        ];
+        downloadBlob(lines.join("\n") + "\n",
+          "unica-链头摘要-" + (tenantId() || "tenant") + "-" + today() + ".txt",
+          "text/plain;charset=utf-8");
+      })
+      .catch(function (err) { reportError("下载链头摘要失败", err); })
+      .finally(function () { els.headDownload.disabled = false; });
+  });
+
+  // A saved file carries comment lines; only the digest line is sent.
+  function digestLine(text) {
+    var lines = String(text || "").split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line.indexOf(DIGEST_PREFIX) === 0) return line;
+    }
+    return "";
+  }
+
+  els.digestCheck.addEventListener("click", function () {
+    var line = digestLine(els.digestInput.value);
+    if (!line) {
+      toast("没有找到以 " + DIGEST_PREFIX + " 开头的摘要行", "error");
+      return;
+    }
+    els.digestCheck.disabled = true;
+    UnicaAuth.api(tenantPath("/evidence/verify?digest=" + encodeURIComponent(line)))
+      .then(function (res) {
+        var box = els.digestResult;
+        box.hidden = false;
+        if (res && res.digest_match) {
+          box.className = "chain-status ok";
+          box.innerHTML = '<div class="title">与留存的摘要一致</div>' +
+            '<div class="meta">摘要所指的第 ' + escapeHtml(res.chain.to_seq) +
+            " 条记录及其之前校验过的记录，自摘要留存以来没有被改动。</div>";
+        } else {
+          box.className = "chain-status bad";
+          box.innerHTML = '<div class="title">与留存的摘要不一致</div>' +
+            '<div class="meta">' + escapeHtml((res && res.digest_problem) || "比对未通过") + "</div>" +
+            (res && res.chain && !res.chain.ok ? '<div class="meta">' + escapeHtml(res.chain.problem || "") + "</div>" : "");
+        }
+      })
+      .catch(function (err) { reportError("比对失败", err); })
+      .finally(function () { els.digestCheck.disabled = false; });
+  });
+
+  // ---------- Evidence ----------
+  els.queryBtn.addEventListener("click", loadEvidence);
+  els.convInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") loadEvidence();
+  });
+
+  function loadEvidence() {
+    var conv = els.convInput.value.trim();
+    if (!conv) {
+      toast("请先填写会话 ID", "error");
+      return;
+    }
+    if (!state.currentTenant) return;
+    els.queryBtn.disabled = true;
+    UnicaAuth.api(tenantPath("/evidence?conversation_id=" + encodeURIComponent(conv)))
+      .then(function (data) {
+        state.lastEvidence = data;
+        renderEvidence(data);
+      })
+      .catch(function (err) {
+        state.lastEvidence = null;
+        els.evidenceCard.hidden = true;
+        els.emptyBox.hidden = false;
+        els.emptyBox.textContent = errorText(err);
+      })
+      .finally(function () { els.queryBtn.disabled = false; });
+  }
+
+  function renderChain(chain) {
+    var box = els.chainStatus;
+    if (chain && chain.ok) {
+      box.className = "chain-status ok";
+      box.innerHTML = '<div class="title">证据链校验通过</div>' +
+        '<div class="meta">校验了第 ' + escapeHtml(chain.from_seq) + " – " + escapeHtml(chain.to_seq) +
+        " 条，共 " + escapeHtml(chain.checked) + " 条记录（含同一时段其他会话的记录），逐条重算哈希并核对衔接均一致。</div>" +
+        (chain.note ? '<div class="meta">' + escapeHtml(chain.note) + "</div>" : "");
+    } else {
+      box.className = "chain-status bad";
+      box.innerHTML = '<div class="title">证据链校验未通过：从第 ' + escapeHtml(chain && chain.first_bad_seq) + " 条起</div>" +
+        '<div class="meta">' + escapeHtml((chain && chain.problem) || "") + "</div>";
+    }
+  }
+
+  function renderEvidence(data) {
+    els.emptyBox.hidden = true;
+    els.evidenceCard.hidden = false;
+    els.evidenceTitle.textContent = "会话证据 · " + data.conversation_id;
+    els.printMeta.textContent = "租户：" + (state.currentTenant ? (state.currentTenant.display_name || state.currentTenant.name) : "") +
+      "（" + data.product_line_id + "）  会话：" + data.conversation_id + "  导出时间：" + new Date().toLocaleString("zh-CN", { hour12: false });
+    renderChain(data.chain);
+    var entries = Array.isArray(data.entries) ? data.entries : [];
+    els.timeline.innerHTML = entries.map(renderTurn).join("");
+  }
+
+  function parseList(raw) {
+    if (Array.isArray(raw)) return raw;
+    return [];
+  }
+
+  function renderTurn(e) {
+    var decision = DECISION_LABELS[e.decision] || { text: e.decision, cls: "muted" };
+    var cls = CLASS_LABELS[e.reason_class] || { text: e.reason_class, cls: "muted" };
+    var reason = e.reason || "";
+    var reasonText = REASON_LABELS[reason] ||
+      (reason.indexOf("intent_") === 0 ? "分流：" + reason.slice(7) : reason);
+
+    var html = '<li class="turn">';
+    html += '<div class="turn-head">' +
+      '<span class="pill ' + decision.cls + '">' + escapeHtml(decision.text) + "</span>" +
+      '<span class="pill muted">' + escapeHtml(KIND_LABELS[e.kind] || e.kind) + "</span>" +
+      (e.decision !== "send" ? '<span class="pill ' + cls.cls + '">' + escapeHtml(cls.text) + "</span>" : "") +
+      "<span>原因：" + escapeHtml(reasonText) + (reasonText !== reason ? ' <code>' + escapeHtml(reason) + "</code>" : "") + "</span>" +
+      '<span class="when">第 ' + escapeHtml(e.seq) + " 条 · " + escapeHtml(formatDate(e.created_at)) + "</span>" +
+      (e.hash_ok ? '<span class="pill ok">本条哈希一致</span>' : '<span class="pill bad">本条哈希不一致</span>') +
+      "</div>";
+
+    html += '<div class="turn-grid">';
+    html += '<div class="block full"><h4>客户原话</h4><div class="text">' + escapeHtml(e.customer_message) + "</div></div>";
+    if (e.delivered_answer != null) {
+      html += '<div class="block delivered full"><h4>发给客户的答复</h4><div class="text">' + escapeHtml(e.delivered_answer) + "</div></div>";
+    }
+    if (e.withheld_answer != null) {
+      html += '<div class="block withheld full"><h4>被拦下、未发给客户的答复</h4><div class="text">' + escapeHtml(e.withheld_answer) + "</div></div>";
+    }
+
+    var commitments = parseList(e.commitments);
+    if (commitments.length) {
+      html += '<div class="block full"><h4>承诺与数字核对的发现</h4><ul class="findings">' +
+        commitments.map(function (f) {
+          return "<li>" + escapeHtml(f.message || f.kind) + (f.got ? "（<code>" + escapeHtml(f.got) + "</code>）" : "") + "</li>";
+        }).join("") + "</ul></div>";
+    }
+    var violations = parseList(e.violations);
+    if (violations.length) {
+      html += '<div class="block full"><h4>与本体事实的冲突</h4><ul class="findings">' +
+        violations.map(function (v) {
+          return "<li>" + escapeHtml(v.message || v.kind) + "</li>";
+        }).join("") + "</ul></div>";
+    }
+    var claims = parseList(e.claims);
+    if (claims.length) {
+      html += '<div class="block full"><h4>答复中标注的事实</h4><ul class="findings">' +
+        claims.map(function (c) {
+          return "<li><code>" + escapeHtml(c.property) + "</code> = " + escapeHtml(c.value) + "</li>";
+        }).join("") + "</ul></div>";
+    }
+    var sources = parseList(e.sources);
+    if (sources.length) {
+      html += '<div class="block full"><h4>命中的知识片段（只存内容哈希，不存原文）</h4>' +
+        '<table class="sources"><thead><tr><th>文档</th><th>分数</th><th>内容哈希</th></tr></thead><tbody>' +
+        sources.map(function (s) {
+          return "<tr><td>" + escapeHtml(s.document_name || s.document_id || "—") + "</td>" +
+            "<td>" + escapeHtml(typeof s.score === "number" ? s.score.toFixed(3) : "—") + "</td>" +
+            '<td class="mono">' + escapeHtml(s.content_sha256 || "—") + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }
+    html += "</div>";
+
+    html += '<div class="facts">' +
+      "<span>本体版本：<b>" + escapeHtml(e.ontology_version != null ? "v" + e.ontology_version : "未启用") + "</b></span>" +
+      "<span>事实注入：<b>" + (e.facts_injected ? "是" : "否") + "</b></span>" +
+      "<span>本体校验：<b>" + escapeHtml(VALIDATION_LABELS[e.validation_mode] || e.validation_mode) + "</b></span>" +
+      "<span>因冲突拦截：<b>" + (e.enforced ? "是" : "否") + "</b></span>" +
+      "<span>熔断状态：<b>" + (e.breaker_open ? "已熔断" : "正常") + "</b></span>" +
+      (e.confidence_score != null ? "<span>置信度：<b>" + escapeHtml(Number(e.confidence_score).toFixed(3)) + "</b></span>" : "") +
+      "</div>";
+    html += '<div class="hashes mono">配置指纹 ' + escapeHtml(e.config_sha256) +
+      "<br>上一环 " + escapeHtml(e.prev_hash) + "<br>本条 " + escapeHtml(e.row_hash) + "</div>";
+    html += "</li>";
+    return html;
+  }
+
+  els.printBtn.addEventListener("click", function () { window.print(); });
+
+  els.exportBtn.addEventListener("click", function () {
+    if (!state.lastEvidence) return;
+    downloadBlob(JSON.stringify(state.lastEvidence, null, 2),
+      "unica-会话证据-" + state.lastEvidence.conversation_id + ".json", "application/json");
+  });
+
+  // ---------- Utils ----------
+  function formatDate(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---------- Init ----------
+  UnicaAuth.onSessionLost(function () {
+    showLogin("登录已过期，请重新登录");
+  });
+
+  if (UnicaAuth.bootstrapTab()) {
+    showApp();
+    bootstrap();
+  } else {
+    showLogin();
+  }
+})();
+</script>

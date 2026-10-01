@@ -164,6 +164,16 @@ type Property struct {
 	// act on terms that do not cover them. OWL has no vocabulary for this,
 	// because it constrains what an answer must say rather than what exists.
 	Requires []string `yaml:"requires,omitempty" json:"requires,omitempty"`
+
+	// Commitment marks a property whose value is a promise the business has
+	// to honour — a refund rate, a compensation tier, what a fee includes.
+	// With the commitment firewall enforcing, an answer contradicting such a
+	// property is withheld even while the breaker has switched ordinary
+	// enforcement off: the breaker exists to protect the human queue from a
+	// wrong ontology, and a wrong money promise is the one cost that is not
+	// worth that trade. Any change to it ranks as tier C in ClassifyDiff and
+	// goes to a person.
+	Commitment bool `yaml:"commitment,omitempty" json:"commitment,omitempty"`
 }
 
 // Assertion states concrete values, optionally conditioned by a scope.

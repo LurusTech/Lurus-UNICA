@@ -9,6 +9,7 @@ package facts
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -281,41 +282,57 @@ func (h *Handler) rollback(w http.ResponseWriter, r *http.Request, pl *repositor
 	writeJSON(w, http.StatusOK, map[string]int{"version": req.Version})
 }
 
+// corpusHint tells the operator what the commitment firewall needs from the
+// AI app. It is returned with the config rather than written into the portal
+// so the wording stays next to the code whose behaviour it describes.
+const corpusHint = "承诺防火墙只认能读到原文的出处：请在 AI 应用中开启“引用与归属”，让检索结果带回片段原文；" +
+	"否则知识库里写明的数字也会被当作无出处。建议先用 shadow 观察复核队列，再决定是否 enforce。"
+
+// configResponse is the GET shape: the stored switches plus what the portal
+// needs to offer them.
+type configResponse struct {
+	*domain.Config
+	RedlinePackOptions []domain.RedlinePackInfo `json:"redline_pack_options"`
+	CorpusHint         string                   `json:"corpus_hint"`
+}
+
 func (h *Handler) getConfig(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
 	raw, err := h.pls.GetConfigJSON(r.Context(), pl.ID)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, "failed to load product line config")
 		return
 	}
-	writeJSON(w, http.StatusOK, domain.LoadConfig(raw))
+	writeJSON(w, http.StatusOK, configResponse{
+		Config:             domain.LoadConfig(raw),
+		RedlinePackOptions: domain.RedlinePacks(),
+		CorpusHint:         corpusHint,
+	})
 }
 
+// storedConfig reads the ontology block exactly as stored, without the
+// defaults LoadConfig fills in. A merge must start from this: writing the
+// filled-in defaults back would freeze today's breaker defaults into the row,
+// and a later change to them would never reach this line.
+func storedConfig(raw json.RawMessage) *domain.Config {
+	var wrapper struct {
+		Ontology *domain.Config `json:"ontology"`
+	}
+	if len(raw) > 0 && json.Unmarshal(raw, &wrapper) == nil && wrapper.Ontology != nil {
+		return wrapper.Ontology
+	}
+	return &domain.Config{}
+}
+
+// putConfig updates the switches a request carries and keeps every other one.
+//
+// The merge is what lets the firewall ship without breaking an older client: a
+// page that only knows inject_facts and validation would otherwise switch the
+// firewall off every time someone saved it — the one direction a silent
+// change must never go.
 func (h *Handler) putConfig(w http.ResponseWriter, r *http.Request, pl *repository.ProductLine) {
-	var req struct {
-		InjectFacts bool                  `json:"inject_facts"`
-		Validation  string                `json:"validation"`
-		Breaker     *domain.BreakerConfig `json:"breaker"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
+	var fields map[string]json.RawMessage
+	if err := decodeJSON(r, &fields); err != nil || fields == nil {
 		errorJSON(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	// The write path hard-fails on an unknown mode. The read path's silent
-	// fall-back to off exists for old rows; accepting a typo here would create
-	// exactly the row it has to fall back on.
-	mode, err := domain.ParseValidationMode(req.Validation)
-	if err != nil {
-		errorJSON(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Validation without injection leaves claim checking mostly idle (the tag
-	// vocabulary ships with the injected facts); an operator enabling it alone
-	// would read the silence as "no problems found". The pairing is enforced
-	// here, at the only place these switches can now be set.
-	if mode != domain.ValidationOff && !req.InjectFacts {
-		errorJSON(w, http.StatusBadRequest, "开启校验（shadow/enforce）必须同时开启事实注入 inject_facts")
 		return
 	}
 
@@ -324,8 +341,104 @@ func (h *Handler) putConfig(w http.ResponseWriter, r *http.Request, pl *reposito
 		errorJSON(w, http.StatusInternalServerError, "failed to load product line config")
 		return
 	}
+	cfg := storedConfig(before)
 
-	cfg := &domain.Config{InjectFacts: req.InjectFacts, Validation: mode, Breaker: req.Breaker}
+	if v, ok := fields["inject_facts"]; ok {
+		if err := json.Unmarshal(v, &cfg.InjectFacts); err != nil {
+			errorJSON(w, http.StatusBadRequest, "inject_facts must be a boolean")
+			return
+		}
+	}
+
+	// The write path hard-fails on an unknown mode. The read path's silent
+	// fall-back to off exists for old rows; accepting a typo here would create
+	// exactly the row it has to fall back on.
+	if v, ok := fields["validation"]; ok {
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			errorJSON(w, http.StatusBadRequest, "validation must be a string")
+			return
+		}
+		mode, err := domain.ParseValidationMode(s)
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		cfg.Validation = mode
+	} else if mode, err := domain.ParseValidationMode(string(cfg.Validation)); err == nil {
+		cfg.Validation = mode
+	} else {
+		cfg.Validation = domain.ValidationOff
+	}
+
+	if v, ok := fields["breaker"]; ok {
+		var b *domain.BreakerConfig
+		if err := json.Unmarshal(v, &b); err != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid breaker settings")
+			return
+		}
+		cfg.Breaker = b
+	}
+
+	if v, ok := fields["commitment"]; ok {
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			errorJSON(w, http.StatusBadRequest, "commitment must be a string")
+			return
+		}
+		mode, err := domain.ParseCommitmentMode(s)
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		cfg.Commitment = mode
+	} else if mode, err := domain.ParseCommitmentMode(string(cfg.Commitment)); err == nil {
+		cfg.Commitment = mode
+	} else {
+		cfg.Commitment = domain.CommitmentOff
+	}
+
+	if v, ok := fields["commitment_scope"]; ok {
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			errorJSON(w, http.StatusBadRequest, "commitment_scope must be a string")
+			return
+		}
+		scope, err := domain.ParseCommitmentScope(s)
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		cfg.CommitmentScope = scope
+	} else if scope, err := domain.ParseCommitmentScope(string(cfg.CommitmentScope)); err == nil {
+		cfg.CommitmentScope = scope
+	} else {
+		cfg.CommitmentScope = domain.CommitmentScopeCommitment
+	}
+
+	if v, ok := fields["redline_packs"]; ok {
+		var ids []string
+		if err := json.Unmarshal(v, &ids); err != nil {
+			errorJSON(w, http.StatusBadRequest, "redline_packs must be a list of pack ids")
+			return
+		}
+		packs, err := checkRedlinePacks(ids)
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		cfg.RedlinePacks = packs
+	}
+
+	// Validation without injection leaves claim checking mostly idle (the tag
+	// vocabulary ships with the injected facts); an operator enabling it alone
+	// would read the silence as "no problems found". The pairing is enforced
+	// here, at the only place these switches can now be set.
+	if cfg.Validation != domain.ValidationOff && !cfg.InjectFacts {
+		errorJSON(w, http.StatusBadRequest, "开启校验（shadow/enforce）必须同时开启事实注入 inject_facts")
+		return
+	}
+
 	if err := h.pls.SetConfigKey(r.Context(), pl.ID, "ontology", cfg); err != nil {
 		errorJSON(w, http.StatusInternalServerError, "failed to store ontology config")
 		return
@@ -346,6 +459,29 @@ func (h *Handler) putConfig(w http.ResponseWriter, r *http.Request, pl *reposito
 		*domain.Config
 		CacheInvalidated bool `json:"cache_invalidated"`
 	}{Config: stored, CacheInvalidated: invalidated})
+}
+
+// checkRedlinePacks refuses an id no embedded pack has, naming the ones that
+// exist, and drops duplicates. An unknown id would otherwise be stored and
+// silently scan nothing — a switch that reads as on and does nothing.
+func checkRedlinePacks(ids []string) ([]string, error) {
+	known := map[string]bool{}
+	for _, id := range domain.RedlinePackIDs() {
+		known[id] = true
+	}
+	out := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if !known[id] {
+			return nil, fmt.Errorf("未知的红线包 %q，可选：%s", id, strings.Join(domain.RedlinePackIDs(), ", "))
+		}
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // activeVersion returns the currently active version number for audit

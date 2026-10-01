@@ -1,0 +1,739 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>转人工与 AI 标识 - UNICA 统一管理门户</title>
+<style>
+  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
+  :root {
+    --lt-paper: #F5F2E8;
+    --lt-bg:    #E8E4D6;
+    --lt-ink:   #14130F;
+    --lt-rule:  #D6D2C2;
+    --lt-ok:    #1F7A4F;
+    --lt-warn:  #B8821F;
+    --lt-err:   #B3392B;
+    --lt-info:  #2D4A8A;
+    --lt-accent: #FF5D1F;
+    --lt-on-accent: #14130F;
+  }
+  :root {
+    --bg: var(--lt-paper);
+    --surface: var(--lt-bg);
+    --text: var(--lt-ink);
+    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+    --border: var(--lt-rule);
+    --primary: var(--lt-accent);
+    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
+    --ok: var(--lt-ok);
+    --bad: var(--lt-err);
+    --warn: var(--lt-warn);
+    --info: var(--lt-info);
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --lt-paper: #14130F;
+      --lt-bg:    #0A0908;
+      --lt-ink:   #F0EDE4;
+      --lt-rule:  #25221C;
+      --lt-ok:    #3FA876;
+      --lt-warn:  #E0A040;
+      --lt-err:   #EE6F5E;
+      --lt-info:  #5A7BC7;
+      --bg: var(--lt-paper);
+      --surface: var(--lt-bg);
+      --text: var(--lt-ink);
+      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
+      --border: var(--lt-rule);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px clamp(16px, 4vw, 48px); display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  header .left { display: flex; align-items: center; gap: 14px; }
+  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  header a.back:hover { color: var(--primary); }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+  main {
+    flex: 1; padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 48px);
+    max-width: 1100px; width: 100%; margin: 0 auto;
+  }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 8px 14px; font-size: 0.85rem;
+  }
+  button:hover { border-color: var(--primary); }
+  button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  button.primary:hover { background: var(--primary-hover); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--primary); outline-offset: 2px;
+  }
+  label { font-size: 0.85rem; font-weight: 500; display: block; margin-bottom: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  textarea { resize: vertical; line-height: 1.6; }
+  input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; }
+  .field { margin-bottom: 16px; }
+  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .radios { display: flex; flex-direction: column; gap: 6px; }
+  .radios label, .check label { display: flex; align-items: flex-start; gap: 8px; font-weight: 400; margin: 0; line-height: 1.6; }
+  .radios input, .check input { margin-top: 4px; }
+
+  #login-view {
+    max-width: 380px; margin: 10vh auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px; box-shadow: var(--shadow);
+  }
+  #login-view h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  #login-view p.sub { color: var(--text-muted); margin: 0 0 22px; font-size: 0.88rem; }
+  #login-error {
+    background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 14px; display: none;
+  }
+  #login-view .remember { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  #login-view .remember label { margin-bottom: 0; font-weight: 400; color: var(--text-muted); }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; margin-bottom: 20px; }
+  .toolbar .field { margin-bottom: 0; min-width: 220px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 20px;
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .card h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  .card-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 14px; line-height: 1.7; }
+  .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.78rem; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.muted { color: var(--text-muted); }
+
+  .notice {
+    border-left: 4px solid var(--info); padding: 10px 14px; border-radius: 10px; background: var(--bg);
+    font-size: 0.84rem; line-height: 1.7; margin-bottom: 14px;
+  }
+  table.checklist { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  table.checklist th, table.checklist td {
+    text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.6;
+  }
+  table.checklist th { color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+  table.checklist td.title { font-weight: 600; min-width: 140px; }
+  table.checklist td.basis { color: var(--text-muted); font-size: 0.78rem; min-width: 160px; }
+  table.checklist a { color: var(--primary); text-decoration: none; white-space: nowrap; }
+  .readonly-list { font-size: 0.84rem; line-height: 1.7; }
+  .readonly-list code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.82em;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; margin-right: 4px;
+  }
+
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 100; max-width: 340px;
+  }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow); line-height: 1.6;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.error { border-left-color: var(--bad); }
+  [hidden] { display: none !important; }
+
+  /* Printing keeps the self-check only: the forms and the sign-in chrome are
+     not part of what goes to a reviewer. */
+  @media print {
+    header, .toolbar, #human-access-card, #disclosure-card, .no-print, #toast-host { display: none !important; }
+    body { background: #fff; color: #000; }
+    main { max-width: none; padding: 0; }
+    .card { box-shadow: none; background: #fff; border: none; padding: 0; }
+    .print-only { display: block !important; }
+  }
+  .print-only { display: none; }
+</style>
+
+<header>
+  <div class="left">
+    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
+    <h1>转人工与 AI 标识</h1>
+  </div>
+  <div id="user-info" hidden>
+    <span id="tenant-name"></span>
+    <span id="user-email"></span>
+    <button id="logout-btn">退出登录</button>
+  </div>
+</header>
+
+<main>
+  <section id="login-view">
+    <h2>登录</h2>
+    <p class="sub">请使用管理账号登录</p>
+    <div id="login-error"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <div class="remember">
+        <input id="remember" type="checkbox" />
+        <label for="remember">记住我（7 天内免登录）</label>
+      </div>
+      <button type="submit" class="primary" id="login-submit" style="width:100%">登 录</button>
+    </form>
+  </section>
+
+  <section id="app-view" hidden>
+    <div class="toolbar">
+      <div class="field" id="pl-field" hidden>
+        <label for="pl-select">租户</label>
+        <select id="pl-select"><option value="">请选择租户</option></select>
+      </div>
+    </div>
+
+    <div class="card" id="human-access-card" hidden>
+      <div class="card-head">
+        <h2>转人工可达</h2>
+        <span class="pill muted" id="ha-pill">—</span>
+      </div>
+      <p class="card-sub">
+        这三项都在调用 AI 之前判断，命中即转人工（客户收到“转接中”的提示，坐席收到交接摘要），只会增加转人工，不会减少。
+        建议先用“观察”运行一段时间：只记录命中，不改变任何对话，确认误转少再开启。
+      </p>
+      <div class="field">
+        <label>运行方式</label>
+        <div class="radios">
+          <label><input type="radio" name="ha-mode" value="off"> 关闭 — 与未配置时完全相同</label>
+          <label><input type="radio" name="ha-mode" value="shadow"> 观察 — 只记录命中，不转接</label>
+          <label><input type="radio" name="ha-mode" value="on"> 开启 — 命中即转人工</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="ha-quick">快捷入口（整条消息完全等于其中之一才算，用逗号或顿号分隔）</label>
+        <input id="ha-quick" autocomplete="off" spellcheck="false" />
+        <div class="hint" id="ha-quick-hint"></div>
+        <div class="row-actions" style="margin-top:6px">
+          <button type="button" id="ha-quick-reset">恢复默认快捷入口</button>
+        </div>
+      </div>
+      <div class="field readonly-list">
+        <label>其他“要人工”的识别（只读）</label>
+        <div id="ha-keywords">—</div>
+        <div class="hint">转人工关键词在“设置 → 转人工与阈值”中维护；平台意图分诊开启时，另有代码内置的“要人工”说法识别。</div>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label for="ha-threshold">重复追问：同一问题第几次提出时转人工</label>
+          <input id="ha-threshold" type="number" min="2" max="10" step="1" />
+          <div class="hint">只统计 AI 已经答复过、客户又问同一件事的情况；2 表示 AI 答复后客户再问一次即转人工。</div>
+        </div>
+        <div class="field">
+          <label for="ha-window">比较最近几条客户消息</label>
+          <input id="ha-window" type="number" min="2" max="20" step="1" />
+        </div>
+      </div>
+      <div class="field check">
+        <label><input type="checkbox" id="ha-vulnerable"> 优先接待：客户自述“我是老人”“年纪大”“不会用手机”“未成年”或自报年龄不满 18 岁时转人工，坐席会话标为紧急，交接备注首行注明【优先接待】</label>
+      </div>
+      <div class="row-actions">
+        <button class="primary" id="ha-save">保存</button>
+      </div>
+    </div>
+
+    <div class="card" id="disclosure-card" hidden>
+      <div class="card-head">
+        <h2>AI 标识与备案公示</h2>
+        <span class="pill muted" id="dc-pill">—</span>
+      </div>
+      <p class="card-sub">
+        标识加在 AI 回复的开头或末尾，只说明“这是 AI 在回复”，AI 回复的原文一字不改；转人工时的提示语不加标识。
+        对话记录中保存的是带标识的文本，与客户看到的一致。
+      </p>
+      <div class="grid2">
+        <div class="field">
+          <label for="dc-mode">何时加标识</label>
+          <select id="dc-mode">
+            <option value="off">不加</option>
+            <option value="first">每个会话的第一条 AI 回复</option>
+            <option value="every">每一条 AI 回复</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dc-position">位置</label>
+          <select id="dc-position">
+            <option value="prefix">回复开头</option>
+            <option value="suffix">回复末尾（另起一行）</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="dc-label">标识文字</label>
+        <input id="dc-label" autocomplete="off" maxlength="30" />
+        <div class="hint">留空使用默认标识。只写身份，不要写“仅供参考”这类免责措辞，也不能写“人工客服”“真人”这类会让客户以为是人工在回复的说法。</div>
+      </div>
+      <div class="field">
+        <label for="dc-filing">备案/登记公示</label>
+        <textarea id="dc-filing" rows="3" maxlength="300" placeholder="请按实际情况填写所用模型的名称与备案或登记编号"></textarea>
+        <div class="hint">系统不会代填：备案信息只有贵方知道。未填写时，下方自查清单会把此项标为待处理。这里只保存文字，系统不会把它展示给客户，请另在对外页面或欢迎语中公示。</div>
+      </div>
+      <div class="row-actions">
+        <button class="primary" id="dc-save">保存</button>
+      </div>
+    </div>
+
+    <div class="card" id="checklist-card" hidden>
+      <div class="card-head">
+        <h2>自查清单</h2>
+        <div class="row-actions no-print">
+          <button id="cl-refresh">刷新</button>
+          <button id="cl-print">打印 / 另存 PDF</button>
+        </div>
+      </div>
+      <p class="print-only" id="cl-print-meta"></p>
+      <div class="notice" id="cl-notice"></div>
+      <table class="checklist">
+        <thead>
+          <tr><th>项目</th><th>依据</th><th>要求</th><th>状态</th><th>当前设置</th><th class="no-print"></th></tr>
+        </thead>
+        <tbody id="cl-body"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<script src="./auth.js?v=1"></script>
+<script>
+(function () {
+  "use strict";
+
+  // Status wording describes settings, never a conclusion about a standard.
+  var STATUS_LABELS = {
+    pass: { text: "已设置", cls: "ok" },
+    warn: { text: "建议处理", cls: "warn" },
+    fail: { text: "待处理", cls: "bad" },
+    unknown: { text: "未安装", cls: "muted" }
+  };
+
+  var MODE_LABELS = { off: "关闭", shadow: "观察", on: "开启" };
+  var DISCLOSURE_LABELS = { off: "不加标识", first: "每会话首条", every: "每条" };
+
+  var state = {
+    tenants: [],
+    currentTenant: null,
+    defaultQuickEntries: [],
+    resetQuick: false,
+    quickDefault: false,
+    quickShown: ""
+  };
+
+  var els = {
+    loginView: document.getElementById("login-view"),
+    appView: document.getElementById("app-view"),
+    loginForm: document.getElementById("login-form"),
+    loginError: document.getElementById("login-error"),
+    loginSubmit: document.getElementById("login-submit"),
+    remember: document.getElementById("remember"),
+    userInfo: document.getElementById("user-info"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    backLink: document.getElementById("back-link"),
+    tenantName: document.getElementById("tenant-name"),
+    plField: document.getElementById("pl-field"),
+    plSelect: document.getElementById("pl-select"),
+    haCard: document.getElementById("human-access-card"),
+    haPill: document.getElementById("ha-pill"),
+    haQuick: document.getElementById("ha-quick"),
+    haQuickHint: document.getElementById("ha-quick-hint"),
+    haQuickReset: document.getElementById("ha-quick-reset"),
+    haKeywords: document.getElementById("ha-keywords"),
+    haThreshold: document.getElementById("ha-threshold"),
+    haWindow: document.getElementById("ha-window"),
+    haVulnerable: document.getElementById("ha-vulnerable"),
+    haSave: document.getElementById("ha-save"),
+    dcCard: document.getElementById("disclosure-card"),
+    dcPill: document.getElementById("dc-pill"),
+    dcMode: document.getElementById("dc-mode"),
+    dcPosition: document.getElementById("dc-position"),
+    dcLabel: document.getElementById("dc-label"),
+    dcFiling: document.getElementById("dc-filing"),
+    dcSave: document.getElementById("dc-save"),
+    clCard: document.getElementById("checklist-card"),
+    clNotice: document.getElementById("cl-notice"),
+    clBody: document.getElementById("cl-body"),
+    clRefresh: document.getElementById("cl-refresh"),
+    clPrint: document.getElementById("cl-print"),
+    clPrintMeta: document.getElementById("cl-print-meta"),
+    toastHost: document.getElementById("toast-host")
+  };
+
+  // ---------- Toasts ----------
+  function toast(message, kind) {
+    var el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    els.toastHost.appendChild(el);
+    setTimeout(function () { el.remove(); }, 3600);
+  }
+
+  // ---------- Tenant scope ----------
+  var TENANT_ME = "me";
+
+  function accountRole() {
+    var claims = UnicaAuth.decodeClaims(UnicaAuth.accessToken());
+    return claims && typeof claims.role === "string" ? claims.role : "";
+  }
+
+  function isAdmin() { return accountRole() === "admin"; }
+
+  function queryParam(name) {
+    var m = new RegExp("[?&]" + name + "=([^&]*)").exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  function requestedTenant() { return isAdmin() ? queryParam("tenant") : ""; }
+
+  function tenantSegment() {
+    if (!isAdmin()) return TENANT_ME;
+    return state.currentTenant ? String(state.currentTenant.id) : "";
+  }
+
+  function tenantPath(suffix) {
+    return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
+  }
+
+  function showLogin(message) {
+    UnicaAuth.dropTab();
+    els.appView.hidden = true;
+    els.userInfo.hidden = true;
+    els.loginView.hidden = false;
+    if (message) {
+      els.loginError.textContent = message;
+      els.loginError.style.display = "block";
+    }
+  }
+
+  function showApp() {
+    els.loginView.hidden = true;
+    els.appView.hidden = false;
+    els.userInfo.hidden = false;
+  }
+
+  function errorText(err) {
+    if (err && err.status === 403) {
+      return "无权限：" + ((err.data && err.data.error) || "当前账号不能操作这个租户");
+    }
+    if (err && err.data && err.data.error) return err.data.error;
+    return (err && err.message) || "请求失败";
+  }
+
+  function reportError(prefix, err) {
+    if (err && err.message === "unauthorized") return;
+    toast(prefix + "：" + errorText(err), "error");
+  }
+
+  // ---------- Login ----------
+  els.loginForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    els.loginError.style.display = "none";
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "登录中…";
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+    UnicaAuth.login(email, password, els.remember.checked)
+      .then(function () {
+        els.userEmail.textContent = email;
+        showApp();
+        loadTenants();
+      })
+      .catch(function (err) {
+        els.loginError.textContent = err.message || "登录失败，请检查网络";
+        els.loginError.style.display = "block";
+      })
+      .finally(function () {
+        els.loginSubmit.disabled = false;
+        els.loginSubmit.textContent = "登 录";
+      });
+  });
+
+  els.logoutBtn.addEventListener("click", function () {
+    UnicaAuth.logout();
+    showLogin();
+  });
+
+  // ---------- Tenants ----------
+  function loadTenants() {
+    if (!isAdmin()) {
+      return UnicaAuth.api("/api/v1/tenants/" + TENANT_ME)
+        .then(function (tenant) {
+          state.tenants = tenant ? [tenant] : [];
+          renderTenantOptions();
+        })
+        .catch(function (err) { reportError("加载租户失败", err); });
+    }
+    return UnicaAuth.api("/api/v1/tenants")
+      .then(function (data) {
+        state.tenants = Array.isArray(data) ? data : [];
+        renderTenantOptions();
+      })
+      .catch(function (err) { reportError("加载租户失败", err); });
+  }
+
+  function findTenant(id) {
+    for (var i = 0; i < state.tenants.length; i++) {
+      if (String(state.tenants[i].id) === String(id)) return state.tenants[i];
+    }
+    return null;
+  }
+
+  function renderTenantOptions() {
+    els.plField.hidden = !isAdmin();
+    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
+    if (state.tenants.length === 0) {
+      els.plSelect.innerHTML = '<option value="">暂无租户</option>';
+      return;
+    }
+    els.plSelect.innerHTML = state.tenants.map(function (pl) {
+      return '<option value="' + escapeHtml(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
+    }).join("");
+    var initial = findTenant(requestedTenant()) || state.tenants[0];
+    els.plSelect.value = String(initial.id);
+    selectTenant(els.plSelect.value);
+  }
+
+  els.plSelect.addEventListener("change", function () { selectTenant(els.plSelect.value); });
+
+  function selectTenant(id) {
+    state.currentTenant = findTenant(id);
+    els.tenantName.textContent = state.currentTenant
+      ? (state.currentTenant.display_name || state.currentTenant.name) : "";
+    var has = !!state.currentTenant;
+    els.haCard.hidden = !has;
+    els.dcCard.hidden = !has;
+    els.clCard.hidden = !has;
+    if (!has) return;
+    loadHumanAccess();
+    loadDisclosure();
+    loadChecklist();
+  }
+
+  // An administrator acting for a tenant carries it to the page a fix link
+  // opens; a link within this page only scrolls.
+  function fixHref(path) {
+    if (!path) return "";
+    if (path.indexOf("compliance.html#") === 0) return path.slice("compliance.html".length);
+    var base = "./" + path;
+    if (!isAdmin() || !state.currentTenant) return base;
+    var hash = "";
+    var at = base.indexOf("#");
+    if (at >= 0) {
+      hash = base.slice(at);
+      base = base.slice(0, at);
+    }
+    return base + "?tenant=" + encodeURIComponent(state.currentTenant.id) + hash;
+  }
+
+  // ---------- Human access ----------
+  function splitEntries(text) {
+    return String(text || "").split(/[,，、;；\s]+/).map(function (s) { return s.trim(); })
+      .filter(function (s) { return s !== ""; });
+  }
+
+  function setRadio(name, value) {
+    var radios = document.querySelectorAll('input[name="' + name + '"]');
+    for (var i = 0; i < radios.length; i++) radios[i].checked = radios[i].value === value;
+  }
+
+  function radioValue(name) {
+    var checked = document.querySelector('input[name="' + name + '"]:checked');
+    return checked ? checked.value : "";
+  }
+
+  function renderHumanAccess(data) {
+    var cfg = (data && data.config) || {};
+    state.defaultQuickEntries = Array.isArray(data && data.default_quick_entries) ? data.default_quick_entries : [];
+    state.resetQuick = false;
+    setRadio("ha-mode", cfg.mode || "off");
+    els.haQuick.value = (cfg.quick_entries || []).join("、");
+    // Remembered so that saving other fields does not quietly turn "follow
+    // the default list" into a custom copy of it.
+    state.quickDefault = !!(data && data.quick_entries_default);
+    state.quickShown = els.haQuick.value;
+    els.haQuickHint.textContent = data && data.quick_entries_default
+      ? "当前使用默认快捷入口：" + state.defaultQuickEntries.join("、")
+      : "当前为自定义列表；清空并保存即关闭快捷入口（重复追问与优先接待不受影响）。";
+    els.haThreshold.value = cfg.repeat_threshold || 2;
+    els.haWindow.value = cfg.repeat_window || 6;
+    els.haVulnerable.checked = !!cfg.vulnerable_priority;
+    var keywords = Array.isArray(data && data.handoff_keywords) ? data.handoff_keywords : [];
+    els.haKeywords.innerHTML = "转人工关键词（消息中出现即转人工）：" + (keywords.length
+      ? keywords.map(function (k) { return "<code>" + escapeHtml(k) + "</code>"; }).join("")
+      : "（无）");
+    var mode = cfg.mode || "off";
+    els.haPill.textContent = MODE_LABELS[mode] || mode;
+    els.haPill.className = "pill " + (mode === "on" ? "ok" : mode === "shadow" ? "warn" : "muted");
+  }
+
+  function loadHumanAccess() {
+    UnicaAuth.api(tenantPath("/compliance/human-access"))
+      .then(renderHumanAccess)
+      .catch(function (err) { reportError("读取转人工设置失败", err); });
+  }
+
+  els.haQuickReset.addEventListener("click", function () {
+    state.resetQuick = true;
+    els.haQuick.value = state.defaultQuickEntries.join("、");
+    els.haQuickHint.textContent = "保存后恢复默认快捷入口：" + state.defaultQuickEntries.join("、");
+  });
+
+  els.haSave.addEventListener("click", function () {
+    var mode = radioValue("ha-mode") || "off";
+    var body = {
+      mode: mode,
+      repeat_threshold: parseInt(els.haThreshold.value, 10),
+      repeat_window: parseInt(els.haWindow.value, 10),
+      vulnerable_priority: els.haVulnerable.checked
+    };
+    if (state.resetQuick) {
+      body.reset_quick_entries = true;
+    } else if (!(state.quickDefault && els.haQuick.value === state.quickShown)) {
+      body.quick_entries = splitEntries(els.haQuick.value);
+    }
+    if (mode === "on" && !window.confirm("开启后，命中的消息将不再由 AI 回复，直接转人工。确认开启？")) return;
+    els.haSave.disabled = true;
+    UnicaAuth.api(tenantPath("/compliance/human-access"), { method: "PUT", body: JSON.stringify(body) })
+      .then(function (data) {
+        renderHumanAccess(data);
+        savedToast(data);
+        loadChecklist();
+      })
+      .catch(function (err) { reportError("保存失败", err); })
+      .finally(function () { els.haSave.disabled = false; });
+  });
+
+  function savedToast(data) {
+    if (data && data.cache_invalidated === false) {
+      toast("已保存，但路由缓存未能刷新：新设置会在缓存过期后生效", "error");
+    } else {
+      toast("已保存", "success");
+    }
+  }
+
+  // ---------- Disclosure ----------
+  function renderDisclosure(data) {
+    var cfg = (data && data.config) || {};
+    els.dcMode.value = cfg.mode || "off";
+    els.dcPosition.value = cfg.position || "prefix";
+    els.dcLabel.value = data && data.label_default ? "" : (cfg.label || "");
+    els.dcLabel.placeholder = (data && data.default_label) || "";
+    // The filing text is shown exactly as stored; nothing is filled in.
+    els.dcFiling.value = cfg.filing_text || "";
+    var mode = cfg.mode || "off";
+    els.dcPill.textContent = DISCLOSURE_LABELS[mode] || mode;
+    els.dcPill.className = "pill " + (mode === "off" ? "muted" : "ok");
+  }
+
+  function loadDisclosure() {
+    UnicaAuth.api(tenantPath("/compliance/disclosure"))
+      .then(renderDisclosure)
+      .catch(function (err) { reportError("读取标识设置失败", err); });
+  }
+
+  els.dcSave.addEventListener("click", function () {
+    var body = {
+      mode: els.dcMode.value,
+      position: els.dcPosition.value,
+      label: els.dcLabel.value.trim(),
+      filing_text: els.dcFiling.value.trim()
+    };
+    els.dcSave.disabled = true;
+    UnicaAuth.api(tenantPath("/compliance/disclosure"), { method: "PUT", body: JSON.stringify(body) })
+      .then(function (data) {
+        renderDisclosure(data);
+        savedToast(data);
+        loadChecklist();
+      })
+      .catch(function (err) { reportError("保存失败", err); })
+      .finally(function () { els.dcSave.disabled = false; });
+  });
+
+  // ---------- Checklist ----------
+  function loadChecklist() {
+    UnicaAuth.api(tenantPath("/compliance/checklist"))
+      .then(renderChecklist)
+      .catch(function (err) { reportError("读取自查清单失败", err); });
+  }
+
+  function renderChecklist(data) {
+    els.clNotice.textContent = (data && data.notice) || "";
+    els.clPrintMeta.textContent = "租户：" + ((data && data.product_line) || "") +
+      "（" + ((data && data.product_line_id) || "") + "）  生成时间：" + formatDate(data && data.generated_at);
+    var items = Array.isArray(data && data.items) ? data.items : [];
+    els.clBody.innerHTML = items.map(function (it) {
+      var status = STATUS_LABELS[it.status] || { text: it.status, cls: "muted" };
+      var href = fixHref(it.fix_path);
+      return "<tr>" +
+        '<td class="title">' + escapeHtml(it.title) + "</td>" +
+        '<td class="basis">' + escapeHtml(it.basis) + "</td>" +
+        "<td>" + escapeHtml(it.requirement) + "</td>" +
+        '<td><span class="pill ' + status.cls + '">' + escapeHtml(status.text) + "</span></td>" +
+        "<td>" + escapeHtml(it.evidence) + "</td>" +
+        '<td class="no-print">' + (href && it.status !== "pass"
+          ? '<a href="' + escapeHtml(href) + '">去修复 →</a>' : "") + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  els.clRefresh.addEventListener("click", loadChecklist);
+  els.clPrint.addEventListener("click", function () { window.print(); });
+
+  // ---------- Utils ----------
+  function formatDate(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---------- Init ----------
+  UnicaAuth.onSessionLost(function () {
+    showLogin("登录已过期，请重新登录");
+  });
+
+  if (UnicaAuth.bootstrapTab()) {
+    showApp();
+    loadTenants();
+  } else {
+    showLogin();
+  }
+})();
+</script>

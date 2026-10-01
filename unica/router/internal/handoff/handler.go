@@ -14,6 +14,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/kefu/unica/pkg/compliance"
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/metrics"
 	"github.com/kefu/unica/router/internal/scheduling"
@@ -112,9 +113,9 @@ func (h *HandoffHandler) Handle(ctx context.Context, event *HandoffEvent) error 
 
 	// Step 5: Find or create Chatwoot contact
 	contactID, err := h.chatwootClient.FindOrCreateContact(ctx, *cwConfig, conv.CustomerID, conv.CustomerID, map[string]string{
-		"channel_id":      conv.ChannelID,
-		"unica_conv_id":   convID,
-		"handoff_reason":  event.Reason,
+		"channel_id":     conv.ChannelID,
+		"unica_conv_id":  convID,
+		"handoff_reason": event.Reason,
 	})
 	if err != nil {
 		metrics.HandoffErrorsTotal.WithLabelValues("contact_create").Inc()
@@ -148,6 +149,12 @@ func (h *HandoffHandler) Handle(ctx context.Context, event *HandoffEvent) error 
 			log.Printf("[handoff] conversation %s queued (no available agents)", convID)
 		}
 	}
+
+	// Step 6c: A customer who said they are elderly, a minor or cannot manage
+	// the phone goes to the head of the queue. Best-effort: a failure leaves
+	// the conversation at normal priority, and the briefing below still opens
+	// with 【优先接待】.
+	h.prioritise(ctx, cwConfig, cwConvID, event)
 
 	// Step 7: Send the agent briefing as a private note: intent summary, the
 	// suppressed AI draft (most handoffs carry an answer that was nearly
@@ -208,8 +215,16 @@ func reasonLabel(reason string) string {
 		return "命中敏感话题"
 	case reason == "ai_unavailable":
 		return "AI 服务不可用"
+	case reason == "commitment_unbacked":
+		return "答复里的承诺或金额找不到出处，已扣下待人工确认"
 	case strings.HasPrefix(reason, "intent_"):
 		return "意图分诊判定需人工处理"
+	case reason == compliance.ReasonQuickEntry:
+		return "客户使用快捷入口要求人工"
+	case reason == compliance.ReasonRepeatUnresolved:
+		return "客户在 AI 答复后重复追问同一问题"
+	case reason == compliance.ReasonVulnerable:
+		return "客户自述需要优先照顾"
 	default:
 		return reason
 	}
@@ -218,10 +233,26 @@ func reasonLabel(reason string) string {
 // buildHandoffNote assembles the private note an agent reads before replying.
 // The goal is "edit one draft and send", not "reconstruct the conversation":
 // summary first, then the suppressed AI draft, then why it was suppressed.
+//
+// A priority handoff opens with 【优先接待】 and the customer's own words, ahead
+// of everything else, so the agent adjusts how they answer before reading on.
 func buildHandoffNote(summary string, event *HandoffEvent) string {
 	var b strings.Builder
 
+	priority := event.Reason == compliance.ReasonVulnerable
+	if priority {
+		b.WriteString("【优先接待】")
+		if event.Detail != "" {
+			b.WriteString(event.Detail)
+		} else {
+			b.WriteString("客户自述需要优先照顾")
+		}
+	}
+
 	if summary != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
 		b.WriteString("**AI 交接摘要**\n\n")
 		b.WriteString(summary)
 	}
@@ -240,11 +271,33 @@ func buildHandoffNote(summary string, event *HandoffEvent) string {
 
 	b.WriteString("\n\n---\n")
 	fmt.Fprintf(&b, "转人工原因：%s（%s，置信度 %.2f）", reasonLabel(event.Reason), event.Reason, event.ConfidenceScore)
-	if event.Detail != "" {
+	switch {
+	case event.Detail == "" || priority:
+		// Nothing to add, or already the first line of the note.
+	case compliance.IsHumanAccessReason(event.Reason):
+		// Not a violation: the customer asked for a person or went round in
+		// circles, and calling that a violation would mislead the agent.
+		b.WriteString("\n说明：")
+		b.WriteString(event.Detail)
+	default:
 		b.WriteString("\n违规明细：")
 		b.WriteString(event.Detail)
 	}
 	return b.String()
+}
+
+// prioritise raises a vulnerable_priority handoff to urgent in Chatwoot. Any
+// other reason leaves the priority alone, and a failure is only logged: the
+// handoff itself has already happened and must not be undone by a label.
+func (h *HandoffHandler) prioritise(ctx context.Context, cwConfig *bridge.ChatwootConfig, cwConvID int, event *HandoffEvent) {
+	if event.Reason != compliance.ReasonVulnerable || h.chatwootClient == nil || cwConfig == nil {
+		return
+	}
+	if err := h.chatwootClient.TogglePriority(ctx, *cwConfig, cwConvID, "urgent"); err != nil {
+		log.Printf("[handoff] warning: failed to raise priority of Chatwoot conv %d: %v", cwConvID, err)
+		return
+	}
+	log.Printf("[handoff] Chatwoot conv %d set to urgent (reason=%s)", cwConvID, event.Reason)
 }
 
 // generateSummaryBestEffort attempts to generate an AI summary with a timeout.
@@ -425,7 +478,7 @@ func (h *HandoffHandler) enrichContactMetadata(ctx context.Context, cwConfig *br
 		"platform":            customer.PlatformIdentity,
 		"channel_id":          customer.ChannelID,
 		"first_seen":          customer.FirstSeenAt.Format(time.RFC3339),
-		"total_conversations":  strconv.Itoa(convCount),
+		"total_conversations": strconv.Itoa(convCount),
 	}
 	if len(customer.Tags) > 0 {
 		attrs["tags"] = strings.Join(customer.Tags, ", ")

@@ -57,14 +57,14 @@ type CWCreateContactRequest struct {
 
 // CWConversation represents a Chatwoot conversation.
 type CWConversation struct {
-	ID            int    `json:"id"`
-	AccountID     int    `json:"account_id"`
-	InboxID       int    `json:"inbox_id"`
-	Status        string `json:"status"`
-	ContactID     int    `json:"contact_id,omitempty"`
-	AssigneeID    int    `json:"assignee_id,omitempty"`
-	DisplayID     int    `json:"display_id,omitempty"`
-	CustomAttr    map[string]string `json:"custom_attributes,omitempty"`
+	ID         int               `json:"id"`
+	AccountID  int               `json:"account_id"`
+	InboxID    int               `json:"inbox_id"`
+	Status     string            `json:"status"`
+	ContactID  int               `json:"contact_id,omitempty"`
+	AssigneeID int               `json:"assignee_id,omitempty"`
+	DisplayID  int               `json:"display_id,omitempty"`
+	CustomAttr map[string]string `json:"custom_attributes,omitempty"`
 }
 
 // CWCreateConversationRequest is the request body for creating a conversation.
@@ -531,6 +531,35 @@ func (c *ChatwootClient) AssignConversation(ctx context.Context, cfg ChatwootCon
 	}
 
 	log.Printf("[chatwoot] assigned conversation %d to agent %d", conversationID, agentID)
+	return nil
+}
+
+// TogglePriority sets a conversation's priority (urgent, high, medium, low)
+// so it sorts ahead in the agents' queue.
+func (c *ChatwootClient) TogglePriority(ctx context.Context, cfg ChatwootConfig, conversationID int, priority string) error {
+	url := fmt.Sprintf("%s/api/v1/accounts/%d/conversations/%d/toggle_priority", cfg.BaseURL, cfg.AccountID, conversationID)
+	body, err := json.Marshal(map[string]string{"priority": priority})
+	if err != nil {
+		return fmt.Errorf("marshal priority request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create priority request: %w", err)
+	}
+	c.setAuth(httpReq, cfg.APIToken)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("post toggle priority: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("toggle priority returned status %d: %s", resp.StatusCode, string(respBody))
+	}
 	return nil
 }
 

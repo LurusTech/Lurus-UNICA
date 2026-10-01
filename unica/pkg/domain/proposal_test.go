@@ -121,6 +121,13 @@ func tierCases() []struct {
 			p.Functional = false
 			o.Properties["退费比例"] = p
 		}},
+		// The commitment mark decides what the firewall withholds while the
+		// breaker is open; marking or unmarking a property is a person's call.
+		{"property commitment marked", TierMissingFact, func(o *Ontology) {
+			p := o.Properties["退费比例"]
+			p.Commitment = true
+			o.Properties["退费比例"] = p
+		}},
 		{"property domain", TierMissingFact, func(o *Ontology) {
 			p := o.Properties["服务费"]
 			p.Domain = "全包套餐"
@@ -209,6 +216,27 @@ func TestClassifyDiff_AliasRemovalIsNotTierA(t *testing.T) {
 	with := withAliases(fresh, map[AliasRef][]string{DenyAlias("质保"): {"保修"}})
 	if got := ClassifyDiff(with, fresh); got != TierDimension {
 		t.Errorf("withdrawing a denial alias narrows the denial scan; classified %q, want B", got)
+	}
+}
+
+// Unmarking a commitment property narrows what the firewall withholds, so it
+// is tier C in that direction too — and the mark must survive the clone the
+// classifier compares, or both directions would silently read as no change.
+func TestClassifyDiff_CommitmentUnmarkIsTierC(t *testing.T) {
+	base := tierBase(t)
+	p := base.Properties["退费比例"]
+	p.Commitment = true
+	base.Properties["退费比例"] = p
+	if !cloneOntology(base).Properties["退费比例"].Commitment {
+		t.Fatal("the commitment mark did not survive a round trip")
+	}
+
+	cand := cloneOntology(base)
+	q := cand.Properties["退费比例"]
+	q.Commitment = false
+	cand.Properties["退费比例"] = q
+	if got := ClassifyDiff(base, cand); got != TierMissingFact {
+		t.Errorf("unmarking a commitment property classified %q, want C", got)
 	}
 }
 

@@ -685,6 +685,56 @@
       </div>
     </div>
 
+    <!-- Subject carry (D10). It sits with retrieval because that is what it
+         changes: the query retrieval searches with. Loaded from its own
+         endpoint so a failure to read it degrades this card alone. -->
+    <div class="card" id="subject-card">
+      <div class="card-head">
+        <h2>追问补全对象</h2>
+        <span class="pill" id="subject-pill" hidden></span>
+      </div>
+      <p class="card-sub">
+        客户追问时常常不再重复说对象。演示示例：客户先问「华亭书苑还有房吗」，接着问
+        「物业费多少？车位怎么解决？」——后一句里没有楼盘名，知识库检索只看这一句，可能取回另一个楼盘的资料，
+        AI 就可能把别的楼盘的物业费、车位价安到华亭书苑头上。开启后，这类追问在送去检索和 AI 之前，
+        会补上客户上一次说过的对象，变成「（接上文，指：华亭书苑）物业费多少？车位怎么解决？」。
+      </p>
+      <div class="hint" style="margin-bottom:12px">
+        对象只取<b>客户自己说过</b>的名称，AI 回答里提到的名称不算；客户在一句话里同时提到两个对象（比如比较哪个便宜）时不补全。
+        补全的只是对象名，不补任何数字、价格或承诺。客户原话照常存档，转人工、关键词和敏感词判断都按原话进行。
+        补全后的追问会留在 AI 本次会话的多轮记忆里。
+      </div>
+
+      <div class="field narrow">
+        <label for="f-subject-mode">追问补全</label>
+        <select id="f-subject-mode">
+          <option value="off">关闭</option>
+          <option value="shadow">只观察：AI 仍收到原话，只记录本来会补全的次数</option>
+          <option value="on">开启：检索和 AI 收到补全后的追问</option>
+        </select>
+        <div class="hint">建议先用「只观察」跑一段时间：期间 AI 照常收到原话，平台按会话记下本来会补成哪个对象（不记客户原话），可请平台核对补得对不对后再开启。</div>
+      </div>
+
+      <div class="field">
+        <label for="f-subject-list">对象名清单</label>
+        <textarea id="f-subject-list" class="msg" rows="6" placeholder="每行一个，例如：&#10;华亭书苑&#10;苏河湾一号"></textarea>
+        <div class="hint">
+          客户会提到的楼盘、课程、门店等，<b>每行一个，只填名称</b>（至少 2 个字），不填介绍和数值。
+          除这份清单外，已发布本体里的维度取值和知识库文档名也会被识别。
+          没被识别的对象无法切换过去：客户改问一个不在清单里的对象时，可能仍被补成上一个对象，所以请把客户常问的对象都列上。
+        </div>
+        <div class="msg-meta" id="subject-list-meta"></div>
+      </div>
+
+      <div class="notice" id="subject-error" hidden></div>
+
+      <div class="actions-row">
+        <button class="primary" id="subject-save-btn">保存</button>
+        <span class="spacer"></span>
+        <span class="hint" id="subject-state"></span>
+      </div>
+    </div>
+
     <!-- Model in force -->
     <div class="card">
       <div class="card-head">
@@ -940,6 +990,14 @@
     topkSaveBtn: document.getElementById("topk-save-btn"),
     topkState: document.getElementById("topk-state"),
 
+    subjectPill: document.getElementById("subject-pill"),
+    fSubjectMode: document.getElementById("f-subject-mode"),
+    fSubjectList: document.getElementById("f-subject-list"),
+    subjectListMeta: document.getElementById("subject-list-meta"),
+    subjectError: document.getElementById("subject-error"),
+    subjectSaveBtn: document.getElementById("subject-save-btn"),
+    subjectState: document.getElementById("subject-state"),
+
     testForm: document.getElementById("test-form"),
     fTest: document.getElementById("f-test"),
     testSubmitBtn: document.getElementById("test-submit-btn"),
@@ -1133,6 +1191,7 @@
         // rest of the page working rather than fail it.
         loadPromptVersions();
         loadModelScope();
+        loadSubjectCarry();
         els.loading.hidden = true;
         els.panels.hidden = false;
       })
@@ -3354,6 +3413,140 @@
         reportError("保存失败", err);
       })
       .finally(function () { setBusy(false, els.surveySaveBtn, "保存"); });
+  });
+
+  // ---------- Subject carry ----------
+  //
+  // Read from its own endpoint after the main settings: a deployment whose
+  // admin predates it answers 404, and that must leave only this card saying
+  // so rather than failing the page.
+  var SUBJECT_MODE_TEXT = { off: "关闭", shadow: "只观察", on: "已开启" };
+  state.subjectBaseline = null;
+
+  function subjectLines(text) {
+    var seen = {};
+    var out = [];
+    String(text || "").split(/\r?\n/).forEach(function (line) {
+      var name = line.trim();
+      var key = name.replace(/\s+/g, "").toLowerCase();
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      out.push(name);
+    });
+    return out;
+  }
+
+  function sameList(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
+  function renderSubjectListMeta() {
+    var limits = state.subjectBaseline || { maxSubjects: 500, maxRunes: 30 };
+    var names = subjectLines(els.fSubjectList.value);
+    var tooLong = names.filter(function (n) { return Array.from(n).length > limits.maxRunes; });
+    var text = "共 " + names.length + " 个（上限 " + limits.maxSubjects + "）";
+    if (tooLong.length) text += "；有 " + tooLong.length + " 个超过 " + limits.maxRunes + " 字";
+    els.subjectListMeta.textContent = text;
+  }
+  els.fSubjectList.addEventListener("input", renderSubjectListMeta);
+
+  function fillSubjectCarry(data) {
+    var mode = data && SUBJECT_MODE_TEXT[data.subject_carry] ? data.subject_carry : "off";
+    var subjects = data && Array.isArray(data.subjects) ? data.subjects.slice() : [];
+    state.subjectBaseline = {
+      mode: mode,
+      subjects: subjects,
+      maxSubjects: (data && data.max_subjects) || 500,
+      maxRunes: (data && data.max_subject_runes) || 30
+    };
+    els.fSubjectMode.value = mode;
+    els.fSubjectList.value = subjects.join("\n");
+    els.subjectError.hidden = true;
+    els.fSubjectMode.disabled = false;
+    els.fSubjectList.disabled = false;
+    els.subjectSaveBtn.disabled = false;
+    setPill(els.subjectPill, mode === "on" ? "ok" : (mode === "shadow" ? "warn" : ""), SUBJECT_MODE_TEXT[mode]);
+    renderSubjectListMeta();
+  }
+
+  function loadSubjectCarry() {
+    els.subjectState.textContent = "";
+    return api(tenantPath("/ai-settings/subject-carry"))
+      .then(fillSubjectCarry)
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        state.subjectBaseline = null;
+        els.fSubjectMode.disabled = true;
+        els.fSubjectList.disabled = true;
+        els.subjectSaveBtn.disabled = true;
+        els.subjectPill.hidden = true;
+        els.subjectError.className = "notice bad";
+        els.subjectError.textContent = "暂时读不到追问补全设置：" + err.message;
+        els.subjectError.hidden = false;
+      });
+  }
+
+  els.subjectSaveBtn.addEventListener("click", function () {
+    if (state.busy || !state.subjectBaseline) return;
+    var base = state.subjectBaseline;
+    var mode = els.fSubjectMode.value;
+    var subjects = subjectLines(els.fSubjectList.value);
+
+    if (mode === base.mode && sameList(subjects, base.subjects)) {
+      toast("没有需要保存的改动", "warn");
+      return;
+    }
+    if (subjects.length > base.maxSubjects) {
+      toast("对象名最多 " + base.maxSubjects + " 个", "error");
+      return;
+    }
+    var tooLong = subjects.filter(function (n) { return Array.from(n).length > base.maxRunes; });
+    if (tooLong.length) {
+      toast("对象名「" + tooLong[0] + "」超过 " + base.maxRunes + " 字：这里只填名称", "error");
+      return;
+    }
+    // Mirrors the server: a one-character name can never be recognised.
+    var tooShort = subjects.filter(function (n) { return Array.from(n.replace(/\s+/g, "")).length < 2; });
+    if (tooShort.length) {
+      toast("对象名「" + tooShort[0] + "」太短：至少 2 个字", "error");
+      return;
+    }
+    if (mode !== "off" && !subjects.length) {
+      toast("清单为空时只能识别本体取值和文档名，建议先填上客户常问的对象", "warn");
+    }
+
+    setBusy(true, els.subjectSaveBtn, "保存中…");
+    api(tenantPath("/ai-settings/subject-carry"))
+      .then(function (live) {
+        var liveMode = (live && live.subject_carry) || "off";
+        var liveList = (live && Array.isArray(live.subjects)) ? live.subjects : [];
+        if (liveMode !== base.mode || !sameList(liveList, base.subjects)) {
+          throw conflictError("追问补全设置");
+        }
+        return api(tenantPath("/ai-settings/subject-carry"), {
+          method: "PUT",
+          body: JSON.stringify({ subject_carry: mode, subjects: subjects })
+        });
+      })
+      .then(function (resp) {
+        fillSubjectCarry(resp);
+        var stamp = nowText();
+        if (resp && resp.cache_invalidated === false) {
+          toast("已保存，但运行时缓存未能刷新，正在进行的会话可能要等缓存过期后才生效", "warn");
+        } else {
+          toast("追问补全设置已保存", "success");
+        }
+        els.subjectState.textContent = "已保存 " + stamp;
+      })
+      .catch(function (err) {
+        if (err.message === "unauthorized") return;
+        reportError("保存失败", err);
+      })
+      .finally(function () { setBusy(false, els.subjectSaveBtn, "保存"); });
   });
 
   // ---------- Dataset binding ----------

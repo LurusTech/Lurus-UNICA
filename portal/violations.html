@@ -434,7 +434,12 @@
     functional_conflict: "单值冲突",
     ambiguous_scope: "场景未限定",
     missing_companion: "缺少配套事实",
-    denied_capability: "声称不提供的能力"
+    denied_capability: "声称不提供的能力",
+    unbacked_commitment: "承诺或金额无出处",
+    deferred_figure: "应由人工核定的数字",
+    redline_phrase: "红线表述（扣下）",
+    redline_flagged: "红线表述（仅记录）",
+    ungrounded_figure: "数字无出处"
   };
 
   var STATUS_LABELS = {
@@ -1065,7 +1070,9 @@
     var meta = [];
     if (v.property) meta.push("属性 <code>" + escapeHtml(v.property) + "</code>");
     if (v.scope) meta.push("场景 <code>" + escapeHtml(v.scope) + "</code>");
-    if (v.ontology_version != null && v.ontology_version !== "") {
+    // Firewall rows carry no ontology version (stored NULL, served as 0), so
+    // only a real version number is shown.
+    if (v.ontology_version != null && v.ontology_version !== "" && v.ontology_version !== 0) {
       meta.push("本体版本 <code>v" + escapeHtml(v.ontology_version) + "</code>");
     }
     if (v.reviewed_by) {

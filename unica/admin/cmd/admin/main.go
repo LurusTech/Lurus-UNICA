@@ -33,6 +33,8 @@ import (
 	"github.com/kefu/unica/admin/internal/routecache"
 	"github.com/kefu/unica/admin/internal/tenant/aisettings"
 	"github.com/kefu/unica/admin/internal/tenant/channels"
+	tenantcompliance "github.com/kefu/unica/admin/internal/tenant/compliance"
+	"github.com/kefu/unica/admin/internal/tenant/evidence"
 	"github.com/kefu/unica/admin/internal/tenant/facts"
 	"github.com/kefu/unica/admin/internal/tenant/knowledge"
 	"github.com/kefu/unica/admin/internal/tenant/proposals"
@@ -325,6 +327,14 @@ func main() {
 	// and the structured "why did this leave the AI" trail with its annotations.
 	signalsHandler := quality.NewSignalsHandler(domainStore, plRepo, auditLogger)
 	proposalsHandler := proposals.NewHandler(domainStore, plRepo, auditLogger)
+	// The judgement evidence ledger: read and verified here, written only by
+	// the router. Its switch lives in config_json like the ontology switches,
+	// so a write drops the cached route the same way.
+	evidenceHandler := evidence.NewHandler(evidence.NewRepository(db), plRepo, auditLogger, routecache.New(rdb, channelRepo))
+	// Human access and AI disclosure: two settings blocks in config_json the
+	// router reads before the model and at delivery, and the self-check
+	// derived from them. A write drops the cached route like the others.
+	complianceHandler := tenantcompliance.NewHandler(plRepo, auditLogger, routecache.New(rdb, channelRepo))
 
 	// The workbench trades the caller's own portal account for a password-free
 	// Chatwoot session, provisioning the agent it signs in as when the account
@@ -516,6 +526,8 @@ func main() {
 		northstar:        http.HandlerFunc(signalsHandler.HandleNorthstar),
 		workbench:        http.HandlerFunc(workbenchHandler.Handle),
 		productLineModel: http.HandlerFunc(modelOverrideHandler.Handle),
+		evidence:         http.HandlerFunc(evidenceHandler.Handle),
+		compliance:       http.HandlerFunc(complianceHandler.Handle),
 	}
 	mux.Handle(tenantPrefix, authMW(tenantAuth(tenantResources)))
 
@@ -692,6 +704,8 @@ type tenantRouter struct {
 	northstar        http.Handler
 	workbench        http.Handler
 	productLineModel http.Handler
+	evidence         http.Handler
+	compliance       http.Handler
 }
 
 // aiSettingsPaths is the closed list of ai-settings sub-paths. Listing them here
@@ -719,6 +733,7 @@ var aiSettingsPaths = map[string]bool{
 	// has shipped more than once.
 	"knowledge/provision": true,
 	"survey":              true,
+	"subject-carry":       true,
 	"variables/repair":    true,
 	"test":                true,
 }
@@ -733,6 +748,21 @@ var factsPaths = map[string]string{
 	"rollback": "ontology/rollback",
 	"tryrun":   "ontology/tryrun",
 	"config":   "ontology-config",
+}
+
+// evidencePaths is the closed list of evidence sub-paths.
+var evidencePaths = map[string]bool{
+	"":       true,
+	"verify": true,
+	"head":   true,
+	"config": true,
+}
+
+// compliancePaths is the closed list of compliance sub-paths.
+var compliancePaths = map[string]bool{
+	"human-access": true,
+	"disclosure":   true,
+	"checklist":    true,
 }
 
 func (t *tenantRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -824,6 +854,23 @@ func (t *tenantRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		t.productLineModel.ServeHTTP(w, r)
+	case "evidence":
+		// The judgement evidence ledger: a conversation's evidence, a stretch
+		// verification, the chain head digest, and the switch. A closed list,
+		// for the reason given at aiSettingsPaths.
+		if !evidencePaths[sub] {
+			handler.ErrorJSON(w, http.StatusNotFound, "unknown evidence sub-path: "+sub)
+			return
+		}
+		t.serve(w, r, t.evidence, joinPath(legacyProductLinesPrefix+tenantID, "evidence", sub))
+	case "compliance":
+		// Human access, AI disclosure and the self-check. A closed list, for
+		// the reason given at aiSettingsPaths.
+		if !compliancePaths[sub] {
+			handler.ErrorJSON(w, http.StatusNotFound, "unknown compliance sub-path: "+sub)
+			return
+		}
+		t.serve(w, r, t.compliance, joinPath(legacyProductLinesPrefix+tenantID, "compliance", sub))
 	case "workbench":
 		if sub != "sso" {
 			handler.ErrorJSON(w, http.StatusNotFound, "unknown workbench sub-path: "+sub)

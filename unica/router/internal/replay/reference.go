@@ -16,37 +16,6 @@ type span struct{ start, end int }
 
 func (s span) overlaps(o span) bool { return s.start < o.end && o.start < s.end }
 
-// numberUnitAlt lists the units a figure must sit directly next to before it
-// is worth comparing. A bare number ("12315") is as likely to be an order or
-// complaint reference as a fact, and both texts under comparison are free-form
-// customer service prose, not structured data — the unit is what turns a
-// digit string into something a customer would actually notice disagreeing on.
-const numberUnitAlt = `个月|小时|分钟|天|日|年|元|块|%|折|件|次|倍`
-
-var numberUnitPattern = regexp.MustCompile(`(\d+(?:\.\d+)?)(` + numberUnitAlt + `)`)
-
-// idLikeContext matches a label that means "the number after this is an
-// identifier, not a figure a customer would compare" — an order number, a
-// ticket number, a phone number, a complaint reference. It is anchored to the
-// end of the string it is tested against, i.e. it must sit immediately before
-// the number.
-var idLikeContext = regexp.MustCompile(`(?:编号|单号|订单|工单|电话|热线|手机|尾号|工号|投诉|快递)(?:号)?[:：\s]{0,2}$`)
-
-// datePattern matches the two date shapes this codebase writes: "9月15日" and
-// "2026-12-15". A date is not a figure to compare — "6.5" and "6.50" differ
-// only in trailing zeros, but "9月15日" and "9月16日" are two different days
-// stated on purpose, and neither text disagreeing there is a policy dispute.
-var datePattern = regexp.MustCompile(`\d{1,2}月\d{1,2}日|\d{4}-\d{1,2}-\d{1,2}`)
-
-// placeholderPattern matches a redaction placeholder. A figure that lands
-// inside or against one is masked data, not a policy figure.
-var placeholderPattern = regexp.MustCompile(`〔[^〔〕]*〕`)
-
-var (
-	mobileShape   = regexp.MustCompile(`^1[3-9]\d{9}$`)
-	landlineShape = regexp.MustCompile(`^0\d{9,11}$`)
-)
-
 // CompareToReference is check (b): where an AI answer and the human agent's
 // reply to the same turn disagree on a figure or on an enumerated value.
 //
@@ -119,68 +88,19 @@ func compareNumbers(answer, reference string) []string {
 
 // numberUnitHits finds every number-with-unit in s that survives the
 // exclusion filters (identifier context, phone shape, date shape, redaction
-// placeholder).
+// placeholder). The scan itself lives in pkg/domain so the commitment
+// firewall reads figures exactly the way this comparison does; the reference
+// table keeps the unit list this comparison was built and tested against.
 func numberUnitHits(s string) []numberHit {
-	idxs := numberUnitPattern.FindAllStringSubmatchIndex(s, -1)
-	if idxs == nil {
+	figs := domain.ExtractFigures(s, domain.UnitsReference)
+	if len(figs) == 0 {
 		return nil
 	}
-	var out []numberHit
-	for _, m := range idxs {
-		start, end := m[0], m[1]
-		numGroup := s[m[2]:m[3]]
-		unit := s[m[4]:m[5]]
-		if isExcludedNumber(s, start, end, numGroup, unit) {
-			continue
-		}
-		out = append(out, numberHit{
-			unit:  unit,
-			value: normalizeNumber(numGroup),
-			text:  snippet(s, start, end, 6),
-		})
+	out := make([]numberHit, 0, len(figs))
+	for _, f := range figs {
+		out = append(out, numberHit{unit: f.Unit, value: f.Value, text: f.Snippet})
 	}
 	return out
-}
-
-func isExcludedNumber(s string, start, end int, numGroup, unit string) bool {
-	if idLikeContext.MatchString(s[:start]) {
-		return true
-	}
-	if mobileShape.MatchString(numGroup) || landlineShape.MatchString(numGroup) {
-		return true
-	}
-	// A day-of-month reads "<month>月<day>日" and the month need not be a
-	// digit — "本月15日", "每月5日", "下月20日" are all dates, not a duration
-	// measured in days. The digit immediately preceded by "月" is always the
-	// day-of-month regardless of how the month itself is written, so this
-	// catches every such phrase datePattern's digit-only "x月x日" shape
-	// misses, without touching an actual day-count like "7日内到账".
-	if unit == "日" {
-		if r, _ := utf8.DecodeLastRuneInString(s[:start]); r == '月' {
-			return true
-		}
-	}
-	matchSpan := span{start, end}
-	for _, m := range datePattern.FindAllStringIndex(s, -1) {
-		if matchSpan.overlaps(span{m[0], m[1]}) {
-			return true
-		}
-	}
-	for _, m := range placeholderPattern.FindAllStringIndex(s, -1) {
-		if matchSpan.overlaps(span{m[0], m[1]}) {
-			return true
-		}
-	}
-	return false
-}
-
-// normalizeNumber treats 6.50 and 6.5 as the same figure, but 100 and 1 as
-// different ones.
-func normalizeNumber(raw string) string {
-	if strings.Contains(raw, ".") {
-		raw = strings.TrimSuffix(strings.TrimRight(raw, "0"), ".")
-	}
-	return raw
 }
 
 type unitGroup struct {
@@ -419,30 +339,5 @@ func compareEnums(o *domain.Ontology, answer, reference string) []string {
 // each side, so a flag quotes evidence a reviewer can read in context instead
 // of a bare match.
 func snippet(text string, start, end, radius int) string {
-	lo := stepRunesBack(text, start, radius)
-	hi := stepRunesForward(text, end, radius)
-	s := strings.TrimSpace(text[lo:hi])
-	if lo > 0 {
-		s = "…" + s
-	}
-	if hi < len(text) {
-		s = s + "…"
-	}
-	return s
-}
-
-func stepRunesBack(s string, byteIdx, n int) int {
-	for i := 0; i < n && byteIdx > 0; i++ {
-		_, size := utf8.DecodeLastRuneInString(s[:byteIdx])
-		byteIdx -= size
-	}
-	return byteIdx
-}
-
-func stepRunesForward(s string, byteIdx, n int) int {
-	for i := 0; i < n && byteIdx < len(s); i++ {
-		_, size := utf8.DecodeRuneInString(s[byteIdx:])
-		byteIdx += size
-	}
-	return byteIdx
+	return domain.Snippet(text, start, end, radius)
 }

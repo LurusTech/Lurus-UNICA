@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/kefu/unica/pkg/compliance"
 	"github.com/kefu/unica/pkg/domain"
 	"github.com/kefu/unica/pkg/platformsettings"
 	"github.com/kefu/unica/router/internal/bridge"
@@ -106,6 +107,12 @@ func main() {
 	} else {
 		log.Printf("[router] domain ontology disabled by ONTOLOGY_ENABLED")
 	}
+
+	// The judgement evidence ledger (migration 025). Wired unconditionally
+	// because the switch is per product line: a line writes nothing until its
+	// config_json carries audit_ledger.enabled, so wiring it changes nothing
+	// for any line that has not opted in.
+	router.SetLedger(compliance.NewLedgerStore(db))
 
 	// Wire the acest knowledge integration (experience playbook + external KB)
 	// when configured. Disabled entirely when ACEST_KB_URL is unset; recall

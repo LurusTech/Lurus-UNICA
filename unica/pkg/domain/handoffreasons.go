@@ -35,6 +35,10 @@ const (
 	HandoffReasonConfidenceOK   = "confidence_ok"
 )
 
+// HandoffReasonCommitmentUnbacked is the commitment firewall holding an answer
+// whose refund, compensation, price or guarantee nothing on record backs.
+const HandoffReasonCommitmentUnbacked = "commitment_unbacked"
+
 // ClassifyHandoffReason returns the class of a handoff reason.
 //
 // Unknown reasons are forced. A reason added to the router later is policy
@@ -47,6 +51,14 @@ func ClassifyHandoffReason(reason string) HandoffReasonClass {
 		return ReasonReducible
 	case HandoffReasonAIUnavailable, HandoffReasonConfidenceOK, "":
 		return ReasonOther
+	case HandoffReasonCommitmentUnbacked:
+		// Named rather than left to the default, so a later edit that moves it
+		// has to argue with this comment. The firewall withholds a figure the
+		// business has not stated anywhere; a better ontology can back more
+		// figures, but "AI may not promise money nobody wrote down" is policy,
+		// and the replay gate must never count removing such a handoff as an
+		// improvement.
+		return ReasonForced
 	}
 	// safety_incident, funds_at_risk, payout_request, liability_payout,
 	// regulator_threat, blocked_topic, keyword_match, intent_* — and anything

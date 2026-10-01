@@ -145,19 +145,27 @@ func buildNorthstarStats(since, now time.Time, conv, allHandoff, reducibleHandof
 // judged false_positive or ontology_wrong — the compliance false-positive
 // rate's numerator. Shadow-mode rows never intercepted anything, so they
 // count toward neither.
+//
+// Commitment firewall rows are excluded too. The rate measures how often the
+// ontology validator suppresses a correct answer; a firewall hold is a
+// different check with a different fix, and mixing the two would let a noisy
+// firewall make a sound ontology look untrustworthy, or the reverse.
 func (s *Store) enforcedReviewStats(ctx context.Context, productLineID string, since time.Time) (reviewed, falsePositive int, err error) {
-	err = s.db.QueryRowContext(ctx,
-		`SELECT
-		    COUNT(*) FILTER (WHERE review_status <> 'pending'),
-		    COUNT(*) FILTER (WHERE review_status IN ('false_positive', 'ontology_wrong'))
-		 FROM claim_violations
-		 WHERE product_line_id = $1 AND enforced AND created_at >= $2`,
-		productLineID, since).Scan(&reviewed, &falsePositive)
+	err = s.db.QueryRowContext(ctx, enforcedReviewStatsSQL, productLineID, since).Scan(&reviewed, &falsePositive)
 	if err != nil {
 		return 0, 0, fmt.Errorf("enforced review stats: %w", err)
 	}
 	return reviewed, falsePositive, nil
 }
+
+// enforcedReviewStatsSQL is kept as a value so a test can pin the exclusion
+// without a database.
+var enforcedReviewStatsSQL = `SELECT
+		    COUNT(*) FILTER (WHERE review_status <> 'pending'),
+		    COUNT(*) FILTER (WHERE review_status IN ('false_positive', 'ontology_wrong'))
+		 FROM claim_violations
+		 WHERE product_line_id = $1 AND enforced AND created_at >= $2
+		   AND kind NOT IN ` + firewallKindsSQL()
 
 // activeVersionCreatedAt is when the given version's row was written, which
 // doc/metrics-northstar.md §3 already uses as "when this version was

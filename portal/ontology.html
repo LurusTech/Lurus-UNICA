@@ -253,6 +253,8 @@
 
   .switch-row { display: flex; align-items: center; gap: 10px; }
   .switch-row label { margin-bottom: 0; }
+  .pack-list { display: flex; flex-direction: column; gap: 6px; }
+  .pack-list .switch-row label { font-weight: normal; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
   details.advanced {
     margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px;
@@ -469,6 +471,37 @@
             </div>
           </div>
 
+          <div class="field">
+            <label for="f-commitment">承诺与金额防火墙（commitment）</label>
+            <select id="f-commitment">
+              <option value="off">off — 不检查</option>
+              <option value="shadow">shadow — 只记录</option>
+              <option value="enforce">enforce — 扣下交人工确认</option>
+            </select>
+            <div class="hint">
+              答复里的退款、赔偿、保证等承诺句，以及其中的金额、比例、天数，如果在本体和知识库检索原文里找不到出处（客户自己提出的数字或“全额”等说法不算出处），就整条扣下，草稿连同可疑内容一起交给坐席，确认后再发。系统不会改写答复文字，也不会替 AI 补数字。<br />
+              <strong>请先用 shadow 跑一段时间</strong>，到「质量复核」页看记录下来的条目判得准不准，再切到 enforce。enforce 不受下方熔断约束。<br />
+              “有出处”只说明数字在资料里出现过，不代表用对了地方，仍需人工复核兜底。
+            </div>
+            <div class="hint warn" id="commitment-corpus-hint" hidden></div>
+          </div>
+
+          <div class="field">
+            <label for="f-commitment-scope">防火墙范围（commitment_scope）</label>
+            <select id="f-commitment-scope">
+              <option value="commitment">仅承诺句 — 退款、赔偿、保证等句子里的数字与绝对化用语</option>
+              <option value="money">全部金额 — 另外扣下任何句子里找不到出处的 元 / % / 折 / 万 数字</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>红线包（redline_packs）</label>
+            <div class="pack-list" id="f-redline-packs"></div>
+            <div class="hint">
+              在防火墙开启时扫描所选词表（否定句、疑问句不算命中）。“扣下”类在 enforce 下转人工确认，“仅记录”类只进复核队列。行业包里只有字面上就是禁语的说法（如“保本”“包过”“根治”）会扣下，“低风险”这类在正常说明里也会出现的词只记录。词表只负责拦下交人工，不做法律判定；所列依据均待法务核实。
+            </div>
+          </div>
+
           <details class="advanced">
             <summary>高级：熔断参数</summary>
             <div class="hint">
@@ -583,6 +616,10 @@
     fMinSamples: document.getElementById("f-min-samples"),
     fWindow: document.getElementById("f-window"),
     fCooldown: document.getElementById("f-cooldown"),
+    fCommitment: document.getElementById("f-commitment"),
+    fCommitmentScope: document.getElementById("f-commitment-scope"),
+    fRedlinePacks: document.getElementById("f-redline-packs"),
+    commitmentCorpusHint: document.getElementById("commitment-corpus-hint"),
 
     toastHost: document.getElementById("toast-host")
   };
@@ -1268,6 +1305,11 @@
         els.fMinSamples.value = breaker.min_samples != null ? breaker.min_samples : "";
         els.fWindow.value = breaker.window != null ? breaker.window : "";
         els.fCooldown.value = breaker.cooldown_seconds != null ? breaker.cooldown_seconds : "";
+        els.fCommitment.value = cfg.commitment || "off";
+        els.fCommitmentScope.value = cfg.commitment_scope || "commitment";
+        renderRedlinePacks(cfg.redline_pack_options || [], cfg.redline_packs || []);
+        els.commitmentCorpusHint.textContent = cfg.corpus_hint || "";
+        els.commitmentCorpusHint.hidden = !cfg.corpus_hint;
         state.stashedValidation = null;
         syncValidationGuard();
         els.configLoading.hidden = true;
@@ -1278,6 +1320,38 @@
         els.configLoading.textContent = "加载失败: " + errorText(err);
         reportError("加载开关失败", err);
       });
+  }
+
+  // Pack ids and labels come from the server, which embeds the packs; the page
+  // never hard-codes a list that could drift from what the runtime scans.
+  function renderRedlinePacks(options, selected) {
+    var actionLabels = { withhold: "扣下", flag: "仅记录" };
+    if (!options.length) {
+      els.fRedlinePacks.innerHTML = '<div class="hint">暂无可用红线包</div>';
+      return;
+    }
+    els.fRedlinePacks.innerHTML = options.map(function (p) {
+      var id = "f-pack-" + p.id;
+      var checked = selected.indexOf(p.id) !== -1 ? " checked" : "";
+      var action = actionLabels[p.action] || p.action || "";
+      // A mixed industry pack holds only its face-value phrases; saying just
+      // "扣下" would promise more than the pack does.
+      if (p.mixed && action) action += "，部分词条仅记录";
+      return '<div class="switch-row">' +
+        '<input type="checkbox" id="' + escapeAttr(id) + '" value="' + escapeAttr(p.id) + '"' + checked + " />" +
+        '<label for="' + escapeAttr(id) + '">' + escapeHtml(p.label || p.id) +
+        (action ? "（" + escapeHtml(action) + "）" : "") + "</label>" +
+        "</div>";
+    }).join("");
+  }
+
+  function selectedRedlinePacks() {
+    var boxes = els.fRedlinePacks.querySelectorAll('input[type="checkbox"]');
+    var out = [];
+    for (var i = 0; i < boxes.length; i++) {
+      if (boxes[i].checked) out.push(boxes[i].value);
+    }
+    return out;
   }
 
   // Mirrors the server rule: validation other than "off" requires inject_facts.
@@ -1336,7 +1410,10 @@
     var payload = {
       inject_facts: els.fInjectFacts.checked,
       validation: els.fInjectFacts.checked ? els.fValidation.value : "off",
-      breaker: breaker
+      breaker: breaker,
+      commitment: els.fCommitment.value,
+      commitment_scope: els.fCommitmentScope.value,
+      redline_packs: selectedRedlinePacks()
     };
 
     els.configSubmit.disabled = true;

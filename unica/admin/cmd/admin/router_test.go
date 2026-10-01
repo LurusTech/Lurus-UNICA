@@ -37,6 +37,8 @@ func newTestTenantRouter() (*tenantRouter, *string, *string) {
 		handoffAnnotate:  mk("handoff-annotate"),
 		workbench:        mk("workbench"),
 		productLineModel: mk("product-line-model"),
+		evidence:         mk("evidence"),
+		compliance:       mk("compliance"),
 	}, &hit, &served
 }
 
@@ -105,6 +107,18 @@ func TestTenantRouter_Mapping(t *testing.T) {
 		// checks that the two ids agree.
 		{http.MethodPut, "/api/v1/tenants/pl-1/product-lines/pl-1/model", "product-line-model", "/api/v1/tenants/pl-1/product-lines/pl-1/model"},
 		{http.MethodDelete, "/api/v1/tenants/pl-1/product-lines/pl-1/model", "product-line-model", "/api/v1/tenants/pl-1/product-lines/pl-1/model"},
+
+		// The judgement evidence ledger: a closed sub-path list, rewritten onto
+		// the product-line path the module parses.
+		{http.MethodGet, "/api/v1/tenants/pl-1/evidence", "evidence", "/api/v1/product-lines/pl-1/evidence"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/evidence/verify", "evidence", "/api/v1/product-lines/pl-1/evidence/verify"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/evidence/head", "evidence", "/api/v1/product-lines/pl-1/evidence/head"},
+		{http.MethodPut, "/api/v1/tenants/pl-1/evidence/config", "evidence", "/api/v1/product-lines/pl-1/evidence/config"},
+
+		// Human access, AI disclosure and the self-check: a closed list too.
+		{http.MethodGet, "/api/v1/tenants/pl-1/compliance/human-access", "compliance", "/api/v1/product-lines/pl-1/compliance/human-access"},
+		{http.MethodPut, "/api/v1/tenants/pl-1/compliance/disclosure", "compliance", "/api/v1/product-lines/pl-1/compliance/disclosure"},
+		{http.MethodGet, "/api/v1/tenants/pl-1/compliance/checklist", "compliance", "/api/v1/product-lines/pl-1/compliance/checklist"},
 	}
 
 	for _, c := range cases {
@@ -142,6 +156,10 @@ func TestTenantRouter_UnknownPathsAreNotServed(t *testing.T) {
 		// /api/v1/tenants/{id} already says.
 		"/api/v1/tenants/pl-1/product-lines",
 		"/api/v1/tenants/pl-1/product-lines/pl-1",
+		"/api/v1/tenants/pl-1/evidence/rows",
+		"/api/v1/tenants/pl-1/evidence/verify/extra",
+		"/api/v1/tenants/pl-1/compliance",
+		"/api/v1/tenants/pl-1/compliance/rates",
 	}
 
 	for _, p := range paths {

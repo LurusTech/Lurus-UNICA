@@ -20,6 +20,9 @@ type TenantDataDeletion struct {
 	PromptVersions   int64 `json:"prompt_versions"`
 	ClaimViolations  int64 `json:"claim_violations"`
 	HandoffEvents    int64 `json:"handoff_events"`
+	AnswerTraces     int64 `json:"answer_traces"`
+	AnswerAudit      int64 `json:"answer_audit"`
+	AnswerAuditHeads int64 `json:"answer_audit_heads"`
 	Users            int64 `json:"users"`
 }
 
@@ -116,6 +119,23 @@ func (r *ProductLineRepository) DeleteTenantData(ctx context.Context, id string)
 			[]interface{}{id}},
 		{"handoff_events", &counts.HandoffEvents,
 			`DELETE FROM handoff_events WHERE product_line_id = $1`,
+			[]interface{}{id}},
+		// answer_traces (023) keeps the customer's message and the raw answer
+		// for replay. Like the ledger below it has no foreign key to cascade
+		// from; 023 promised it would leave with the tenant, and without this
+		// step it did not.
+		{"answer_traces", &counts.AnswerTraces,
+			`DELETE FROM answer_traces WHERE product_line_id = $1`,
+			[]interface{}{id}},
+		// The evidence ledger (025) holds the customer's own words and the
+		// answers they were sent. It has no foreign key to cascade from, so a
+		// removal that did not name it would leave all of that behind. The
+		// head row goes too: a tenant id reused later starts a fresh chain.
+		{"answer_audit", &counts.AnswerAudit,
+			`DELETE FROM answer_audit WHERE product_line_id = $1`,
+			[]interface{}{id}},
+		{"answer_audit_heads", &counts.AnswerAuditHeads,
+			`DELETE FROM answer_audit_heads WHERE product_line_id = $1`,
 			[]interface{}{id}},
 		{"users", &counts.Users,
 			`DELETE FROM users WHERE product_line_id = $1`,
