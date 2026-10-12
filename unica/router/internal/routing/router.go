@@ -15,9 +15,9 @@ import (
 
 	"github.com/kefu/unica/pkg/difyapp"
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/pkg/model"
 	"github.com/kefu/unica/router/internal/bridge"
-	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/intent"
 	"github.com/kefu/unica/router/internal/marketing"
 	"github.com/kefu/unica/router/internal/metrics"
@@ -229,6 +229,16 @@ func (r *Router) Start(ctx context.Context) {
 	for i := 0; i < r.workers; i++ {
 		r.wg.Add(1)
 		go r.readLoop(ctx, i)
+	}
+
+	// Surveys nobody answers become no_response instead of staying 'sent'
+	// forever (D1). Only rows a survey-enabled line produced are touched.
+	if r.surveyHandler != nil {
+		r.wg.Add(1)
+		go func() {
+			defer r.wg.Done()
+			r.surveyHandler.RunTimeoutSweep(ctx, r.stopCh, survey.DefaultTimeoutSweepInterval)
+		}()
 	}
 	log.Printf("[router] started %d workers on %s (group=%s, consumer=%s)",
 		r.workers, InboundStream, r.consumerGroup, r.consumerName)
@@ -583,7 +593,7 @@ func (r *Router) callDifyAndPublish(ctx context.Context, config *RouteConfig, ms
 		return
 	}
 
-	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
+	guardrailCfg := guardrail.Load(config.ConfigJSON)
 	judgement := JudgeAnswer(JudgeInput{
 		// The customer's original text, never ac.modelQuery: keyword, harm and
 		// forced-handoff rules must judge what the customer wrote, so a
@@ -1147,7 +1157,7 @@ func (r *Router) handoffWithoutAnswer(ctx context.Context, config *RouteConfig,
 	}
 	metrics.GuardrailDecisionsTotal.WithLabelValues(string(evalResult.Decision), reason).Inc()
 
-	guardrailCfg := guardrail.LoadGuardrailConfig(config.ConfigJSON)
+	guardrailCfg := guardrail.Load(config.ConfigJSON)
 	r.publishHoldingMessage(ctx, config, msg, convID, workerID, guardrailCfg.HoldingMessage)
 	r.publishHandoffEvent(ctx, msg, convID, config.ProductLineID, evalResult, "")
 

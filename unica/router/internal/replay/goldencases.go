@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/router/internal/eval"
-	"github.com/kefu/unica/router/internal/guardrail"
 )
 
 // This file is the "one real conversation → one regression case draft" tool

@@ -77,7 +77,7 @@ func TenantScopeAllowed(r *http.Request, tenantID string) bool {
 	return claims.TenantID != "" && tenantID == claims.TenantID
 }
 
-// AuthMiddleware validates JWT tokens from the Authorization header.
+// AuthMiddleware validates JWT access tokens from the Authorization header.
 func AuthMiddleware(jwtMgr *JWTManager) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +93,9 @@ func AuthMiddleware(jwtMgr *JWTManager) func(http.Handler) http.Handler {
 				return
 			}
 
-			claims, err := jwtMgr.ValidateToken(parts[1])
+			// Access tokens only: a refresh token is for /auth/refresh and
+			// nothing else (D23).
+			claims, err := jwtMgr.ValidateAccessToken(parts[1])
 			if err != nil {
 				http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
 				return

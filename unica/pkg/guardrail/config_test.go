@@ -6,7 +6,7 @@ import (
 )
 
 func TestDefaultGuardrailConfig(t *testing.T) {
-	cfg := DefaultGuardrailConfig()
+	cfg := Defaults()
 	if cfg.ConfidenceThreshold != 0.7 {
 		t.Errorf("expected threshold 0.7, got %f", cfg.ConfidenceThreshold)
 	}
@@ -19,14 +19,14 @@ func TestDefaultGuardrailConfig(t *testing.T) {
 }
 
 func TestLoadGuardrailConfig_NilJSON(t *testing.T) {
-	cfg := LoadGuardrailConfig(nil)
+	cfg := Load(nil)
 	if cfg.ConfidenceThreshold != 0.7 {
 		t.Errorf("expected default threshold 0.7, got %f", cfg.ConfidenceThreshold)
 	}
 }
 
 func TestLoadGuardrailConfig_EmptyJSON(t *testing.T) {
-	cfg := LoadGuardrailConfig(json.RawMessage{})
+	cfg := Load(json.RawMessage{})
 	if cfg.ConfidenceThreshold != 0.7 {
 		t.Errorf("expected default threshold 0.7, got %f", cfg.ConfidenceThreshold)
 	}
@@ -34,7 +34,7 @@ func TestLoadGuardrailConfig_EmptyJSON(t *testing.T) {
 
 func TestLoadGuardrailConfig_NoGuardrailKey(t *testing.T) {
 	raw := json.RawMessage(`{"dify_workspace_id": "ws-123"}`)
-	cfg := LoadGuardrailConfig(raw)
+	cfg := Load(raw)
 	if cfg.ConfidenceThreshold != 0.7 {
 		t.Errorf("expected default threshold when guardrail key absent, got %f", cfg.ConfidenceThreshold)
 	}
@@ -50,7 +50,7 @@ func TestLoadGuardrailConfig_CustomValues(t *testing.T) {
 			"holding_message": "Please hold..."
 		}
 	}`)
-	cfg := LoadGuardrailConfig(raw)
+	cfg := Load(raw)
 
 	if cfg.ConfidenceThreshold != 0.8 {
 		t.Errorf("expected threshold 0.8, got %f", cfg.ConfidenceThreshold)
@@ -73,7 +73,7 @@ func TestLoadGuardrailConfig_PartialOverride(t *testing.T) {
 			"confidence_threshold": 0.6
 		}
 	}`)
-	cfg := LoadGuardrailConfig(raw)
+	cfg := Load(raw)
 
 	if cfg.ConfidenceThreshold != 0.6 {
 		t.Errorf("expected threshold 0.6, got %f", cfg.ConfidenceThreshold)
@@ -89,7 +89,7 @@ func TestLoadGuardrailConfig_PartialOverride(t *testing.T) {
 
 func TestLoadGuardrailConfig_InvalidJSON(t *testing.T) {
 	raw := json.RawMessage(`{invalid json}`)
-	cfg := LoadGuardrailConfig(raw)
+	cfg := Load(raw)
 	// Should fall back to defaults
 	if cfg.ConfidenceThreshold != 0.7 {
 		t.Errorf("expected default threshold on invalid JSON, got %f", cfg.ConfidenceThreshold)
@@ -104,7 +104,7 @@ func TestLoadGuardrailConfig_ZeroThresholdBackfilled(t *testing.T) {
 			"handoff_keywords": ["test"]
 		}
 	}`)
-	cfg := LoadGuardrailConfig(raw)
+	cfg := Load(raw)
 	if cfg.ConfidenceThreshold != 0.7 {
 		t.Errorf("expected backfilled threshold 0.7 for zero value, got %f", cfg.ConfidenceThreshold)
 	}

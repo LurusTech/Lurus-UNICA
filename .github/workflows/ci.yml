@@ -30,6 +30,9 @@ jobs:
             cache_path: unica/gateway/go.sum
           - module: unica/reporter
             cache_path: unica/reporter/go.sum
+          # The standalone gate: depends on unica/pkg only.
+          - module: unica/judge
+            cache_path: unica/judge/go.sum
           - module: deploy/alertmanager/webhook-adapter
             cache_path: deploy/alertmanager/webhook-adapter/go.sum
 

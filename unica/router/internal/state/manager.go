@@ -451,11 +451,6 @@ func (m *Manager) MarkHandoff(ctx context.Context, convID string) error {
 	return m.repo.MarkHandoff(ctx, convID)
 }
 
-// SetFirstAgentReply stamps first_agent_reply_at once for a conversation.
-func (m *Manager) SetFirstAgentReply(ctx context.Context, convID string) error {
-	return m.repo.SetFirstAgentReply(ctx, convID)
-}
-
 // MergeIntents unions detected intents into conversation metadata, preserving
 // intents from earlier turns.
 func (m *Manager) MergeIntents(ctx context.Context, convID string, intents []string, timestamps json.RawMessage) error {

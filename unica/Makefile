@@ -1,5 +1,5 @@
-SERVICES := gateway router admin reporter
-MODULES := github.com/kefu/unica/pkg/... github.com/kefu/unica/gateway/... github.com/kefu/unica/router/... github.com/kefu/unica/admin/... github.com/kefu/unica/reporter/...
+SERVICES := gateway router admin reporter judge
+MODULES := github.com/kefu/unica/pkg/... github.com/kefu/unica/gateway/... github.com/kefu/unica/router/... github.com/kefu/unica/admin/... github.com/kefu/unica/reporter/... github.com/kefu/unica/judge/...
 
 .PHONY: build test lint docker-build clean
 

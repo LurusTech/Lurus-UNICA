@@ -2,14 +2,13 @@ package replay
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/kefu/unica/pkg/domain"
-	"github.com/kefu/unica/router/internal/guardrail"
+	"github.com/kefu/unica/pkg/guardrail"
 )
 
 // This file is stage 3-4 of the evolution loop: mining recurring handoffs on
@@ -184,7 +183,7 @@ func Mine(cases []Case, o *domain.Ontology, opts MineOptions) (*MineReport, erro
 
 	var actionCases, clusterable []Case
 	for _, c := range escalated {
-		if isActionQuery(c.Query) {
+		if domain.IsActionQuery(c.Query) {
 			actionCases = append(actionCases, c)
 		} else {
 			clusterable = append(clusterable, c)
@@ -297,30 +296,6 @@ func representativeQuotes(cases []Case, n int) []string {
 
 // --- action-type detection ---------------------------------------------
 
-// actionKeywords name a status the customer wants looked up rather than a
-// policy question — nothing an ontology change can answer, however phrased.
-var actionKeywords = []string{
-	"订单号", "运单号", "快递单号", "工单号",
-	"物流", "快递到哪", "到哪了", "到哪儿了", "配送到哪",
-	"退款进度", "退货进度", "处理进度", "审核进度", "进度查",
-	"查一下", "查下", "查询一下", "帮我查",
-	"什么时候到", "多久能到", "多久到",
-}
-
-// actionPlaceholderPattern matches a bracketed placeholder standing in for an
-// order or ticket number — the shape a redacted or templated "look this up
-// for me" message takes even without one of actionKeywords' words.
-var actionPlaceholderPattern = regexp.MustCompile(`[【\[〔(（]\s*(订单号|运单号|工单号|快递单号)\s*[】\]〕)）]`)
-
-func isActionQuery(query string) bool {
-	for _, kw := range actionKeywords {
-		if strings.Contains(query, kw) {
-			return true
-		}
-	}
-	return actionPlaceholderPattern.MatchString(query)
-}
-
 // --- signatures and clustering ------------------------------------------
 
 // signatureSet is one case's signature, as a set of opaque features so two
@@ -332,7 +307,7 @@ func signatureSet(o *domain.Ontology, c Case) map[string]bool {
 	set := map[string]bool{}
 	set["reason:"+c.Logged.Reason] = true
 	set["class:"+string(ClassifyReason(c.Logged.Reason))] = true
-	for _, name := range propertyMentions(o, c.Query) {
+	for _, name := range o.MentionedProperties(c.Query) {
 		set["prop:"+name] = true
 	}
 	for g := range ngramSet(c.Query, 2, 4) {
@@ -485,31 +460,6 @@ func declaredLabels(o *domain.Ontology) []declaredLabel {
 	for _, d := range o.Denials {
 		add(d.Term, domain.DenyAlias(d.Term))
 	}
-	return out
-}
-
-// propertyMentions returns, sorted, the declared property names whose own
-// name or label appears in text — the signature's "which attribute this
-// handoff is about" feature, and the same substring search checkClaims'
-// undeclared-property check would have no use for here: Case, unlike Trace,
-// carries no per-turn Violation, so this is the closest mining gets to it
-// from an export alone.
-func propertyMentions(o *domain.Ontology, text string) []string {
-	if text == "" {
-		return nil
-	}
-	seen := map[string]bool{}
-	for _, name := range o.PropertyNames() {
-		p := o.Properties[name]
-		if strings.Contains(text, name) || (p.Label != "" && strings.Contains(text, p.Label)) {
-			seen[name] = true
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for k := range seen {
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	return out
 }
 
@@ -767,7 +717,7 @@ func mineMissingFacts(o *domain.Ontology, group []Case) []domain.MissingFact {
 		if strings.TrimSpace(c.Reference) == "" {
 			continue
 		}
-		for _, name := range mentionedUnassertedProperties(o, c.Reference) {
+		for _, name := range o.MentionedUnassertedProperties(c.Reference) {
 			if hits[name] == nil {
 				hits[name] = map[string]bool{}
 			}
@@ -815,30 +765,6 @@ func mineMissingFacts(o *domain.Ontology, group []Case) []domain.MissingFact {
 		})
 	}
 	return out
-}
-
-func mentionedUnassertedProperties(o *domain.Ontology, text string) []string {
-	var out []string
-	for _, name := range o.PropertyNames() {
-		p := o.Properties[name]
-		if !strings.Contains(text, name) && !(p.Label != "" && strings.Contains(text, p.Label)) {
-			continue
-		}
-		if propertyHasAssertion(o, name) {
-			continue
-		}
-		out = append(out, name)
-	}
-	return out
-}
-
-func propertyHasAssertion(o *domain.Ontology, name string) bool {
-	for _, a := range o.Assertions {
-		if _, ok := a.Values[name]; ok {
-			return true
-		}
-	}
-	return false
 }
 
 // mergeMissingFacts combines tickets for the same property mined from

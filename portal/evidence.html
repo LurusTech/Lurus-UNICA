@@ -2,52 +2,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>判定证据 - UNICA 统一管理门户</title>
+<link rel="stylesheet" href="./ui/unica-ui.css?v=1">
 <style>
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-    --lt-accent: #FF5D1F;
-    --lt-on-accent: #14130F;
-  }
-  :root {
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --ok: var(--lt-ok);
-    --bad: var(--lt-err);
-    --warn: var(--lt-warn);
-    --info: var(--lt-info);
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --lt-paper: #14130F;
-      --lt-bg:    #0A0908;
-      --lt-ink:   #F0EDE4;
-      --lt-rule:  #25221C;
-      --lt-ok:    #3FA876;
-      --lt-warn:  #E0A040;
-      --lt-err:   #EE6F5E;
-      --lt-info:  #5A7BC7;
-      --bg: var(--lt-paper);
-      --surface: var(--lt-bg);
-      --text: var(--lt-ink);
-      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-      --border: var(--lt-rule);
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
-    }
-  }
+  /* Brand tokens, toasts and pills come from ui/unica-ui.css. */
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -60,8 +17,6 @@
     justify-content: space-between; gap: 12px;
   }
   header .left { display: flex; align-items: center; gap: 14px; }
-  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
-  header a.back:hover { color: var(--primary); }
   header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
   #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
   main {
@@ -122,16 +77,6 @@
   }
   code { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
 
-  .pill {
-    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
-    font-size: 0.78rem; border: 1px solid var(--border); white-space: nowrap;
-  }
-  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
-  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
-  .pill.info { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, transparent); }
-  .pill.muted { color: var(--text-muted); }
-
   .chain-status { border-left: 4px solid var(--border); padding: 12px 16px; border-radius: 10px; background: var(--bg); line-height: 1.7; }
   .chain-status.ok { border-left-color: var(--ok); }
   .chain-status.bad { border-left-color: var(--bad); }
@@ -165,22 +110,42 @@
 
   .empty-state { padding: 32px 16px; text-align: center; color: var(--text-muted); line-height: 1.8; }
 
-  #toast-host {
-    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
-    gap: 10px; z-index: 100; max-width: 340px;
+  /* One judgement drawn as the four steps a message goes through. Each step
+     names what it stands on, taken from the recorded row only; a step the row
+     has nothing for says so instead of being filled in. */
+  ol.steps { list-style: none; margin: 0; padding: 0; }
+  .step { position: relative; padding: 0 0 16px 40px; }
+  .step:last-child { padding-bottom: 0; }
+  .step::before {
+    content: ""; position: absolute; left: 13px; top: 28px; bottom: 0; width: 2px; background: var(--border);
   }
-  .toast {
-    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
-    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow); line-height: 1.6;
+  .step:last-child::before { display: none; }
+  .step-mark {
+    position: absolute; left: 0; top: 0; width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700;
+    border: 2px solid var(--border); background: var(--surface); color: var(--text-muted);
   }
-  .toast.success { border-left-color: var(--ok); }
-  .toast.error { border-left-color: var(--bad); }
+  .step.ok .step-mark { border-color: var(--ok); color: var(--ok); }
+  .step.bad .step-mark { border-color: var(--bad); color: var(--bad); }
+  .step.warn .step-mark { border-color: var(--warn); color: var(--warn); }
+  .step.info .step-mark { border-color: var(--info); color: var(--info); }
+  .step.none .step-mark { border-style: dashed; }
+  .step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 28px; }
+  .step-head h4 { margin: 0; font-size: 0.92rem; font-weight: 600; }
+  .step-body { margin-top: 6px; display: grid; gap: 8px; }
+  .step-none { color: var(--text-muted); font-size: 0.85rem; }
+  .basis { font-size: 0.8rem; color: var(--text-muted); line-height: 1.7; }
+  .basis b { color: var(--text); font-weight: 500; }
+  .basis .lead { font-weight: 600; margin-right: 4px; }
+  .basis ul { margin: 2px 0 0; padding-left: 18px; }
+  .finding-kind { font-weight: 600; color: var(--text); }
+
   [hidden] { display: none !important; }
 
   /* Printing keeps the evidence and its chain status only: the controls,
      the switch and the sign-in chrome are not part of the record. */
   @media print {
-    header, .toolbar, #config-card, #anchor-card, .no-print, #toast-host { display: none !important; }
+    header, .toolbar, #config-card, #anchor-card, .no-print { display: none !important; }
     body { background: #fff; color: #000; }
     main { max-width: none; padding: 0; }
     .card, .turn, .block { box-shadow: none; background: #fff; }
@@ -191,11 +156,9 @@
 
 <header>
   <div class="left">
-    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
     <h1>判定证据</h1>
   </div>
   <div id="user-info" hidden>
-    <span id="tenant-name"></span>
     <span id="user-email"></span>
     <button id="logout-btn">退出登录</button>
   </div>
@@ -239,7 +202,7 @@
     <div class="card" id="config-card" hidden>
       <div class="card-head">
         <h2>证据链</h2>
-        <span class="pill muted" id="config-pill">—</span>
+        <span class="uu-pill muted" id="config-pill">—</span>
       </div>
       <p class="card-sub">
         开启后，本租户每一次 AI 判定（发出、转人工、分流转人工、模型无答复）都会写入一条证据：
@@ -290,9 +253,8 @@
   </section>
 </main>
 
-<div id="toast-host" aria-live="polite"></div>
-
 <script src="./auth.js?v=1"></script>
+<script src="./ui/unica-ui.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -318,28 +280,15 @@
     none: { text: "—", cls: "muted" }
   };
 
-  // Operator-facing wording for known reasons; anything else shows its code.
-  var REASON_LABELS = {
-    confidence_ok: "置信度达标",
-    low_confidence: "置信度不足",
-    empty_answer: "答复为空",
-    model_requested: "模型请求转人工",
-    claim_conflict: "与本体事实冲突",
-    commitment_unbacked: "承诺或数字无出处",
-    human_quick_entry: "快捷入口要求人工",
-    repeat_unresolved: "重复追问未解决",
-    vulnerable_priority: "优先接待",
-    ai_unavailable: "AI 服务不可用",
-    keyword_match: "命中转人工关键词",
-    blocked_topic: "禁答话题",
-    safety_incident: "安全事件",
-    funds_at_risk: "资金风险",
-    payout_request: "赔付请求",
-    liability_payout: "责任赔付",
-    regulator_threat: "投诉或监管威胁"
-  };
+  // Operator-facing wording for known reasons and finding kinds lives in the
+  // shared layer; anything else shows its code.
+  var REASON_LABELS = UnicaUI.labels.handoffReason;
+  var FINDING_LABELS = UnicaUI.labels.violationKind;
 
   var VALIDATION_LABELS = { off: "未校验", shadow: "只记录", enforce: "拦截" };
+
+  var toast = UnicaUI.toast;
+  var announce = UnicaUI.liveRegion.announce;
 
   var state = {
     tenants: [],
@@ -358,8 +307,6 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
-    backLink: document.getElementById("back-link"),
-    tenantName: document.getElementById("tenant-name"),
     plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
     convInput: document.getElementById("conv-input"),
@@ -379,18 +326,8 @@
     timeline: document.getElementById("timeline"),
     printBtn: document.getElementById("print-btn"),
     exportBtn: document.getElementById("export-btn"),
-    emptyBox: document.getElementById("empty-box"),
-    toastHost: document.getElementById("toast-host")
+    emptyBox: document.getElementById("empty-box")
   };
-
-  // ---------- Toasts ----------
-  function toast(message, kind) {
-    var el = document.createElement("div");
-    el.className = "toast" + (kind ? " " + kind : "");
-    el.textContent = message;
-    els.toastHost.appendChild(el);
-    setTimeout(function () { el.remove(); }, 3600);
-  }
 
   // ---------- Tenant scope ----------
   var TENANT_ME = "me";
@@ -405,6 +342,20 @@
   function queryParam(name) {
     var m = new RegExp("[?&]" + name + "=([^&]*)").exec(window.location.search);
     return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+  }
+
+  // Rewrites the address in place so a reload, a copied link or the top bar
+  // sees what the page is showing. Empty values drop the parameter.
+  function setQuery(params) {
+    var url = new URL(window.location.href);
+    Object.keys(params).forEach(function (k) {
+      if (params[k]) url.searchParams.set(k, params[k]);
+      else url.searchParams.delete(k);
+    });
+    var next = url.pathname + url.search + url.hash;
+    if (next !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState(null, "", next);
+    }
   }
 
   function requestedTenant() { return isAdmin() ? queryParam("tenant") : ""; }
@@ -424,8 +375,20 @@
     return state.currentTenant ? String(state.currentTenant.id) : "";
   }
 
+  // The top bar is built from the session as it is now, so it is mounted
+  // after sign-in and taken down on sign-out; a tenant switch goes through
+  // UnicaUI.topbar.setTenant.
+  function mountTopbar() {
+    UnicaUI.topbar.refresh({ title: "判定证据" });
+  }
+
+  function dropTopbar() {
+    UnicaUI.topbar.unmount();
+  }
+
   function showLogin(message) {
     UnicaAuth.dropTab();
+    dropTopbar();
     els.appView.hidden = true;
     els.userInfo.hidden = true;
     els.loginView.hidden = false;
@@ -439,6 +402,7 @@
     els.loginView.hidden = true;
     els.appView.hidden = false;
     els.userInfo.hidden = false;
+    if (!UnicaUI.topbar.current()) mountTopbar();
   }
 
   function errorText(err) {
@@ -483,8 +447,10 @@
   });
 
   // ---------- Bootstrap ----------
+  // Event links and the quick jump use ?conversation=; older links and the
+  // handoff records use ?conversation_id=. Both open the same conversation.
   function bootstrap() {
-    var conv = queryParam("conversation_id");
+    var conv = queryParam("conversation") || queryParam("conversation_id");
     if (conv) els.convInput.value = conv;
     loadTenants();
   }
@@ -515,7 +481,6 @@
 
   function renderTenantOptions() {
     els.plField.hidden = !isAdmin();
-    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
     if (state.tenants.length === 0) {
       els.plSelect.innerHTML = '<option value="">暂无租户</option>';
       els.emptyBox.textContent = "还没有租户";
@@ -533,8 +498,9 @@
 
   function selectTenant(id) {
     state.currentTenant = findTenant(id);
-    els.tenantName.textContent = state.currentTenant
-      ? (state.currentTenant.display_name || state.currentTenant.name) : "";
+    // An administrator's choice goes on the address, where the top bar and
+    // every link built from it read the tenant.
+    if (state.currentTenant) UnicaUI.topbar.setTenant(state.currentTenant.id);
     els.evidenceCard.hidden = true;
     els.emptyBox.hidden = false;
     els.digestResult.hidden = true;
@@ -563,7 +529,7 @@
     state.ledgerEnabled = enabled;
     els.configCard.hidden = false;
     els.configPill.textContent = enabled ? "已开启" : "未开启";
-    els.configPill.className = "pill " + (enabled ? "ok" : "muted");
+    els.configPill.className = "uu-pill " + (enabled ? "ok" : "muted");
     els.configToggle.textContent = enabled ? "关闭证据链" : "开启证据链";
   }
 
@@ -657,11 +623,13 @@
           box.innerHTML = '<div class="title">与留存的摘要一致</div>' +
             '<div class="meta">摘要所指的第 ' + escapeHtml(res.chain.to_seq) +
             " 条记录及其之前校验过的记录，自摘要留存以来没有被改动。</div>";
+          announce("比对结果：与留存的摘要一致");
         } else {
           box.className = "chain-status bad";
           box.innerHTML = '<div class="title">与留存的摘要不一致</div>' +
             '<div class="meta">' + escapeHtml((res && res.digest_problem) || "比对未通过") + "</div>" +
             (res && res.chain && !res.chain.ok ? '<div class="meta">' + escapeHtml(res.chain.problem || "") + "</div>" : "");
+          announce("比对结果：与留存的摘要不一致", "assertive");
         }
       })
       .catch(function (err) { reportError("比对失败", err); })
@@ -686,12 +654,17 @@
       .then(function (data) {
         state.lastEvidence = data;
         renderEvidence(data);
+        setQuery({ conversation: conv, conversation_id: "" });
+        var n = Array.isArray(data && data.entries) ? data.entries.length : 0;
+        announce("已载入会话 " + conv + " 的判定证据，共 " + n + " 条" +
+          (data && data.chain && !data.chain.ok ? "；证据链校验未通过" : ""));
       })
       .catch(function (err) {
         state.lastEvidence = null;
         els.evidenceCard.hidden = true;
         els.emptyBox.hidden = false;
         els.emptyBox.textContent = errorText(err);
+        announce("加载证据失败：" + errorText(err), "assertive");
       })
       .finally(function () { els.queryBtn.disabled = false; });
   }
@@ -727,56 +700,100 @@
     return [];
   }
 
-  function renderTurn(e) {
-    var decision = DECISION_LABELS[e.decision] || { text: e.decision, cls: "muted" };
-    var cls = CLASS_LABELS[e.reason_class] || { text: e.reason_class, cls: "muted" };
-    var reason = e.reason || "";
-    var reasonText = REASON_LABELS[reason] ||
+  function reasonText(reason) {
+    reason = reason || "";
+    return REASON_LABELS[reason] ||
       (reason.indexOf("intent_") === 0 ? "分流：" + reason.slice(7) : reason);
+  }
 
-    var html = '<li class="turn">';
-    html += '<div class="turn-head">' +
-      '<span class="pill ' + decision.cls + '">' + escapeHtml(decision.text) + "</span>" +
-      '<span class="pill muted">' + escapeHtml(KIND_LABELS[e.kind] || e.kind) + "</span>" +
-      (e.decision !== "send" ? '<span class="pill ' + cls.cls + '">' + escapeHtml(cls.text) + "</span>" : "") +
-      "<span>原因：" + escapeHtml(reasonText) + (reasonText !== reason ? ' <code>' + escapeHtml(reason) + "</code>" : "") + "</span>" +
-      '<span class="when">第 ' + escapeHtml(e.seq) + " 条 · " + escapeHtml(formatDate(e.created_at)) + "</span>" +
-      (e.hash_ok ? '<span class="pill ok">本条哈希一致</span>' : '<span class="pill bad">本条哈希不一致</span>') +
-      "</div>";
+  function reasonHtml(reason) {
+    var text = reasonText(reason);
+    if (!reason) return "无记录";
+    return escapeHtml(text) + (text !== reason ? ' <code>' + escapeHtml(reason) + "</code>" : "");
+  }
 
-    html += '<div class="turn-grid">';
-    html += '<div class="block full"><h4>客户原话</h4><div class="text">' + escapeHtml(e.customer_message) + "</div></div>";
-    if (e.delivered_answer != null) {
-      html += '<div class="block delivered full"><h4>发给客户的答复</h4><div class="text">' + escapeHtml(e.delivered_answer) + "</div></div>";
-    }
-    if (e.withheld_answer != null) {
-      html += '<div class="block withheld full"><h4>被拦下、未发给客户的答复</h4><div class="text">' + escapeHtml(e.withheld_answer) + "</div></div>";
-    }
+  function pill(text, cls) {
+    return '<span class="uu-pill ' + (cls || "muted") + '">' + escapeHtml(text) + "</span>";
+  }
 
-    var commitments = parseList(e.commitments);
-    if (commitments.length) {
-      html += '<div class="block full"><h4>承诺与数字核对的发现</h4><ul class="findings">' +
-        commitments.map(function (f) {
-          return "<li>" + escapeHtml(f.message || f.kind) + (f.got ? "（<code>" + escapeHtml(f.got) + "</code>）" : "") + "</li>";
-        }).join("") + "</ul></div>";
-    }
-    var violations = parseList(e.violations);
-    if (violations.length) {
-      html += '<div class="block full"><h4>与本体事实的冲突</h4><ul class="findings">' +
-        violations.map(function (v) {
-          return "<li>" + escapeHtml(v.message || v.kind) + "</li>";
-        }).join("") + "</ul></div>";
-    }
+  // One step of the vertical bar. mark is the step's state (ok / bad / warn /
+  // info / none); "none" is a step the row holds nothing for.
+  function stepHtml(n, title, mark, headExtra, body) {
+    return '<li class="step ' + mark + '">' +
+      '<span class="step-mark" aria-hidden="true">' + n + "</span>" +
+      '<div class="step-head"><h4>' + escapeHtml(title) + "</h4>" + (headExtra || "") + "</div>" +
+      '<div class="step-body">' + body + "</div></li>";
+  }
+
+  function noRecord(note) {
+    return '<div class="step-none">无记录' + (note ? "（" + escapeHtml(note) + "）" : "") + "</div>";
+  }
+
+  function basisHtml(items) {
+    var shown = items.filter(function (x) { return x; });
+    if (!shown.length) return "";
+    return '<div class="basis"><span class="lead">依据</span>' + shown.join("；") + "</div>";
+  }
+
+  // A finding as recorded: its kind, the redline pack (scope) and term or
+  // property it hit, the matched text and the recorded message.
+  function findingHtml(f) {
+    var kind = f.kind || "";
+    var parts = ['<span class="finding-kind">' + escapeHtml(FINDING_LABELS[kind] || kind || "未注明类型") + "</span>"];
+    if (kind && FINDING_LABELS[kind]) parts.push("<code>" + escapeHtml(kind) + "</code>");
+    if (f.scope) parts.push("条款 <code>" + escapeHtml(f.scope) + "</code>");
+    if (f.property) parts.push("命中 <code>" + escapeHtml(f.property) + "</code>");
+    var line = parts.join(" ");
+    if (f.message) line += "：" + escapeHtml(f.message);
+    else if (f.got) line += "：<code>" + escapeHtml(f.got) + "</code>";
+    return "<li>" + line + "</li>";
+  }
+
+  function findingsBlock(title, list) {
+    if (!list.length) return "";
+    return '<div class="basis"><span class="lead">' + escapeHtml(title) + "</span>" +
+      "<ul>" + list.map(findingHtml).join("") + "</ul></div>";
+  }
+
+  function stepReceived(e) {
+    var hasText = e.customer_message != null && e.customer_message !== "";
+    var body = hasText
+      ? '<div class="block"><h4>客户原话</h4><div class="text">' + escapeHtml(e.customer_message) + "</div></div>"
+      : noRecord("本条没有保存客户原话");
+    body += basisHtml([
+      "记录时间 <b>" + escapeHtml(formatDate(e.created_at)) + "</b>",
+      e.correlation_id ? "消息关联号 <code>" + escapeHtml(e.correlation_id) + "</code>" : ""
+    ]);
+    return stepHtml(1, "收到", hasText ? "info" : "none", "", body);
+  }
+
+  function stepJudged(e) {
+    var decision = DECISION_LABELS[e.decision];
+    if (!e.decision && !e.kind) return stepHtml(2, "判定", "none", "", noRecord());
+    var head = (decision ? pill(decision.text, decision.cls) : pill(e.decision || "决策无记录", "muted")) +
+      pill(KIND_LABELS[e.kind] || e.kind || "类型无记录", "muted");
+    var body = basisHtml([
+      "判定原因 <b>" + reasonHtml(e.reason) + "</b>",
+      e.confidence_score != null ? "置信度 <b>" + escapeHtml(Number(e.confidence_score).toFixed(3)) + "</b>" : "",
+      "本体版本 <b>" + escapeHtml(e.ontology_version != null ? "v" + e.ontology_version : "未启用") + "</b>",
+      "事实注入 <b>" + (e.facts_injected ? "是" : "否") + "</b>",
+      "本体校验 <b>" + escapeHtml(VALIDATION_LABELS[e.validation_mode] || e.validation_mode || "无记录") + "</b>",
+      "熔断状态 <b>" + (e.breaker_open ? "已熔断" : "正常") + "</b>"
+    ]);
+
     var claims = parseList(e.claims);
     if (claims.length) {
-      html += '<div class="block full"><h4>答复中标注的事实</h4><ul class="findings">' +
+      body += '<div class="basis"><span class="lead">答复中标注的事实</span><ul>' +
         claims.map(function (c) {
           return "<li><code>" + escapeHtml(c.property) + "</code> = " + escapeHtml(c.value) + "</li>";
         }).join("") + "</ul></div>";
     }
+    body += findingsBlock("与本体事实的冲突", parseList(e.violations));
+    body += findingsBlock("承诺、数字与红线核对的发现", parseList(e.commitments));
+
     var sources = parseList(e.sources);
     if (sources.length) {
-      html += '<div class="block full"><h4>命中的知识片段（只存内容哈希，不存原文）</h4>' +
+      body += '<div class="block"><h4>命中的知识片段（只存内容哈希，不存原文）</h4>' +
         '<table class="sources"><thead><tr><th>文档</th><th>分数</th><th>内容哈希</th></tr></thead><tbody>' +
         sources.map(function (s) {
           return "<tr><td>" + escapeHtml(s.document_name || s.document_id || "—") + "</td>" +
@@ -784,16 +801,57 @@
             '<td class="mono">' + escapeHtml(s.content_sha256 || "—") + "</td></tr>";
         }).join("") + "</tbody></table></div>";
     }
-    html += "</div>";
+    return stepHtml(2, "判定", "info", head, body);
+  }
 
-    html += '<div class="facts">' +
-      "<span>本体版本：<b>" + escapeHtml(e.ontology_version != null ? "v" + e.ontology_version : "未启用") + "</b></span>" +
-      "<span>事实注入：<b>" + (e.facts_injected ? "是" : "否") + "</b></span>" +
-      "<span>本体校验：<b>" + escapeHtml(VALIDATION_LABELS[e.validation_mode] || e.validation_mode) + "</b></span>" +
-      "<span>因冲突拦截：<b>" + (e.enforced ? "是" : "否") + "</b></span>" +
-      "<span>熔断状态：<b>" + (e.breaker_open ? "已熔断" : "正常") + "</b></span>" +
-      (e.confidence_score != null ? "<span>置信度：<b>" + escapeHtml(Number(e.confidence_score).toFixed(3)) + "</b></span>" : "") +
+  // Delivered and withheld are both read off the row; a row with neither
+  // text says why only when its kind records it (triage before the model, or
+  // a model that returned nothing), and otherwise says there is no record.
+  function stepOutcome(e) {
+    if (e.delivered_answer != null) {
+      return stepHtml(3, "发出", "ok", pill("已发给客户", "ok"),
+        '<div class="block delivered"><h4>发给客户的答复</h4><div class="text">' + escapeHtml(e.delivered_answer) + "</div></div>");
+    }
+    if (e.withheld_answer != null) {
+      var blocking = parseList(e.commitments).concat(parseList(e.violations)).map(function (f) {
+        return FINDING_LABELS[f.kind] || f.kind;
+      }).filter(function (k, i, all) { return k && all.indexOf(k) === i; });
+      return stepHtml(3, "扣下", "bad", pill("未发给客户", "bad"),
+        '<div class="block withheld"><h4>被拦下、未发给客户的答复</h4><div class="text">' + escapeHtml(e.withheld_answer) + "</div></div>" +
+        basisHtml([
+          "因冲突拦截 <b>" + (e.enforced ? "是" : "否") + "</b>",
+          "判定原因 <b>" + reasonHtml(e.reason) + "</b>",
+          blocking.length ? "本条记录的发现 <b>" + escapeHtml(blocking.join("、")) + "</b>" : ""
+        ]));
+    }
+    if (e.kind === "pre_ai") return stepHtml(3, "扣下或发出", "none", "", noRecord("未调用模型，本条没有答复文本"));
+    if (e.kind === "no_answer") return stepHtml(3, "扣下或发出", "none", "", noRecord("模型没有给出可用答复"));
+    return stepHtml(3, "扣下或发出", "none", "", noRecord());
+  }
+
+  function stepHandoff(e) {
+    if (e.decision === "send") {
+      return stepHtml(4, "转人工", "ok", pill("未转人工", "muted"),
+        basisHtml(["本条决策为 <b>发出</b>"]));
+    }
+    if (e.decision === "handoff" || e.decision === "send_and_handoff") {
+      var cls = CLASS_LABELS[e.reason_class] || { text: e.reason_class || "分类无记录", cls: "muted" };
+      return stepHtml(4, "转人工", "warn", pill("已转人工", "warn") + pill(cls.text, cls.cls),
+        basisHtml([
+          "转人工原因 <b>" + reasonHtml(e.reason) + "</b>",
+          e.decision === "send_and_handoff" ? "答复已发出，同时转人工" : ""
+        ]));
+    }
+    return stepHtml(4, "转人工", "none", "", noRecord());
+  }
+
+  function renderTurn(e) {
+    var html = '<li class="turn">';
+    html += '<div class="turn-head">' +
+      '<span class="when">第 ' + escapeHtml(e.seq) + " 条 · " + escapeHtml(formatDate(e.created_at)) + "</span>" +
+      (e.hash_ok ? pill("本条哈希一致", "ok") : pill("本条哈希不一致", "bad")) +
       "</div>";
+    html += '<ol class="steps">' + stepReceived(e) + stepJudged(e) + stepOutcome(e) + stepHandoff(e) + "</ol>";
     html += '<div class="hashes mono">配置指纹 ' + escapeHtml(e.config_sha256) +
       "<br>上一环 " + escapeHtml(e.prev_hash) + "<br>本条 " + escapeHtml(e.row_hash) + "</div>";
     html += "</li>";

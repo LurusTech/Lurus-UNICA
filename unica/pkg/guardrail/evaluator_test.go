@@ -6,7 +6,7 @@ import (
 
 func TestEvaluate_ConfidenceAboveThreshold(t *testing.T) {
 	e := NewEvaluator()
-	cfg := DefaultGuardrailConfig()
+	cfg := Defaults()
 
 	result := e.Evaluate("你好，帮我查一下订单", 0.85, cfg)
 	if result.Decision != DecisionSend {
@@ -22,7 +22,7 @@ func TestEvaluate_ConfidenceAboveThreshold(t *testing.T) {
 
 func TestEvaluate_ConfidenceBelowThreshold(t *testing.T) {
 	e := NewEvaluator()
-	cfg := DefaultGuardrailConfig()
+	cfg := Defaults()
 
 	result := e.Evaluate("这个产品有什么特点", 0.45, cfg)
 	if result.Decision != DecisionHandoff {
@@ -35,7 +35,7 @@ func TestEvaluate_ConfidenceBelowThreshold(t *testing.T) {
 
 func TestEvaluate_ExactThreshold(t *testing.T) {
 	e := NewEvaluator()
-	cfg := &GuardrailConfig{
+	cfg := &Config{
 		ConfidenceThreshold: 0.7,
 		HandoffKeywords:     []string{},
 		BlockedTopics:       []string{},
@@ -57,7 +57,7 @@ func TestEvaluate_ExactThreshold(t *testing.T) {
 
 func TestEvaluate_KeywordMatch(t *testing.T) {
 	e := NewEvaluator()
-	cfg := DefaultGuardrailConfig()
+	cfg := Defaults()
 
 	tests := []struct {
 		msg     string
@@ -85,7 +85,7 @@ func TestEvaluate_KeywordMatch(t *testing.T) {
 
 func TestEvaluate_BlockedTopic(t *testing.T) {
 	e := NewEvaluator()
-	cfg := &GuardrailConfig{
+	cfg := &Config{
 		ConfidenceThreshold: 0.7,
 		HandoffKeywords:     []string{"转人工"},
 		BlockedTopics:       []string{"法律纠纷", "诉讼"},
@@ -106,7 +106,7 @@ func TestEvaluate_BlockedTopic(t *testing.T) {
 
 func TestEvaluate_BlockedTopicPriorityOverKeyword(t *testing.T) {
 	e := NewEvaluator()
-	cfg := &GuardrailConfig{
+	cfg := &Config{
 		ConfidenceThreshold: 0.7,
 		HandoffKeywords:     []string{"转人工"},
 		BlockedTopics:       []string{"诉讼"},
@@ -122,7 +122,7 @@ func TestEvaluate_BlockedTopicPriorityOverKeyword(t *testing.T) {
 
 func TestEvaluate_EmptyMessage(t *testing.T) {
 	e := NewEvaluator()
-	cfg := DefaultGuardrailConfig()
+	cfg := Defaults()
 
 	result := e.Evaluate("", 0.8, cfg)
 	if result.Decision != DecisionSend {
@@ -152,7 +152,7 @@ func TestEvaluate_NilConfig(t *testing.T) {
 
 func TestEvaluate_ZeroConfidence(t *testing.T) {
 	e := NewEvaluator()
-	cfg := &GuardrailConfig{
+	cfg := &Config{
 		ConfidenceThreshold: 0.7,
 		HandoffKeywords:     []string{},
 		BlockedTopics:       []string{},
@@ -170,7 +170,7 @@ func TestEvaluate_ZeroConfidence(t *testing.T) {
 
 func TestEvaluate_CustomThreshold(t *testing.T) {
 	e := NewEvaluator()
-	cfg := &GuardrailConfig{
+	cfg := &Config{
 		ConfidenceThreshold: 0.5,
 		HandoffKeywords:     []string{},
 		BlockedTopics:       []string{},
@@ -186,7 +186,7 @@ func TestEvaluate_CustomThreshold(t *testing.T) {
 
 func TestEvaluate_CaseInsensitiveKeywords(t *testing.T) {
 	e := NewEvaluator()
-	cfg := &GuardrailConfig{
+	cfg := &Config{
 		ConfidenceThreshold: 0.7,
 		HandoffKeywords:     []string{"REFUND", "complaint"},
 		BlockedTopics:       []string{},
@@ -204,7 +204,7 @@ func TestEvaluate_CaseInsensitiveKeywords(t *testing.T) {
 
 func TestEvaluate_NoKeywordsNoBlockedTopics(t *testing.T) {
 	e := NewEvaluator()
-	cfg := &GuardrailConfig{
+	cfg := &Config{
 		ConfidenceThreshold: 0.7,
 		HandoffKeywords:     []string{},
 		BlockedTopics:       []string{},

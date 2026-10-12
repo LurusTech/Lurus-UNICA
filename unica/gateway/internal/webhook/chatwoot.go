@@ -28,6 +28,20 @@ const (
 
 	// OutboundStream is the Redis Stream key for outbound messages.
 	outboundStream = "unica:outbound"
+
+	// handoffStream is where the router's handoff consumer reads. A resolved
+	// conversation is published here, not to outboundStream (D2): the outbound
+	// consumer's only job is "find the channel adapter by ChannelID and send",
+	// a close event has no channel and nothing to send, and every one of them
+	// used to retry three times and land in the dead-letter stream while the
+	// conversation itself stayed open until the idle sweep.
+	handoffStream = "unica:handoff"
+
+	// conversationClosedType is the event type the router's handoff consumer
+	// recognises as "an agent resolved this conversation in Chatwoot". It is
+	// mirrored in router/internal/handoff (EventConversationResolved); the two
+	// modules share no package for it, so a test on each side pins the string.
+	conversationClosedType = "event.conversation_closed"
 )
 
 // ChatwootWebhookConfig holds configuration for the Chatwoot webhook handler.
@@ -122,10 +136,10 @@ type cwWebhookPayload struct {
 		ID int `json:"id"`
 	} `json:"account,omitempty"`
 	Conversation struct {
-		ID            int    `json:"id"`
-		Status        string `json:"status,omitempty"`
-		DisplayID     int    `json:"display_id,omitempty"`
-		CustomAttr    map[string]string `json:"custom_attributes,omitempty"`
+		ID         int               `json:"id"`
+		Status     string            `json:"status,omitempty"`
+		DisplayID  int               `json:"display_id,omitempty"`
+		CustomAttr map[string]string `json:"custom_attributes,omitempty"`
 	} `json:"conversation,omitempty"`
 	Sender struct {
 		ID   int    `json:"id"`
@@ -322,7 +336,14 @@ func (h *ChatwootWebhookHandler) captureAgentReply(ctx context.Context, outMsg m
 }
 
 // handleConversationStatusChanged processes conversation status change events.
-// When a Chatwoot conversation is resolved, the corresponding UNICA conversation is closed.
+// When a Chatwoot conversation is resolved, the corresponding UNICA conversation
+// is closed by the router: this publishes the close request to the handoff
+// stream, whose consumer owns the conversation state machine and runs the same
+// close path as the idle sweep (including the on-close hooks).
+//
+// The payload is shaped like a handoff event (type, conversation_id, reason,
+// timestamp) because that consumer decodes every entry into one struct; the
+// type is what tells it this is a close, not a handoff.
 func (h *ChatwootWebhookHandler) handleConversationStatusChanged(ctx context.Context, payload *cwWebhookPayload) error {
 	status := payload.Conversation.Status
 	if status != "resolved" {
@@ -337,43 +358,41 @@ func (h *ChatwootWebhookHandler) handleConversationStatusChanged(ctx context.Con
 		return fmt.Errorf("lookup unica conversation for resolved cw conv %d: %w", payload.Conversation.ID, err)
 	}
 
-	// Publish a close event to the outbound stream so the router can handle it
-	closeEvent := model.StandardMessage{
-		ID:      uuid.New().String(),
-		Type:    "event.conversation_closed",
-		Source:  "chatwoot",
-		Subject: "conversation:" + unicaConvID,
-		Time:    time.Now(),
-		Data: model.MessageData{
-			ConversationID: unicaConvID,
-			Content: model.MessageContent{
-				Type:  model.ContentTypeEvent,
-				Event: "conversation_resolved",
-			},
-			CorrelationID: uuid.New().String(),
-		},
+	closeEvent := resolvedEvent{
+		Type:           conversationClosedType,
+		ConversationID: unicaConvID,
+		Reason:         "chatwoot_resolved",
+		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 	}
-
 	eventJSON, err := json.Marshal(closeEvent)
 	if err != nil {
 		return fmt.Errorf("marshal close event: %w", err)
 	}
 
 	_, err = h.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: outboundStream,
+		Stream: handoffStream,
 		Values: map[string]interface{}{
-			"payload":        string(eventJSON),
-			"type":           closeEvent.Type,
-			"source":         "chatwoot",
-			"correlation_id": closeEvent.Data.CorrelationID,
+			"payload":         string(eventJSON),
+			"type":            conversationClosedType,
+			"conversation_id": unicaConvID,
+			"source":          "chatwoot",
 		},
 	}).Result()
 	if err != nil {
 		return fmt.Errorf("publish close event: %w", err)
 	}
 
-	log.Printf("[chatwoot-webhook] conversation resolved event published (cw_conv=%d, unica_conv=%s)",
-		payload.Conversation.ID, unicaConvID)
+	log.Printf("[chatwoot-webhook] conversation resolved event published to %s (cw_conv=%d, unica_conv=%s)",
+		handoffStream, payload.Conversation.ID, unicaConvID)
 
 	return nil
+}
+
+// resolvedEvent is the close request as the router's handoff consumer decodes
+// it. Only the fields that consumer reads for a close are set.
+type resolvedEvent struct {
+	Type           string `json:"type"`
+	ConversationID string `json:"conversation_id"`
+	Reason         string `json:"reason"`
+	Timestamp      string `json:"timestamp"`
 }

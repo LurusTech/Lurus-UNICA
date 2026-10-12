@@ -61,6 +61,10 @@ type Handler struct {
 	db  *sql.DB
 	rdb *redis.Client
 	sm  StateManager
+
+	// timeouts is the database side of the no-response sweep (timeout.go).
+	// Nil means "derive it from db"; tests set it to avoid a database.
+	timeouts timeoutStore
 }
 
 // NewHandler creates a new survey Handler.

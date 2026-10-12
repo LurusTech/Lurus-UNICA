@@ -451,23 +451,6 @@ func (r *Repository) MarkHandoff(ctx context.Context, convID string) error {
 	return nil
 }
 
-// SetFirstAgentReply stamps first_agent_reply_at with the current time, but only
-// the first time it is called for a conversation (the WHERE guard makes repeated
-// calls no-ops). The reporter uses first_agent_reply_at - handoff_at as the
-// human-agent response time.
-func (r *Repository) SetFirstAgentReply(ctx context.Context, convID string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE conversations
-		 SET first_agent_reply_at = NOW(), updated_at = NOW()
-		 WHERE id = $1 AND first_agent_reply_at IS NULL`,
-		convID,
-	)
-	if err != nil {
-		return fmt.Errorf("set first agent reply: %w", err)
-	}
-	return nil
-}
-
 // MergeIntents unions the given intents into metadata.intents and merges their
 // timestamps into metadata.intent_timestamps atomically. Unlike a plain jsonb
 // || merge (which replaces the whole intents array), this preserves intents

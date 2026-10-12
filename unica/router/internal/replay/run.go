@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/router/internal/bridge"
-	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/intent"
 	"github.com/kefu/unica/router/internal/routing"
 )
@@ -66,7 +66,7 @@ func (d DifyAnswerer) Answer(ctx context.Context, c Case, facts string) (*bridge
 // LineConfig is how the product line routes live. The replay routes the same
 // way so that a handoff in the report is a handoff a customer would have had.
 type LineConfig struct {
-	Guardrail *guardrail.GuardrailConfig
+	Guardrail *guardrail.Config
 	// Validation is the line's ontology validation mode; enforce is what turns
 	// a contradiction into a claim_conflict handoff.
 	Validation domain.ValidationMode
@@ -286,7 +286,7 @@ func Execute(ctx context.Context, cases []Case, ans Answerer, cfg RunConfig) (Ru
 		cfg.Repeat = 1
 	}
 	if cfg.Line.Guardrail == nil {
-		cfg.Line.Guardrail = guardrail.DefaultGuardrailConfig()
+		cfg.Line.Guardrail = guardrail.Defaults()
 	}
 
 	guardrailJSON, err := json.Marshal(cfg.Line.Guardrail)

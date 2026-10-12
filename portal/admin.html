@@ -1,72 +1,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>平台管理 - UNICA 统一管理门户</title>
+<link rel="stylesheet" href="./ui/unica-ui.css?v=1">
 <style>
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-    --lt-accent: #FF5D1F;
-    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
-    --lt-on-accent: #14130F;
-    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-  }
-  :root {
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --ok: var(--lt-ok);
-    --bad: var(--lt-err);
-    --warn: var(--lt-warn);
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    /* Neutral elevation shadow, no brand hue — kept at original value. */
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-    :root {
-      --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
-      --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
-      --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-      --border: var(--lt-rule); --primary: var(--lt-accent);
-      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-      --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
-    }
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-  :root[data-theme="dark"] {
-    --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
-    --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
-    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule); --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root[data-theme="light"] {
-    --lt-paper: #F5F2E8; --lt-bg: #E8E4D6; --lt-ink: #14130F; --lt-rule: #D6D2C2;
-    --lt-ok: #1F7A4F; --lt-warn: #B8821F; --lt-err: #B3392B; --lt-info: #2D4A8A;
-    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule); --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
-  }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -80,10 +16,6 @@
   }
   header .left { display: flex; align-items: center; gap: 14px; }
   header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
-  header .badge {
-    font-size: 0.72rem; color: var(--text-muted); border: 1px solid var(--border);
-    border-radius: 999px; padding: 3px 10px;
-  }
   #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
   nav.tabs {
     background: var(--surface); border-bottom: 1px solid var(--border);
@@ -142,14 +74,6 @@
   tbody tr:last-child td { border-bottom: none; }
   td.wrap { white-space: normal; word-break: break-word; max-width: 320px; }
   .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; font-size: 0.8rem; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
-    font-size: 0.78rem; border: 1px solid var(--border);
-  }
-  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
-  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
-  .pill.muted { color: var(--text-muted); }
   .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .row-actions button { padding: 5px 10px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; }
   .empty-state { padding: 48px 16px; text-align: center; color: var(--text-muted); }
@@ -317,7 +241,7 @@
      disagreeing; the other is a reading that never arrived, and pushing on it
      is a guess. Dashed and muted rather than coloured, so that a Dify outage
      cannot fill the column with alarm-coloured pills that read as drift. */
-  .pill.dashed { border-style: dashed; }
+  .uu-pill.dashed { border-style: dashed; }
 
   .ops-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 28px; }
   .ops-card {
@@ -353,37 +277,6 @@
     display: inline-block;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Modal — the scrim rgba() and the drop-shadow rgba() below are neutral dimming/depth,
-     not brand hues, so they keep their original literal values. */
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(10, 12, 16, 0.45); display: none;
-    align-items: center; justify-content: center; padding: 20px; z-index: 50;
-  }
-  .modal-backdrop.open { display: flex; }
-  .modal {
-    background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
-    max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 26px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
-  }
-  .modal h3 { margin: 0 0 4px; font-size: 1.1rem; }
-  .modal .modal-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 18px; line-height: 1.55; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
-
-  /* Toasts */
-  #toast-host {
-    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
-    gap: 10px; z-index: 100; max-width: 320px;
-  }
-  .toast {
-    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--lt-info);
-    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
-    animation: slide-in 0.2s ease;
-  }
-  .toast.success { border-left-color: var(--ok); }
-  .toast.error { border-left-color: var(--bad); }
-  .toast.warn { border-left-color: var(--warn); }
-  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
   /* One-click onboarding report */
   .report-steps { margin-top: 4px; }
@@ -442,7 +335,6 @@
 <header>
   <div class="left">
     <h1>平台管理</h1>
-    <span class="badge">管理员</span>
   </div>
   <div id="user-info">
     <span id="user-email"></span>
@@ -794,10 +686,10 @@
 </main>
 
 <!-- 一键开户 modal -->
-<div class="modal-backdrop" id="onboard-modal-backdrop">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="onboard-modal-title">
+<div class="uu-modal-backdrop" id="onboard-modal-backdrop">
+  <div class="uu-modal" role="dialog" aria-modal="true" aria-labelledby="onboard-modal-title">
     <h3 id="onboard-modal-title">一键开户</h3>
-    <p class="modal-sub" id="onboard-modal-sub">一次完成产品线、AI 应用与知识库、门户账号和人工客服工作台的开通</p>
+    <p class="uu-modal-sub" id="onboard-modal-sub">一次完成产品线、AI 应用与知识库、门户账号和人工客服工作台的开通</p>
     <form id="onboard-form">
       <div class="field">
         <label for="f-cust-name">客户名称 (name)</label>
@@ -817,7 +709,7 @@
         <label for="f-cust-admin-password">初始密码 (admin_password)</label>
         <input id="f-cust-admin-password" type="password" autocomplete="new-password" placeholder="留空则自动生成" />
       </div>
-      <div class="modal-actions">
+      <div class="uu-modal-actions">
         <button type="button" id="onboard-modal-cancel">取消</button>
         <button type="submit" class="primary" id="onboard-modal-submit">开始开户</button>
       </div>
@@ -827,10 +719,10 @@
 </div>
 
 <!-- 销户 modal -->
-<div class="modal-backdrop" id="delete-modal-backdrop">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+<div class="uu-modal-backdrop" id="delete-modal-backdrop">
+  <div class="uu-modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
     <h3 id="delete-modal-title">删除租户</h3>
-    <p class="modal-sub" id="delete-modal-sub"></p>
+    <p class="uu-modal-sub" id="delete-modal-sub"></p>
     <form id="delete-form">
       <div class="danger-box">
         <h4>⚠ 此操作不可撤销，将连同外部系统一并清理</h4>
@@ -847,7 +739,7 @@
         <input id="f-delete-confirm" autocomplete="off" />
         <div class="hint" id="delete-confirm-hint"></div>
       </div>
-      <div class="modal-actions">
+      <div class="uu-modal-actions">
         <button type="button" id="delete-modal-cancel">取消</button>
         <button type="submit" class="danger-solid" id="delete-modal-submit" disabled>确认删除</button>
       </div>
@@ -857,10 +749,10 @@
 </div>
 
 <!-- 新建用户 modal -->
-<div class="modal-backdrop" id="user-modal-backdrop">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
+<div class="uu-modal-backdrop" id="user-modal-backdrop">
+  <div class="uu-modal" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
     <h3 id="user-modal-title">新建用户</h3>
-    <p class="modal-sub">管理员不属于任何租户；租户用户必须选定唯一所属租户。</p>
+    <p class="uu-modal-sub">管理员不属于任何租户；租户用户必须选定唯一所属租户。</p>
     <form id="user-form">
       <div class="field">
         <label for="f-user-email">邮箱</label>
@@ -886,7 +778,7 @@
         <label for="f-user-tenant">所属租户</label>
         <select id="f-user-tenant"></select>
       </div>
-      <div class="modal-actions">
+      <div class="uu-modal-actions">
         <button type="button" id="user-modal-cancel">取消</button>
         <button type="submit" class="primary" id="user-modal-submit">创建</button>
       </div>
@@ -894,9 +786,8 @@
   </div>
 </div>
 
-<div id="toast-host" aria-live="polite"></div>
-
 <script src="./auth.js?v=1"></script>
+<script src="./ui/unica-ui.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -1064,9 +955,7 @@
     fUserPassword: document.getElementById("f-user-password"),
     fUserRole: document.getElementById("f-user-role"),
     fUserTenant: document.getElementById("f-user-tenant"),
-    userTenantField: document.getElementById("user-tenant-field"),
-
-    toastHost: document.getElementById("toast-host")
+    userTenantField: document.getElementById("user-tenant-field")
   };
 
   var ONBOARD_SUB_TEXT = els.onboardModalSub.textContent;
@@ -1090,17 +979,9 @@
   ];
 
   // ---------- Toasts ----------
-  function toast(message, kind) {
-    var el = document.createElement("div");
-    el.className = "toast" + (kind ? " " + kind : "");
-    el.textContent = message;
-    els.toastHost.appendChild(el);
-    setTimeout(function () {
-      el.style.opacity = "0";
-      el.style.transition = "opacity 0.3s";
-      setTimeout(function () { el.remove(); }, 300);
-    }, 3200);
-  }
+  // The shared layer owns the host and announces every toast to screen
+  // readers, so a result that only flashes on screen is still heard.
+  var toast = UnicaUI.toast;
 
   // ---------- Session / API ----------
   // Token storage, claim decoding, silent renewal and the fetch wrapper all
@@ -2888,7 +2769,7 @@
 
   function pill(kind, text) {
     var el = document.createElement("span");
-    el.className = "pill" + (kind ? " " + kind : "");
+    el.className = "uu-pill" + (kind ? " " + kind : "");
     el.textContent = text;
     return el;
   }
@@ -3297,6 +3178,7 @@
         // A user row names its tenant, so the roster is re-rendered once the
         // names are known.
         if (state.users.length > 0) renderUsers();
+        UnicaUI.liveRegion.announce("租户列表已加载，共 " + state.tenants.length + " 个");
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
@@ -3313,7 +3195,7 @@
     els.tenantTbody.innerHTML = state.tenants.map(tenantRowHtml).join("");
     state.tenants.forEach(function (t) {
       var delBtn = document.getElementById("del-" + t.id);
-      if (delBtn) delBtn.addEventListener("click", function () { openDeleteModal(t); });
+      if (delBtn) delBtn.addEventListener("click", function () { openDeleteModal(t, delBtn); });
       var wsBtn = document.getElementById("ws-" + t.id);
       if (wsBtn) wsBtn.addEventListener("click", function () { goTenantWorkspace(t.id); });
     });
@@ -3327,10 +3209,10 @@
 
   function tenantRowHtml(t) {
     var bound = !!(t.has_dify_binding || t.dify_dataset_id || t.dify_agent_id);
-    var bindPill = bound ? '<span class="pill ok">已挂载</span>' : '<span class="pill muted">未挂载</span>';
+    var bindPill = bound ? '<span class="uu-pill ok">已挂载</span>' : '<span class="uu-pill muted">未挂载</span>';
     var cw = t.chatwoot_account_id
-      ? '<span class="pill ok">账户 ' + escapeHtml(String(t.chatwoot_account_id)) + "</span>"
-      : '<span class="pill muted">未开通</span>';
+      ? '<span class="uu-pill ok">账户 ' + escapeHtml(String(t.chatwoot_account_id)) + "</span>"
+      : '<span class="uu-pill muted">未开通</span>';
     return (
       "<tr>" +
       "<td>" + escapeHtml(t.name) + "</td>" +
@@ -3349,7 +3231,7 @@
   els.tenantRefreshBtn.addEventListener("click", loadTenants);
 
   // ---------- Tenant removal ----------
-  function openDeleteModal(t) {
+  function openDeleteModal(t, trigger) {
     state.deleteTenant = t;
     state.deleteDone = false;
     els.deleteModalTitle.textContent = "删除租户";
@@ -3361,13 +3243,25 @@
     els.deleteModalSubmit.textContent = "确认删除";
     els.deleteResult.innerHTML = "";
     els.deleteResult.hidden = true;
-    els.deleteModalBackdrop.classList.add("open");
+    // The shared dialog owns focus, Escape and the scrim. Both ways out are
+    // refused once the cleanup manifest is up: it is the only record of what
+    // was left behind, and it has an explicit 关闭 button.
+    UnicaUI.modal.open(els.deleteModalBackdrop, {
+      trigger: trigger,
+      dismissible: function () { return !state.deleteDone; },
+      closeOnBackdrop: function () { return !state.deleteDone; },
+      onClose: afterDeleteModal
+    });
     els.deleteConfirmInput.focus();
   }
 
   function closeDeleteModal() {
+    UnicaUI.modal.close(els.deleteModalBackdrop);
+  }
+
+  // Runs however the dialog was closed (button, Escape, scrim).
+  function afterDeleteModal() {
     var reload = state.deleteDone;
-    els.deleteModalBackdrop.classList.remove("open");
     state.deleteTenant = null;
     state.deleteDone = false;
     els.deleteForm.reset();
@@ -3389,11 +3283,6 @@
   });
 
   els.deleteModalCancel.addEventListener("click", closeDeleteModal);
-  els.deleteModalBackdrop.addEventListener("click", function (e) {
-    // While the cleanup manifest is on screen it is the only record of what was
-    // left behind, so a misplaced click must not discard it.
-    if (e.target === els.deleteModalBackdrop && !state.deleteDone) closeDeleteModal();
-  });
 
   els.deleteForm.addEventListener("submit", function (e) {
     e.preventDefault();
@@ -3472,7 +3361,7 @@
         "</ul></div>";
     }
 
-    html += '<div class="modal-actions"><button type="button" class="primary" id="delete-close">关闭</button></div>';
+    html += '<div class="uu-modal-actions"><button type="button" class="primary" id="delete-close">关闭</button></div>';
 
     els.deleteModalTitle.textContent = warnings.length > 0 ? "删除完成（部分步骤需人工处理）" : "删除完成";
     els.deleteModalSub.textContent = (t.display_name || t.name) + " 已从平台移除";
@@ -3499,6 +3388,7 @@
       .then(function (data) {
         state.users = Array.isArray(data) ? data : [];
         renderUsers();
+        UnicaUI.liveRegion.announce("用户列表已加载，共 " + state.users.length + " 个");
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
@@ -3527,11 +3417,11 @@
 
   function userRowHtml(u) {
     var rolePill = u.role === "admin"
-      ? '<span class="pill warn">管理员</span>'
-      : '<span class="pill muted">租户用户</span>';
+      ? '<span class="uu-pill warn">管理员</span>'
+      : '<span class="uu-pill muted">租户用户</span>';
     var statePill = u.is_active
-      ? '<span class="pill ok">启用</span>'
-      : '<span class="pill bad">已停用</span>';
+      ? '<span class="uu-pill ok">启用</span>'
+      : '<span class="uu-pill bad">已停用</span>';
     return (
       "<tr>" +
       "<td>" + escapeHtml(u.email) + "</td>" +
@@ -3574,9 +3464,6 @@
   // ---------- Create user ----------
   els.createUserBtn.addEventListener("click", openUserModal);
   els.userModalCancel.addEventListener("click", closeUserModal);
-  els.userModalBackdrop.addEventListener("click", function (e) {
-    if (e.target === els.userModalBackdrop) closeUserModal();
-  });
   els.fUserRole.addEventListener("change", syncUserTenantField);
 
   // An admin belongs to no tenant and a user belongs to exactly one, which the
@@ -3591,13 +3478,16 @@
     els.userForm.reset();
     els.fUserRole.value = "user";
     syncUserTenantField();
-    els.userModalBackdrop.classList.add("open");
+    // Nothing on this form outlives it, so Escape and the scrim are left to
+    // the shared dialog outright; every way out runs the same reset.
+    UnicaUI.modal.open(els.userModalBackdrop, {
+      onClose: function () { els.userForm.reset(); }
+    });
     els.fUserEmail.focus();
   }
 
   function closeUserModal() {
-    els.userModalBackdrop.classList.remove("open");
-    els.userForm.reset();
+    UnicaUI.modal.close(els.userModalBackdrop);
   }
 
   els.userForm.addEventListener("submit", function (e) {
@@ -3664,19 +3554,6 @@
   // ---------- 一键开户 ----------
   els.onboardBtn.addEventListener("click", openOnboardModal);
   els.onboardModalCancel.addEventListener("click", closeOnboardModal);
-  els.onboardModalBackdrop.addEventListener("click", function (e) {
-    // A misplaced click must not discard credentials that are shown once.
-    if (e.target === els.onboardModalBackdrop && !state.onboardSecrets) closeOnboardModal();
-  });
-
-  document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
-    if (els.userModalBackdrop.classList.contains("open")) closeUserModal();
-    // Escape is ignored while one-time credentials or a cleanup manifest are on
-    // screen; both carry an explicit 关闭 button for that case.
-    if (els.onboardModalBackdrop.classList.contains("open") && !state.onboardSecrets) closeOnboardModal();
-    if (els.deleteModalBackdrop.classList.contains("open") && !state.deleteDone) closeDeleteModal();
-  });
 
   function openOnboardModal() {
     state.onboardDone = false;
@@ -3688,13 +3565,23 @@
     els.onboardForm.hidden = false;
     els.onboardResult.innerHTML = "";
     els.onboardResult.hidden = true;
-    els.onboardModalBackdrop.classList.add("open");
+    // Same as the removal dialog: a stray click or Escape must not discard
+    // credentials that are shown once, so both are refused while they are up.
+    UnicaUI.modal.open(els.onboardModalBackdrop, {
+      dismissible: function () { return !state.onboardSecrets; },
+      closeOnBackdrop: function () { return !state.onboardSecrets; },
+      onClose: afterOnboardModal
+    });
     els.fCustName.focus();
   }
 
   function closeOnboardModal() {
+    UnicaUI.modal.close(els.onboardModalBackdrop);
+  }
+
+  // Runs however the dialog was closed (button, Escape, scrim).
+  function afterOnboardModal() {
     var reload = state.onboardDone;
-    els.onboardModalBackdrop.classList.remove("open");
     state.onboardDone = false;
     state.onboardSecrets = false;
     state.onboardSummary = "";
@@ -3879,7 +3766,7 @@
 
     var tenantId = data.product_line_id || data.id || "";
 
-    html += '<div class="modal-actions">' +
+    html += '<div class="uu-modal-actions">' +
       (tenantId ? '<button type="button" id="onboard-workspace">进入租户工作台</button>' : "") +
       '<button type="button" id="onboard-copy-all">复制全部</button>' +
       '<button type="button" class="primary" id="onboard-close">关闭</button>' +
@@ -3959,6 +3846,7 @@
         state.auditOffset = offset;
         state.auditTotal = typeof data.total === "number" ? data.total : entries.length;
         renderAuditLogs(entries);
+        UnicaUI.liveRegion.announce("审计日志已加载，本页 " + entries.length + " 条，共 " + state.auditTotal + " 条");
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
@@ -4095,6 +3983,10 @@
     window.location.replace(TENANT_HOME);
     return;
   }
+
+  // The bar names where this is and says "平台管理员" in place of a tenant,
+  // which is what the old 管理员 badge in the header used to say.
+  UnicaUI.topbar.mount({ title: "平台管理" });
 
   els.userEmail.textContent = claims.email || "";
   // The Dify entry mints a session on click; there is no href to prepare.

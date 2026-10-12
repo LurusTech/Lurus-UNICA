@@ -186,7 +186,7 @@ func NewEvaluator() *Evaluator {
 //  2. Keyword-based handoff triggers (customer message) -> handoff
 //  3. Confidence threshold check -> handoff if below threshold
 //  4. Otherwise -> send
-func (e *Evaluator) Evaluate(customerMsg string, confidence float64, config *GuardrailConfig) *EvalResult {
+func (e *Evaluator) Evaluate(customerMsg string, confidence float64, config *Config) *EvalResult {
 	return e.EvaluateWithMode(customerMsg, confidence, config, TriageOff)
 }
 
@@ -198,9 +198,9 @@ func (e *Evaluator) Evaluate(customerMsg string, confidence float64, config *Gua
 // would re-intercept the consultative questions the classifier deliberately let
 // through — the exact defect this replaces. Blocked topics stay active in every
 // mode; they are a compliance control, not an intent heuristic.
-func (e *Evaluator) EvaluateWithMode(customerMsg string, confidence float64, config *GuardrailConfig, mode TriageMode) *EvalResult {
+func (e *Evaluator) EvaluateWithMode(customerMsg string, confidence float64, config *Config, mode TriageMode) *EvalResult {
 	if config == nil {
-		config = DefaultGuardrailConfig()
+		config = Defaults()
 	}
 
 	lowerMsg := strings.ToLower(customerMsg)

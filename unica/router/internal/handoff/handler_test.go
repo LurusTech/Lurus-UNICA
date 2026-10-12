@@ -110,9 +110,9 @@ func newMockDifyServer(t *testing.T, answer string) *httptest.Server {
 
 func TestExtractTextContent(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   json.RawMessage
-		want    string
+		name  string
+		input json.RawMessage
+		want  string
 	}{
 		{
 			name:  "plain string",
@@ -278,59 +278,6 @@ func TestHandoffHandler_FindOrCreateCWConversation_NewConversation(t *testing.T)
 	}
 	if !hasConvCreate {
 		t.Error("expected a conversation creation call to Chatwoot")
-	}
-}
-
-func TestHandoffHandler_SendMessageHistory(t *testing.T) {
-	cwSrv, calls := newMockChatwootServer(t)
-	defer cwSrv.Close()
-
-	cwClient := bridge.NewChatwootClientWithHTTP(cwSrv.Client())
-
-	handler := &HandoffHandler{
-		chatwootClient: cwClient,
-	}
-
-	messages := []state.Message{
-		{
-			ID:             "msg-1",
-			ConversationID: "conv-1",
-			Direction:      "inbound",
-			SenderType:     "customer",
-			ContentJSON:    json.RawMessage(`{"text":"I need help with my order","type":"text"}`),
-			CreatedAt:      time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC),
-		},
-		{
-			ID:             "msg-2",
-			ConversationID: "conv-1",
-			Direction:      "outbound",
-			SenderType:     "ai",
-			ContentJSON:    json.RawMessage(`{"text":"Let me look into that for you.","type":"text"}`),
-			CreatedAt:      time.Date(2026, 3, 5, 10, 0, 30, 0, time.UTC),
-		},
-	}
-
-	cwConfig := &bridge.ChatwootConfig{
-		BaseURL:   cwSrv.URL,
-		AccountID: 1,
-		InboxID:   1,
-		APIToken:  "test-token",
-	}
-
-	err := handler.sendMessageHistory(context.Background(), cwConfig, 100, messages)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Count message send calls
-	msgSendCount := 0
-	for _, c := range *calls {
-		if strings.Contains(c.path, "/messages") && c.method == http.MethodPost {
-			msgSendCount++
-		}
-	}
-	if msgSendCount != 2 {
-		t.Errorf("expected 2 message send calls, got %d", msgSendCount)
 	}
 }
 

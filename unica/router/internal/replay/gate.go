@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/router/internal/eval"
-	"github.com/kefu/unica/router/internal/guardrail"
 )
 
 // GateOptions tunes GateWith. Gate uses DefaultGateOptions.

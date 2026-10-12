@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kefu/unica/pkg/domain"
-	"github.com/kefu/unica/router/internal/guardrail"
+	"github.com/kefu/unica/pkg/guardrail"
 )
 
 // escalationInput isolates the escalation path from the confidence path. These
@@ -14,7 +14,7 @@ import (
 // confidence has its own tests and its precedence is pinned separately below.
 func escalationInput(answer string) JudgeInput {
 	in := judgeInput(nil, nil, answer)
-	cfg := guardrail.DefaultGuardrailConfig()
+	cfg := guardrail.Defaults()
 	cfg.ConfidenceThreshold = 0
 	in.GuardrailCfg = cfg
 	return in

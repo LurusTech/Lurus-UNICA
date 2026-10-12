@@ -1,4 +1,4 @@
-package replay
+package redact
 
 import "testing"
 
@@ -9,10 +9,10 @@ import "testing"
 // clean.
 func TestRedactText_LongAddressIsMaskedWithoutResidual(t *testing.T) {
 	in := "收货地址：广东省深圳市南山区科技园南区高新南一道9号软件产业基地10栋A座2201室，靠近地铁1号线高新园站"
-	got := RedactText(in, nil)
+	got := Text(in, nil)
 	want := "收货地址：〔地址〕，靠近地铁1号线高新园站"
 	if got != want {
-		t.Errorf("RedactText(%q)\n got %q\nwant %q", in, got, want)
+		t.Errorf("Text(%q)\n got %q\nwant %q", in, got, want)
 	}
 	if res := Residual(got); len(res) != 0 {
 		t.Errorf("residual after redaction: %v", res)
@@ -24,10 +24,10 @@ func TestRedactText_LongAddressIsMaskedWithoutResidual(t *testing.T) {
 // short compound surname.
 func TestRedactText_LongNameIsMaskedWithoutResidual(t *testing.T) {
 	in := "收货人：欧阳修远博文，麻烦尽快发货"
-	got := RedactText(in, nil)
+	got := Text(in, nil)
 	want := "收货人：〔姓名〕，麻烦尽快发货"
 	if got != want {
-		t.Errorf("RedactText(%q)\n got %q\nwant %q", in, got, want)
+		t.Errorf("Text(%q)\n got %q\nwant %q", in, got, want)
 	}
 	if res := Residual(got); len(res) != 0 {
 		t.Errorf("residual after redaction: %v", res)
@@ -54,7 +54,7 @@ func TestRedactText_LabelledResidualIsCaught(t *testing.T) {
 			// And after RedactText actually runs, the same input is clean —
 			// proving the residual check tracks the real rule, not a stray
 			// match on unrelated text.
-			if res := Residual(RedactText(tc.in, nil)); len(res) != 0 {
+			if res := Residual(Text(tc.in, nil)); len(res) != 0 {
 				t.Errorf("residual after correct redaction: %v", res)
 			}
 		})
@@ -82,7 +82,7 @@ var businessTextCorpus = []string{
 func TestRedactText_LeavesLegitimateBusinessTextAlone(t *testing.T) {
 	for _, s := range businessTextCorpus {
 		t.Run(s, func(t *testing.T) {
-			got := RedactText(s, nil)
+			got := Text(s, nil)
 			if got != s {
 				t.Errorf("policy text was masked:\n in  %q\n out %q", s, got)
 			}
@@ -103,8 +103,8 @@ func TestRedact_PlaceholderLabelDoesNotRetrigger(t *testing.T) {
 		"〔姓名〕您好，签收24小时内申报即可，已为您登记",
 		"收货地址：〔地址〕，明天送达",
 	} {
-		if got := RedactText(s, RedactStats{}); got != s {
-			t.Errorf("RedactText(%q) = %q, want unchanged", s, got)
+		if got := Text(s, Stats{}); got != s {
+			t.Errorf("Text(%q) = %q, want unchanged", s, got)
 		}
 		if r := Residual(s); len(r) != 0 {
 			t.Errorf("Residual(%q) = %v, want none", s, r)

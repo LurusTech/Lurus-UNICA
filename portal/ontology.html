@@ -1,102 +1,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>领域本体 - UNICA 统一管理门户</title>
+<link rel="stylesheet" href="./ui/unica-ui.css?v=1">
 <style>
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-    --lt-accent: #FF5D1F;
-    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
-    --lt-on-accent: #14130F;
-    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-  }
-  :root {
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --ok: var(--lt-ok);
-    --bad: var(--lt-err);
-    --warn: var(--lt-warn);
-    /* Neutral elevation shadow, no brand hue — kept at original value. */
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-    :root {
-      --lt-paper: #14130F;
-      --lt-bg:    #0A0908;
-      --lt-ink:   #F0EDE4;
-      --lt-rule:  #25221C;
-      --lt-ok:    #3FA876;
-      --lt-warn:  #E0A040;
-      --lt-err:   #EE6F5E;
-      --lt-info:  #5A7BC7;
-
-      --bg: var(--lt-paper);
-      --surface: var(--lt-bg);
-      --text: var(--lt-ink);
-      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-      --border: var(--lt-rule);
-      --primary: var(--lt-accent);
-      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-      --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
-    }
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-  :root[data-theme="dark"] {
-    --lt-paper: #14130F;
-    --lt-bg:    #0A0908;
-    --lt-ink:   #F0EDE4;
-    --lt-rule:  #25221C;
-    --lt-ok:    #3FA876;
-    --lt-warn:  #E0A040;
-    --lt-err:   #EE6F5E;
-    --lt-info:  #5A7BC7;
-
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root[data-theme="light"] {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
+  /* Brand tokens, toasts and pills come from ui/unica-ui.css. */
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -109,8 +16,6 @@
     justify-content: space-between; gap: 12px;
   }
   header .left { display: flex; align-items: center; gap: 14px; }
-  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
-  header a.back:hover { color: var(--primary); }
   header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
   #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
   main {
@@ -229,14 +134,6 @@
   tbody tr:hover { background: var(--row-hover); }
   tbody tr:last-child td { border-bottom: none; }
   td.note { white-space: normal; max-width: 360px; color: var(--text-muted); }
-  .pill {
-    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
-    font-size: 0.78rem; border: 1px solid var(--border);
-  }
-  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
-  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
-  .pill.muted { color: var(--text-muted); }
   .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .row-actions button { padding: 5px 10px; font-size: 0.78rem; }
   /* Post-publish quality, next to each version row: never more than a pill, a
@@ -266,20 +163,42 @@
   details.advanced > summary:hover { color: var(--primary); }
   details.advanced .grid { margin-top: 14px; }
 
-  /* Toasts */
-  #toast-host {
-    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
-    gap: 10px; z-index: 100; max-width: 320px;
+  /* Try-run verdicts: colour, icon and word together, so a verdict still
+     reads correctly without colour. */
+  .verdict { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; }
+  .verdict svg { width: 14px; height: 14px; flex: none; }
+  .verdict.pass { color: var(--ok); }
+  .verdict.fail { color: var(--bad); }
+  .verdict.unclear { color: var(--warn); }
+  .tryrun-counts { display: flex; flex-wrap: wrap; gap: 14px; }
+
+  /* Version diff. Each change carries a text marker (+ / − / 改) next to its
+     colour; a modification is drawn in both colours because it is both. */
+  .diff-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 18px; }
+  .diff-controls .field { margin-bottom: 0; min-width: 140px; }
+  .diff-result { margin-top: 14px; }
+  .diff-group { margin-top: 12px; }
+  .diff-group h4 { margin: 0 0 6px; font-size: 0.82rem; font-weight: 600; }
+  .diff-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .diff-item {
+    display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; border-radius: 8px;
+    font-size: 0.85rem; line-height: 1.5; border-left: 4px solid var(--border);
   }
-  .toast {
-    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
-    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
-    animation: slide-in 0.2s ease;
+  .diff-item.added { background: color-mix(in srgb, var(--ok) 10%, transparent); border-left-color: var(--ok); }
+  .diff-item.removed { background: color-mix(in srgb, var(--bad) 10%, transparent); border-left-color: var(--bad); }
+  .diff-item.changed {
+    background: linear-gradient(90deg, color-mix(in srgb, var(--bad) 9%, transparent), color-mix(in srgb, var(--ok) 9%, transparent));
+    border-left: 4px solid; border-image: linear-gradient(var(--bad) 50%, var(--ok) 50%) 1;
   }
-  .toast.success { border-left-color: var(--ok); }
-  .toast.error { border-left-color: var(--bad); }
-  .toast.warn { border-left-color: var(--warn); }
-  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .diff-mark {
+    flex: none; min-width: 1.6em; text-align: center; font-weight: 700;
+    font-family: var(--lt-font-mono);
+  }
+  .diff-item.added .diff-mark { color: var(--ok); }
+  .diff-item.removed .diff-mark { color: var(--bad); }
+  .diff-item.changed .diff-mark { color: var(--text); }
+  .diff-what { flex: 1; word-break: break-word; }
+  .diff-tier { flex: none; }
 
   .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
   [hidden] { display: none !important; }
@@ -287,11 +206,9 @@
 
 <header>
   <div class="left">
-    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
     <h1>确定性事实</h1>
   </div>
   <div id="user-info" hidden>
-    <span id="tenant-name"></span>
     <span id="user-email"></span>
     <button id="logout-btn">退出登录</button>
   </div>
@@ -338,7 +255,7 @@
       <div class="card">
         <div class="card-head">
           <h2>本体编辑</h2>
-          <span class="pill muted" id="active-pill">未发布</span>
+          <span class="uu-pill muted" id="active-pill">未发布</span>
         </div>
         <p class="card-sub" id="active-meta">本体声明本租户的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。</p>
 
@@ -434,6 +351,21 @@
             </tbody>
           </table>
         </div>
+
+        <!-- Diff between any two stored versions, computed server-side by the
+             same comparison the proposal gate uses. -->
+        <div class="diff-controls" id="diff-controls" hidden>
+          <div class="field">
+            <label for="diff-from">对比：旧版本</label>
+            <select id="diff-from"></select>
+          </div>
+          <div class="field">
+            <label for="diff-to">新版本</label>
+            <select id="diff-to"></select>
+          </div>
+          <button type="button" id="diff-btn">查看差异</button>
+        </div>
+        <div class="diff-result" id="diff-result" aria-live="off" hidden></div>
       </div>
 
       <!-- Switches -->
@@ -545,9 +477,8 @@
   </section>
 </main>
 
-<div id="toast-host" aria-live="polite"></div>
-
 <script src="./auth.js?v=1"></script>
+<script src="./ui/unica-ui.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -574,8 +505,6 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
-    backLink: document.getElementById("back-link"),
-    tenantName: document.getElementById("tenant-name"),
 
     plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
@@ -604,6 +533,11 @@
     publishBtn: document.getElementById("publish-btn"),
 
     versionTbody: document.getElementById("version-tbody"),
+    diffControls: document.getElementById("diff-controls"),
+    diffFrom: document.getElementById("diff-from"),
+    diffTo: document.getElementById("diff-to"),
+    diffBtn: document.getElementById("diff-btn"),
+    diffResult: document.getElementById("diff-result"),
 
     configLoading: document.getElementById("config-loading"),
     configForm: document.getElementById("config-form"),
@@ -619,22 +553,21 @@
     fCommitment: document.getElementById("f-commitment"),
     fCommitmentScope: document.getElementById("f-commitment-scope"),
     fRedlinePacks: document.getElementById("f-redline-packs"),
-    commitmentCorpusHint: document.getElementById("commitment-corpus-hint"),
-
-    toastHost: document.getElementById("toast-host")
+    commitmentCorpusHint: document.getElementById("commitment-corpus-hint")
   };
 
-  // ---------- Toasts ----------
-  function toast(message, kind) {
-    var el = document.createElement("div");
-    el.className = "toast" + (kind ? " " + kind : "");
-    el.textContent = message;
-    els.toastHost.appendChild(el);
-    setTimeout(function () {
-      el.style.opacity = "0";
-      el.style.transition = "opacity 0.3s";
-      setTimeout(function () { el.remove(); }, 300);
-    }, 3200);
+  // ---------- Toasts / announcements ----------
+  // The shared layer's toast also reads itself out through the live region,
+  // so a toast never needs a separate announce().
+  var toast = UnicaUI.toast;
+  var announce = UnicaUI.liveRegion.announce;
+
+  // ---------- Top bar ----------
+  // Rebuilt from the session as it is now: after sign-in, and to its
+  // brand-only form on sign-out so it drops a feed on a dead token. An
+  // administrator's tenant switch goes through UnicaUI.topbar.setTenant.
+  function mountTopbar() {
+    UnicaUI.topbar.refresh({ title: "确定性事实" });
   }
 
   // ---------- Auth / API ----------
@@ -678,6 +611,9 @@
   // is the one place that forgets an account, and it calls logout() first.
   function showLogin(message) {
     UnicaAuth.dropTab();
+    // Without a session the bar falls back to brand and title and drops its
+    // event feed, which would otherwise keep retrying on a dead token.
+    mountTopbar();
     els.appView.hidden = true;
     els.userInfo.hidden = true;
     els.loginView.hidden = false;
@@ -722,6 +658,7 @@
       .then(function () {
         els.userEmail.textContent = email;
         showApp();
+        mountTopbar();
         bootstrap();
       })
       .catch(function (err) {
@@ -778,7 +715,6 @@
     // A user has one tenant and nothing to choose between, so the selector is
     // an administrator's control only.
     els.plField.hidden = !isAdmin();
-    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
 
     if (state.tenants.length === 0) {
       els.plSelect.innerHTML = '<option value="">暂无租户</option>';
@@ -804,14 +740,16 @@
 
   function selectTenant(id) {
     state.currentTenant = findTenant(id);
-    els.tenantName.textContent = state.currentTenant
-      ? (state.currentTenant.display_name || state.currentTenant.name)
-      : "";
+    // Whatever the last tenant's try-run and diff said is about a different
+    // ontology; leaving it on screen would read as a verdict on this one.
+    clearTryRun();
+    clearDiff();
     if (!state.currentTenant) {
       els.panels.hidden = true;
       els.noPlHint.hidden = false;
       return;
     }
+    UnicaUI.topbar.setTenant(state.currentTenant.id);
     els.noPlHint.hidden = true;
     els.panels.hidden = false;
     resetEditorFeedback();
@@ -828,6 +766,12 @@
     return null;
   }
 
+  // Responses are matched to the tenant they were asked for: a slow answer
+  // for the tenant just switched away from must not paint over the new one.
+  function isCurrentTenant(plId) {
+    return !!state.currentTenant && String(state.currentTenant.id) === String(plId);
+  }
+
   // The tenant-facing vocabulary for this page is "facts"; the sub-paths below
   // are the whole of what the route family accepts under it.
   function factsPath(suffix) {
@@ -840,9 +784,15 @@
     els.editorLoading.textContent = "加载中…";
     els.editorBody.hidden = true;
     els.versionTbody.innerHTML = '<tr><td colspan="6" class="loading-text">加载中…</td></tr>';
+    // A reload replaces the draft the try-run graded and possibly the version
+    // list the diff was drawn from, so both go rather than outlive their input.
+    clearTryRun();
+    clearDiff();
+    var plId = state.currentTenant && state.currentTenant.id;
 
     return UnicaAuth.api(factsPath(""))
       .then(function (data) {
+        if (!isCurrentTenant(plId)) return; // a later switch owns the screen now
         state.ontology = data || {};
         state.lastValidYaml = null;
         els.yamlEditor.value = state.ontology.source_yaml || "";
@@ -851,10 +801,15 @@
         renderVersions();
         els.editorLoading.hidden = true;
         els.editorBody.hidden = false;
+        var active = state.ontology.active_version || 0;
+        announce(active > 0
+          ? "本体已加载，生效版本 v" + active + "，共 " + (state.ontology.versions || []).length + " 个版本"
+          : "本体已加载，尚未发布");
         focusRequestedProperty();
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
+        if (!isCurrentTenant(plId)) return;
         els.editorLoading.textContent = "加载失败: " + errorText(err);
         els.versionTbody.innerHTML =
           '<tr><td colspan="6" class="empty-state">' + escapeHtml(errorText(err)) + "</td></tr>";
@@ -894,7 +849,7 @@
     var o = state.ontology || {};
     var active = o.active_version || 0;
     if (active > 0) {
-      els.activePill.className = "pill ok";
+      els.activePill.className = "uu-pill ok";
       els.activePill.textContent = "生效中 v" + active;
       var parts = [];
       if (o.note) parts.push("备注: " + o.note);
@@ -902,7 +857,7 @@
       els.activeMeta.textContent = parts.join(" · ") || "当前生效版本 v" + active;
       els.emptyHint.hidden = true;
     } else {
-      els.activePill.className = "pill muted";
+      els.activePill.className = "uu-pill muted";
       els.activePill.textContent = "未发布";
       els.activeMeta.textContent =
         "本体声明本租户的确定事实（政策、时效、价目、资质），会注入到每次 AI 回答的上下文。";
@@ -912,6 +867,7 @@
 
   function renderVersions() {
     var versions = (state.ontology && state.ontology.versions) || [];
+    renderDiffControls(versions);
     if (versions.length === 0) {
       els.versionTbody.innerHTML = '<tr><td colspan="6" class="empty-state">尚无版本，校验通过后发布第一版</td></tr>';
       return;
@@ -927,8 +883,8 @@
 
   function versionRowHtml(v) {
     var badge = v.active
-      ? '<span class="pill ok">生效中</span>'
-      : '<span class="pill muted">历史</span>';
+      ? '<span class="uu-pill ok">生效中</span>'
+      : '<span class="uu-pill muted">历史</span>';
     var actions = v.active
       ? '<span class="hint">—</span>'
       : '<button id="rollback-' + v.version + '">回滚</button>';
@@ -969,6 +925,8 @@
       });
   }
 
+  var MIN_RATE_SAMPLE = 30;
+
   function formatRate(rate) {
     return (rate * 100).toFixed(1) + "%";
   }
@@ -978,10 +936,16 @@
     if (!q) return '<span class="hint">—</span>';
 
     var lines = ['<div class="quality-stack">'];
-    if (q.reducible_rate != null) {
-      lines.push('<span class="pill muted">可削减类转人工率 ' + formatRate(q.reducible_rate) + "</span>");
+    // A rate is shown only from a sample the server itself would compare on
+    // (MinCompareSample in pkg/domain/versionquality.go); below that the
+    // percentage is noise dressed as a number, so the count stands alone.
+    var enough = (q.conversations || 0) >= MIN_RATE_SAMPLE && !q.insufficient;
+    if (q.reducible_rate != null && enough) {
+      lines.push('<span class="uu-pill muted">可削减类转人工率 ' + formatRate(q.reducible_rate) + "</span>");
+    } else if (q.reducible_rate != null) {
+      lines.push('<span class="uu-pill muted">样本不足，暂不显示比率</span>');
     } else {
-      lines.push('<span class="pill muted">发布后暂无会话</span>');
+      lines.push('<span class="uu-pill muted">发布后暂无会话</span>');
     }
     lines.push(
       '<span class="hint">样本 ' + (q.conversations || 0) + " 会话 · 发布后首 " +
@@ -995,7 +959,7 @@
       } else if (q.suspect) {
         lines.push(
           '<div class="quality-suspect">' +
-          '<span class="pill warn">⚠ 较 v' + escapeHtml(q.previous_version) + " 显著上升</span>" +
+          '<span class="uu-pill warn">⚠ 较 v' + escapeHtml(q.previous_version) + " 显著上升</span>" +
           '<span class="hint warn">' + escapeHtml(q.advisory || "建议人工确认是否回滚") + "</span>" +
           '<button class="quality-rollback-btn" type="button" data-target-version="' +
           escapeAttr(String(q.previous_version)) + '">回滚到 v' + escapeHtml(q.previous_version) + "</button>" +
@@ -1023,6 +987,119 @@
         btn.addEventListener("click", function () { rollback(targetVersion); });
       })(buttons[i]);
     }
+  }
+
+  // ---------- Version diff ----------
+  // The server compares the two stored versions with the same DiffOntologies
+  // the proposal gate grades candidates with, and says which way each change
+  // points (kind). Every change carries a written marker next to its colour,
+  // so the list still reads correctly to someone who cannot tell red from
+  // green.
+  var DIFF_KINDS = [
+    { kind: "added", heading: "新增", mark: "+", label: "新增" },
+    { kind: "removed", heading: "删除", mark: "−", label: "删除" },
+    { kind: "changed", heading: "修改", mark: "改", label: "修改" }
+  ];
+  var TIER_LABELS = { A: "A 级 · 说法", B: "B 级 · 情形", C: "C 级 · 事实" };
+  var diffSeq = 0;
+
+  function clearDiff() {
+    diffSeq++; // orphan any request still in flight
+    els.diffResult.hidden = true;
+    els.diffResult.innerHTML = "";
+  }
+
+  // Keeps whatever pair the operator already picked when the version list is
+  // re-rendered underneath them (the quality column loads after the list).
+  function renderDiffControls(versions) {
+    var nums = versions.map(function (v) { return Number(v.version); })
+      .filter(function (n) { return n > 0; })
+      .sort(function (a, b) { return b - a; });
+    els.diffControls.hidden = nums.length < 2;
+    if (nums.length < 2) return;
+
+    var prevFrom = Number(els.diffFrom.value);
+    var prevTo = Number(els.diffTo.value);
+    var opts = nums.map(function (n) {
+      var active = n === Number((state.ontology && state.ontology.active_version) || 0);
+      return '<option value="' + n + '">v' + n + (active ? "（生效中）" : "") + "</option>";
+    }).join("");
+    els.diffFrom.innerHTML = opts;
+    els.diffTo.innerHTML = opts;
+
+    if (nums.indexOf(prevFrom) >= 0 && nums.indexOf(prevTo) >= 0) {
+      els.diffFrom.value = String(prevFrom);
+      els.diffTo.value = String(prevTo);
+      return;
+    }
+    // Default to "what the live version changed": the active version against
+    // the one numbered just below it, or the two newest when nothing is live.
+    var active = Number((state.ontology && state.ontology.active_version) || 0);
+    var toIdx = nums.indexOf(active);
+    if (toIdx < 0 || toIdx === nums.length - 1) toIdx = 0;
+    els.diffTo.value = String(nums[toIdx]);
+    els.diffFrom.value = String(nums[toIdx + 1]);
+  }
+
+  els.diffBtn.addEventListener("click", function () {
+    var from = Number(els.diffFrom.value);
+    var to = Number(els.diffTo.value);
+    if (!from || !to) return;
+    if (from === to) {
+      toast("请选择两个不同的版本", "warn");
+      return;
+    }
+    var seq = ++diffSeq;
+    var plId = state.currentTenant && state.currentTenant.id;
+    els.diffBtn.disabled = true;
+    els.diffBtn.textContent = "对比中…";
+    els.diffResult.hidden = false;
+    els.diffResult.innerHTML = '<div class="loading-text">加载中…</div>';
+
+    UnicaAuth.api(factsPath("/diff?from=" + from + "&to=" + to))
+      .then(function (data) {
+        if (seq !== diffSeq || !isCurrentTenant(plId)) return;
+        renderDiff(data || {}, from, to);
+      })
+      .catch(function (err) {
+        if (seq !== diffSeq || !isCurrentTenant(plId)) return;
+        if (err.message === "unauthorized") return;
+        els.diffResult.innerHTML = '<div class="result-box bad">' + escapeHtml(errorText(err)) + "</div>";
+        reportError("对比失败", err);
+      })
+      .finally(function () {
+        els.diffBtn.disabled = false;
+        els.diffBtn.textContent = "查看差异";
+      });
+  });
+
+  function renderDiff(data, from, to) {
+    var changes = Array.isArray(data.changes) ? data.changes : [];
+    var title = "v" + escapeHtml(from) + " → v" + escapeHtml(to);
+    if (!changes.length) {
+      els.diffResult.innerHTML = '<div class="hint">' + title + "：两个版本的本体内容没有差异</div>";
+      announce("v" + from + " 与 v" + to + " 没有差异");
+      return;
+    }
+    var html = ['<div class="hint">' + title + "：共 " + changes.length + " 处变化</div>"];
+    var counts = [];
+    DIFF_KINDS.forEach(function (k) {
+      var items = changes.filter(function (c) { return (c.kind || "changed") === k.kind; });
+      if (!items.length) return;
+      counts.push(k.heading + " " + items.length);
+      html.push('<section class="diff-group"><h4>' + k.heading + "（" + items.length + "）</h4>" +
+        '<ul class="diff-list">' + items.map(function (c) {
+          var tier = TIER_LABELS[c.tier];
+          return '<li class="diff-item ' + k.kind + '">' +
+            '<span class="diff-mark" aria-hidden="true">' + k.mark + "</span>" +
+            '<span class="uu-sr-only">' + k.label + "：</span>" +
+            '<span class="diff-what">' + escapeHtml(c.what || "") + "</span>" +
+            (tier ? '<span class="diff-tier uu-pill muted">' + tier + "</span>" : "") +
+            "</li>";
+        }).join("") + "</ul></section>");
+    });
+    els.diffResult.innerHTML = html.join("");
+    announce("v" + from + " 到 v" + to + "：" + counts.join("，"));
   }
 
   // ---------- Minimal template ----------
@@ -1206,16 +1283,45 @@
   // questions, the expected reference and the pass/fail line are all pulled
   // from what the ontology already declares.
   var verdictLabel = { pass: "通过", fail: "不通过", unclear: "不确定" };
-  var verdictPillClass = { pass: "ok", fail: "bad", unclear: "warn" };
   var verdictOrder = { fail: 0, unclear: 1, pass: 2 };
+  // Each verdict has its own shape as well as its own colour, and the word
+  // beside it, so none of the three depends on telling colours apart.
+  var VERDICT_ICON_ATTRS = 'viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
+  var verdictIcon = {
+    pass: '<svg ' + VERDICT_ICON_ATTRS + '><path d="M3 8.5l3.2 3L13 4.5"/></svg>',
+    fail: '<svg ' + VERDICT_ICON_ATTRS + '><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+    unclear: '<svg ' + VERDICT_ICON_ATTRS + '><circle cx="8" cy="8" r="6.2"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.3"/><path d="M8 11.6v.1"/></svg>'
+  };
+
+  function verdictHtml(verdict, suffix) {
+    var known = verdictLabel[verdict];
+    if (!known) return '<span class="verdict">' + escapeHtml(verdict || "—") + (suffix || "") + "</span>";
+    return '<span class="verdict ' + verdict + '">' + verdictIcon[verdict] +
+      "<span>" + known + (suffix || "") + "</span></span>";
+  }
+
+  // A try-run grades one draft for one tenant. Bumping the sequence orphans a
+  // run still in flight, so its answer cannot land after the screen moved on.
+  var tryrunSeq = 0;
+  function clearTryRun() {
+    tryrunSeq++;
+    els.tryrunBlock.hidden = true;
+    els.tryrunSummary.innerHTML = "";
+    els.tryrunTbody.innerHTML = "";
+  }
 
   function renderTryRun(data) {
     data = data || {};
     var summary = data.summary || {};
-    els.tryrunSummary.textContent =
-      "通过 " + (summary.pass || 0) + " · 不通过 " + (summary.fail || 0) +
-      " · 不确定 " + (summary.unclear || 0) +
-      (data.truncated ? "（探针数超过上限，已截断）" : "");
+    els.tryrunSummary.innerHTML = '<div class="tryrun-counts">' +
+      verdictHtml("pass", " " + (summary.pass || 0)) +
+      verdictHtml("fail", " " + (summary.fail || 0)) +
+      verdictHtml("unclear", " " + (summary.unclear || 0)) +
+      (data.truncated ? "<span>（探针数超过上限，已截断）</span>" : "") +
+      "</div>";
+    announce("试跑完成：通过 " + (summary.pass || 0) + "，不通过 " + (summary.fail || 0) +
+      "，不确定 " + (summary.unclear || 0) + (data.truncated ? "，探针数超过上限已截断" : ""));
 
     var probes = (data.probes || []).slice().sort(function (a, b) {
       var oa = verdictOrder[a.verdict] != null ? verdictOrder[a.verdict] : 3;
@@ -1230,8 +1336,7 @@
         return "<tr>" +
           '<td class="note">' + escapeHtml(p.question || "") + "</td>" +
           '<td class="note">' + escapeHtml(p.answer || "") + "</td>" +
-          '<td><span class="pill ' + (verdictPillClass[p.verdict] || "muted") + '">' +
-            escapeHtml(verdictLabel[p.verdict] || p.verdict || "—") + "</span></td>" +
+          "<td>" + verdictHtml(p.verdict) + "</td>" +
           '<td class="note">' + escapeHtml(p.reason || "") + "</td>" +
           "</tr>";
       }).join("");
@@ -1244,7 +1349,7 @@
   // feedback, so this stays a pure addition next to that logic rather than a
   // change inside it.
   els.yamlEditor.addEventListener("input", function () {
-    if (!els.tryrunBlock.hidden) els.tryrunBlock.hidden = true;
+    clearTryRun();
   });
 
   els.tryrunBtn.addEventListener("click", function () {
@@ -1253,14 +1358,17 @@
       toast("本体内容为空", "warn");
       return;
     }
+    var seq = ++tryrunSeq;
     els.tryrunBtn.disabled = true;
     els.tryrunBtn.textContent = "试跑中…";
 
     UnicaAuth.api(factsPath("/tryrun"), { method: "POST", body: JSON.stringify({ yaml: yaml }) })
       .then(function (data) {
+        if (seq !== tryrunSeq) return;
         renderTryRun(data);
       })
       .catch(function (err) {
+        if (seq !== tryrunSeq) return;
         if (err.message === "unauthorized") return;
         reportError("试跑失败", err);
       })
@@ -1471,6 +1579,7 @@
 
   if (UnicaAuth.bootstrapTab()) {
     showApp();
+    mountTopbar();
     bootstrap();
   } else {
     showLogin();

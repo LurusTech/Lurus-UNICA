@@ -8,8 +8,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/pkg/model"
-	"github.com/kefu/unica/router/internal/guardrail"
 )
 
 type fakeHandoffRecorder struct {

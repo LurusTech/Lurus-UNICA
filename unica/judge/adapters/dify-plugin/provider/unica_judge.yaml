@@ -1,0 +1,37 @@
+identity:
+  author: lurus
+  name: unica_judge
+  label:
+    zh_Hans: UNICA 确定性闸门
+    en_US: UNICA Deterministic Gate
+  description:
+    zh_Hans: 连接一台运行中的 judge 二进制（POST /judge）。
+    en_US: Connects to a running judge binary (POST /judge).
+  icon: icon.svg
+credentials_for_provider:
+  endpoint:
+    type: text-input
+    required: true
+    label:
+      zh_Hans: 闸门地址
+      en_US: Gate endpoint
+    placeholder:
+      zh_Hans: http://judge:8787
+      en_US: http://judge:8787
+    help:
+      zh_Hans: judge 二进制监听的地址，不带路径。
+      en_US: Where the judge binary listens, without a path.
+  token:
+    type: secret-input
+    required: false
+    label:
+      zh_Hans: Bearer 令牌
+      en_US: Bearer token
+    help:
+      zh_Hans: 与 judge -token 一致；闸门未设令牌时留空。
+      en_US: Same value as judge -token; leave empty when the gate runs without one.
+tools:
+  - tools/judge.yaml
+extra:
+  python:
+    source: provider/unica_judge.py

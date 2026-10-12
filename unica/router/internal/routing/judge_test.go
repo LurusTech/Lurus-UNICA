@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/pkg/domain"
-	"github.com/kefu/unica/router/internal/guardrail"
+	"github.com/kefu/unica/pkg/guardrail"
+	"github.com/kefu/unica/router/internal/bridge"
 )
 
 // judgeTestOntologyYAML is a minimal single-class ontology: goods may be
@@ -51,7 +51,7 @@ func judgeInput(o *domain.Ontology, cfg *domain.Config, answer string) JudgeInpu
 		Resp:          respWithAnswer(answer),
 		Ontology:      o,
 		OntologyCfg:   cfg,
-		GuardrailCfg:  guardrail.DefaultGuardrailConfig(),
+		GuardrailCfg:  guardrail.Defaults(),
 		TriageMode:    guardrail.TriageOff,
 		FactsInjected: cfg != nil && cfg.InjectFacts,
 		ProductLineID: "pl-judge",

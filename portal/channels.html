@@ -1,72 +1,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>渠道接入 - UNICA 统一管理门户</title>
+<link rel="stylesheet" href="./ui/unica-ui.css?v=1">
 <style>
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-    --lt-accent: #FF5D1F;
-    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
-    --lt-on-accent: #14130F;
-    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-  }
-  :root {
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --ok: var(--lt-ok);
-    --bad: var(--lt-err);
-    --warn: var(--lt-warn);
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    /* Neutral elevation shadow, no brand hue — kept at original value. */
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-    :root {
-      --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
-      --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
-      --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-      --border: var(--lt-rule); --primary: var(--lt-accent);
-      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-      --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
-    }
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-  :root[data-theme="dark"] {
-    --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
-    --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
-    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule); --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root[data-theme="light"] {
-    --lt-paper: #F5F2E8; --lt-bg: #E8E4D6; --lt-ink: #14130F; --lt-rule: #D6D2C2;
-    --lt-ok: #1F7A4F; --lt-warn: #B8821F; --lt-err: #B3392B; --lt-info: #2D4A8A;
-    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule); --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
-  }
+  /* Brand tokens, toasts, modals and pills come from ui/unica-ui.css. */
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -79,8 +16,6 @@
     justify-content: space-between; gap: 12px;
   }
   header .left { display: flex; align-items: center; gap: 14px; }
-  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
-  header a.back:hover { color: var(--primary); }
   header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
   #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
   main {
@@ -140,49 +75,14 @@
   th { color: var(--text-muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
   tbody tr:hover { background: var(--row-hover); }
   tbody tr:last-child td { border-bottom: none; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
-    font-size: 0.78rem; border: 1px solid var(--border);
-  }
-  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
-  .pill.muted { color: var(--text-muted); }
   .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .row-actions button { padding: 5px 10px; font-size: 0.78rem; }
   .empty-state { padding: 48px 16px; text-align: center; color: var(--text-muted); }
   .empty-state a { color: var(--primary); text-decoration: none; font-weight: 500; }
   .empty-state a:hover { text-decoration: underline; }
 
-  /* Modal — the scrim rgba() and the drop-shadow rgba() below are neutral dimming/depth,
-     not brand hues, so they keep their original literal values. */
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(10, 12, 16, 0.45); display: none;
-    align-items: center; justify-content: center; padding: 20px; z-index: 50;
-  }
-  .modal-backdrop.open { display: flex; }
-  .modal {
-    background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
-    max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 26px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
-  }
-  .modal h3 { margin: 0 0 18px; font-size: 1.1rem; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
   .switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
   .switch-row label { margin-bottom: 0; }
-
-  /* Toasts */
-  #toast-host {
-    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
-    gap: 10px; z-index: 100; max-width: 320px;
-  }
-  .toast {
-    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--lt-info);
-    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
-    animation: slide-in 0.2s ease;
-  }
-  .toast.success { border-left-color: var(--ok); }
-  .toast.error { border-left-color: var(--bad); }
-  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
   .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
   [hidden] { display: none !important; }
@@ -190,7 +90,6 @@
 
 <header>
   <div class="left">
-    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
     <h1>渠道接入配置</h1>
   </div>
   <div id="user-info" hidden>
@@ -256,8 +155,8 @@
 </main>
 
 <!-- Create/Edit modal -->
-<div class="modal-backdrop" id="modal-backdrop">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+<div class="uu-modal-backdrop" id="modal-backdrop">
+  <div class="uu-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <h3 id="modal-title">新增渠道</h3>
     <form id="channel-form">
       <!-- The tenant is the one the page is acting on; the server takes it from
@@ -298,7 +197,7 @@
         <input type="checkbox" id="f-enabled" style="width:auto" />
         <label for="f-enabled">启用该渠道</label>
       </div>
-      <div class="modal-actions">
+      <div class="uu-modal-actions">
         <button type="button" id="modal-cancel">取消</button>
         <button type="submit" class="primary" id="modal-submit">保存</button>
       </div>
@@ -306,9 +205,8 @@
   </div>
 </div>
 
-<div id="toast-host" aria-live="polite"></div>
-
 <script src="./auth.js?v=1"></script>
+<script src="./ui/unica-ui.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -329,7 +227,6 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
-    backLink: document.getElementById("back-link"),
     tenantName: document.getElementById("tenant-name"),
     plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
@@ -348,22 +245,12 @@
     fWebhookToken: document.getElementById("f-webhook-token"),
     fEnabled: document.getElementById("f-enabled"),
     enabledRow: document.getElementById("enabled-row"),
-    secretHint: document.getElementById("secret-hint"),
-    toastHost: document.getElementById("toast-host")
+    secretHint: document.getElementById("secret-hint")
   };
 
-  // ---------- Toasts ----------
-  function toast(message, kind) {
-    var el = document.createElement("div");
-    el.className = "toast" + (kind ? " " + kind : "");
-    el.textContent = message;
-    els.toastHost.appendChild(el);
-    setTimeout(function () {
-      el.style.opacity = "0";
-      el.style.transition = "opacity 0.3s";
-      setTimeout(function () { el.remove(); }, 300);
-    }, 3200);
-  }
+  // ---------- Shared interface layer ----------
+  var toast = UnicaUI.toast;
+  var announce = UnicaUI.liveRegion.announce;
 
   // ---------- Auth / API ----------
   // Token storage, claim decoding, the fetch wrapper and silent token renewal
@@ -403,6 +290,9 @@
 
   function showLogin(message) {
     UnicaAuth.dropTab();
+    // A dialog left open over the login form would trap focus away from it.
+    UnicaUI.modal.close(els.modalBackdrop);
+    UnicaUI.topbar.unmount();
     els.appView.hidden = true;
     els.userInfo.hidden = true;
     els.loginView.hidden = false;
@@ -412,10 +302,13 @@
     }
   }
 
+  // The top bar is mounted only once there is a session: mounted on the login
+  // form it would show "未登录" and keep showing it after signing in.
   function showApp() {
     els.loginView.hidden = true;
     els.appView.hidden = false;
     els.userInfo.hidden = false;
+    UnicaUI.topbar.mount({ title: "渠道接入配置" });
   }
 
   // ---------- Login ----------
@@ -491,7 +384,6 @@
     // an administrator's control only. Channels are listed one tenant at a
     // time because the route names one — there is no "all tenants" address.
     els.plField.hidden = !isAdmin();
-    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
 
     els.plSelect.innerHTML = state.tenants.map(function (pl) {
       return '<option value="' + escapeAttr(pl.id) + '">' + escapeHtml(pl.display_name || pl.name) + "</option>";
@@ -516,6 +408,9 @@
 
   function selectTenant(id) {
     state.currentTenant = findTenant(id);
+    // An administrator's choice goes on the address, where the top bar and
+    // every link built from it read the tenant.
+    if (state.currentTenant) UnicaUI.topbar.setTenant(state.currentTenant.id);
     var label = state.currentTenant
       ? (state.currentTenant.display_name || state.currentTenant.name)
       : "";
@@ -542,6 +437,7 @@
       .then(function (data) {
         state.channels = Array.isArray(data) ? data : [];
         renderChannels();
+        announce(state.channels.length ? "已加载 " + state.channels.length + " 个渠道" : "暂无渠道配置");
       })
       .catch(function (err) {
         if (err.message === "unauthorized") return;
@@ -576,11 +472,11 @@
   function rowHtml(ch) {
     var platformLabel = PLATFORM_LABELS[ch.platform] || ch.platform;
     var enabledPill = ch.is_enabled
-      ? '<span class="pill ok">已启用</span>'
-      : '<span class="pill muted">已停用</span>';
+      ? '<span class="uu-pill ok">已启用</span>'
+      : '<span class="uu-pill muted">已停用</span>';
     var verifiedPill = ch.is_verified
-      ? '<span class="pill ok">已验证</span>'
-      : '<span class="pill muted">未验证</span>';
+      ? '<span class="uu-pill ok">已验证</span>'
+      : '<span class="uu-pill muted">未验证</span>';
     var lastTest = "—";
     if (ch.last_test_at) {
       var ok = ch.last_test_result && /success|成功|ok/i.test(ch.last_test_result);
@@ -686,12 +582,6 @@
   // ---------- Create / Edit modal ----------
   els.createBtn.addEventListener("click", function () { openCreateModal(); });
   els.modalCancel.addEventListener("click", closeModal);
-  els.modalBackdrop.addEventListener("click", function (e) {
-    if (e.target === els.modalBackdrop) closeModal();
-  });
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && els.modalBackdrop.classList.contains("open")) closeModal();
-  });
 
   function openCreateModal() {
     state.editingId = null;
@@ -719,13 +609,18 @@
     openModal();
   }
 
+  // Focus goes to the first field that can take it: the platform when
+  // creating, the display name when editing (the platform is locked then).
+  // Esc, the scrim and 取消 all end in resetForm.
   function openModal() {
-    els.modalBackdrop.classList.add("open");
-    els.fPlatform.focus();
+    UnicaUI.modal.open(els.modalBackdrop, { onClose: resetForm });
   }
 
   function closeModal() {
-    els.modalBackdrop.classList.remove("open");
+    UnicaUI.modal.close(els.modalBackdrop);
+  }
+
+  function resetForm() {
     els.fPlatform.disabled = false;
     els.channelForm.reset();
   }

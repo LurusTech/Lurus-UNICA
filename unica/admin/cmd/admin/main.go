@@ -34,6 +34,7 @@ import (
 	"github.com/kefu/unica/admin/internal/tenant/aisettings"
 	"github.com/kefu/unica/admin/internal/tenant/channels"
 	tenantcompliance "github.com/kefu/unica/admin/internal/tenant/compliance"
+	"github.com/kefu/unica/admin/internal/tenant/events"
 	"github.com/kefu/unica/admin/internal/tenant/evidence"
 	"github.com/kefu/unica/admin/internal/tenant/facts"
 	"github.com/kefu/unica/admin/internal/tenant/knowledge"
@@ -334,6 +335,9 @@ func main() {
 	// Human access and AI disclosure: two settings blocks in config_json the
 	// router reads before the model and at delivery, and the self-check
 	// derived from them. A write drops the cached route like the others.
+	// The event feed: one read-only projection over the rows above, paged or
+	// streamed, which is what lets the portal show a change without a refresh.
+	eventsHandler := events.NewHandler(domainStore, plRepo)
 	complianceHandler := tenantcompliance.NewHandler(plRepo, auditLogger, routecache.New(rdb, channelRepo))
 
 	// The workbench trades the caller's own portal account for a password-free
@@ -528,6 +532,7 @@ func main() {
 		productLineModel: http.HandlerFunc(modelOverrideHandler.Handle),
 		evidence:         http.HandlerFunc(evidenceHandler.Handle),
 		compliance:       http.HandlerFunc(complianceHandler.Handle),
+		events:           http.HandlerFunc(eventsHandler.Handle),
 	}
 	mux.Handle(tenantPrefix, authMW(tenantAuth(tenantResources)))
 
@@ -706,6 +711,7 @@ type tenantRouter struct {
 	productLineModel http.Handler
 	evidence         http.Handler
 	compliance       http.Handler
+	events           http.Handler
 }
 
 // aiSettingsPaths is the closed list of ai-settings sub-paths. Listing them here
@@ -747,6 +753,7 @@ var factsPaths = map[string]string{
 	"publish":  "ontology/publish",
 	"rollback": "ontology/rollback",
 	"tryrun":   "ontology/tryrun",
+	"diff":     "ontology/diff",
 	"config":   "ontology-config",
 }
 
@@ -871,6 +878,13 @@ func (t *tenantRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		t.serve(w, r, t.compliance, joinPath(legacyProductLinesPrefix+tenantID, "compliance", sub))
+	case "events":
+		// The feed and its stream. A closed pair: anything else is a 404.
+		if sub != "" && sub != "stream" {
+			handler.ErrorJSON(w, http.StatusNotFound, "unknown events sub-path: "+sub)
+			return
+		}
+		t.serve(w, r, t.events, joinPath(legacyProductLinesPrefix+tenantID, "events", sub))
 	case "workbench":
 		if sub != "sso" {
 			handler.ErrorJSON(w, http.StatusNotFound, "unknown workbench sub-path: "+sub)

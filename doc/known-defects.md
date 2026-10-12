@@ -5,11 +5,49 @@
 
 每条写清楚：坏在哪（带 file:line）、后果是什么、修的方向。修掉一条就从这里删掉。
 
-最后更新：2026-09-03（配置面重构 B 组验收期间发现）
+最后更新：2026-10-08（未完成项收口：逐条核对提交与代码，更新状态）
+
+## 2026-10-08 状态总览
+
+"已覆盖于 <提交>" 的依据是读该提交的改动文件与代码，不是实机复现；
+"本轮已修" 指工作区里的改动（尚未提交），依据是单测与 `go vet`/`go test` 全绿。
+两者都**没有真实流量或实机验证**，所以条目暂不删除，验证后再按记录规则删。
+
+| 条目 | 状态 | 依据 |
+|---|---|---|
+| D1 | 本轮已修（代码），待实机 | `router/internal/survey/timeout.go` 扫描 + `SurveyTimeoutTotal` 计数，单测覆盖 |
+| D2 | 本轮已修（代码），待实机 | 网关改投 `unica:handoff`，router 的 handoff 消费者调 `TransitionState(..., closed)`，两侧打桩测试 |
+| D3 | 部分覆盖于 `abf7e0a` | 开关 `evolve_capture=on` 时坐席回复以 `sender_type='human'` 落库；开关默认关，关闭态仍不落 |
+| D5 | 未动 | — |
+| D6 | 本轮已清理 | 两处死代码已删；`max_ai_turns` 所在表已由迁移 017 删除 |
+| D7 | 本轮已补注释，余一步 | 脚本与客户端注释写明定位；删除需等存量环境回填 |
+| D9 | 未动（本轮不做） | — |
+| D10 | 已覆盖于 `c995976`（默认关），待实机 | 主语延续：追问缺主语时用客户原话里说过的对象补全检索 |
+| D11 | 部分覆盖于 `c995976`（默认关） | 承诺/金额防火墙要求数值在检索原文、本体或已校验 claim 里有出处 |
+| D12 | 部分覆盖于 `c995976`（默认关），原例未重跑 | 知识库写"需咨询/以…为准"而答复给出数字即扣下交人工 |
+| D14 | 未动（本轮不做） | — |
+| D15 / D17 | 未动 | — |
+| D18 | 已覆盖于 `3e7174d` | 判定层空答复转人工，`domain.IsBlankAnswer` 单一谓词 |
+| D19 | 已覆盖于 `3e7174d` | 金标断言层对空答复无条件前置判失败 |
+| D20 | 本轮已修 | 三套标签共用 `pkg/domain/tags.go` 的 `ScanTags` |
+| D21 | 已覆盖于 `a263c97` | `admin/internal/capability` 能力清单，三个变量为空时门户写明后果 |
+| D23 | 本轮已修 | token 带 `typ`，鉴权中间件只认 access |
+| D24 / D25 | 未动（本轮不做） | — |
 
 ---
 
 ## D1 调研发出后没人把超时的那些翻成 `no_response`
+
+> **2026-10-08 本轮已修（代码，未提交，待实机）**：`router/internal/survey/timeout.go` 的
+> `SweepTimedOut` 每分钟扫一次 `survey_status='sent'` 的会话，Redis 待答键已不存在的
+> 翻成 `no_response` 并 `SurveyTimeoutTotal.Inc()`（按产线打标签）；`Router.Start` 起该循环。
+> "超时"以待答键是否还在为准，而不是用 `survey_sent_at` 加当前配置重算：待答键的 TTL
+> 就是发出时该产线的 `timeout_hours`，回复也只认这个键，二者口径一致；改过超时配置时
+> 重算会把仍可回答的调研误判为超时。UPDATE 带 `AND survey_status='sent'`，与回复竞争、
+> 多副本并发时每条只计一次。schema 无需改动：`survey_status` 是无 CHECK 的 `VARCHAR(20)`，
+> `no_response` 本就在迁移 005 的取值注释里。Redis 读失败时整轮停下、不翻任何一条。
+> 单测（打桩库 + miniredis）覆盖：只翻过期的、不碰仍在窗口内与已完成的、二次扫描不重复计数、
+> Redis 不可达时不翻。未验证：真实库上的 SQL 与真实调研流量。
 
 > 本条原文是"满意度调查从未真正发出"。**发不出去与收不回来这两半已于 2026-08-24 修复并实机验收**
 > （空闲清扫补上 `OnClose`；会话查找在调研待答期内把已关会话认回来，
@@ -32,6 +70,18 @@
 
 ## D2 坐席在 Chatwoot 点"解决"不会关闭 UNICA 会话
 
+> **2026-10-08 本轮已修（代码，未提交，待实机）**：网关收到 `status=resolved` 后不再写
+> `unica:outbound`，改写 `unica:handoff`（`type=event.conversation_closed`）；router 的
+> handoff 消费者（`handoff/consumer.go`）识别该类型后调用 `TransitionState(..., closed)`，
+> 与空闲清扫走同一条关闭路径（含 `OnClose`，即满意度调查）。会话已关闭视为正常（清扫先到、
+> 重投、Chatwoot 反复解决），不进死信；其它失败（如会话仍 `pending`、库不可用）写入
+> `unica:dead-letter`。测试：网关侧断言出站流为空、handoff 流有一条且载荷正确；router 侧
+> 打桩断言关闭调用、已关闭不进死信、失败进死信。
+> **部署注意**：网关与 router 需同批升级——旧 router 会把这条关闭事件当作转人工事件处理
+> （`product_line_id` 为空，会在读 Chatwoot 配置处失败并被确认掉，不会建单，但会白跑一次摘要）。
+> **行为变化**：解决后客户再发消息，会话由 closed 重新进入 AI 处理，而不是继续留在人工
+> 直到空闲超时；这是"已解决"本来的含义。
+
 `gateway/internal/webhook/chatwoot.go:247-302` 收到 `status=resolved` 后构造
 `type: "event.conversation_closed"` 事件 XADD 进 **`unica:outbound`**——
 和客户消息共用一条流。但该事件的 `Data.ChannelID` 从未填充，
@@ -52,6 +102,14 @@ ChannelID 为空 → `no adapter registered for channel` → 重试三次
 ---
 
 ## D3 坐席回复文本不落 `messages` 表
+
+> **2026-10-08 部分覆盖于 `abf7e0a`**：依据是该提交 `gateway/internal/webhook/chatwoot.go`
+> 新增的 `captureAgentReply` / `sqlReplyRecorder`——坐席 outgoing 消息转发后写入 `messages`
+> （`direction='outbound'`、`sender_type='human'`、`platform_msg_id='cw-<id>'`，重投被去重索引挡掉），
+> 并有 `capture_test.go` / `capture_db_test.go`。**但只在 `platform_settings.evolve_capture=on`
+> 时写**，开关默认关；关闭态与原文描述一致，仍不落库。会话映射 72h 过期后的回复仍丢弃。
+> 按"关闭态不变"的约定这是有意为之，所以本条不关：要让坐席话术常态落库，需要先决定是否把
+> 这一写入从采集开关里拿出来。
 
 `CreateMessage`（`state/repository.go:198`）只有两个调用点：
 `manager.go:123`（客户入站，`sender_type='customer'`）和
@@ -94,6 +152,12 @@ merge 进会话 metadata，`metrics.MarketingIntentDetectedTotal` 计数。
 
 ## D6 死代码三处
 
+> **2026-10-08 本轮已清理（未提交）**：`SetFirstAgentReply`（`state/repository.go` 与
+> `state/manager.go` 的包装）与 `sendMessageHistory`（`handoff/handler.go` 及其单测）已删除，
+> 删除前全仓 grep 确认无调用方；`first_agent_reply_at` 仍由网关 webhook 的裸 SQL 写入。
+> `max_ai_turns` 所在的 `ai_agent_configs` 表已由迁移 017 `DROP TABLE`，此项随之失效
+> （admin 侧已有测试断言不再上报该字段）。提交后可删除本条。
+
 | 位置 | 说明 |
 |---|---|
 | `state/repository.go:444-455` `SetFirstAgentReply` | 从未被调用；gateway 用裸 SQL 实现了同样的事（`chatwoot.go:234-241`） |
@@ -103,6 +167,12 @@ merge 进会话 metadata，`metrics.MarketingIntentDetectedTotal` 计数。
 ---
 
 ## D7 两套并行的 Dify provisioning 实现
+
+> **2026-10-08 注释已补（未提交）**：`router/cmd/setup_dify_workspaces/main.go` 与
+> `router/internal/bridge/dify_admin.go` 的包注释写明：唯一实现是 admin 的 `EnsureDifyLine`
+> （开户与补建同一段代码）、没有单一"已配置"判据而是逐项自查、该脚本的 `dify_workspace_id`
+> 约定已废弃且 `EnsureDifyLine` 不读它、新环境不要跑。**剩余一步**：存量环境按 D8 回填后
+> 连同 `dify_admin.go` 一起删除。
 
 | | `admin/internal/bridge/dify.go` | `router/internal/bridge/dify_admin.go` + `cmd/setup_dify_workspaces` |
 |---|---|---|
@@ -213,7 +283,7 @@ AJYJ 与 XDYX 有，上传正常。而 `POST .../ai-settings/dataset/bind` 只�
 ## D9 没有嵌入模型时，知识库静默降级为一个查不准的关键词库
 
 **2026-08-25 现状更新**（缺陷未解，但两种失败模式要分清）：当前部署的嵌入模型
-`BAAI/bge-base-zh-v1.5` 已可用，`DIFY_INDEXING_TECHNIQUE=high_quality`，
+（本地中文向量模型）已可用，`DIFY_INDEXING_TECHNIQUE=high_quality`，
 XDYX / AJYJ 与本轮新建的三条零售线都是 high_quality + 语义检索。
 但**代码从不探测嵌入模型是否真的可用**，纯靠这个 env 手工声明，于是有两种相反的失败：
 声明 `high_quality` 而工作区没有嵌入模型 → Dify 直接拒绝上传（`provider_not_initialize`），
@@ -243,7 +313,7 @@ XDYX / AJYJ 与本轮新建的三条零售线都是 high_quality + 语义检索�
 不再只存在于设环境变量那个人的记忆里。
 
 **根治**：配一个文本嵌入模型并切 `high_quality`。
-`deploy/embeddings/` 提供了一个自带的本地方案（BGE 中文模型 +
+`deploy/embeddings/` 提供了一个自带的本地方案（本地中文向量模型 +
 OpenAI 兼容端点，无需外部厂商与额外 key），实测切换后上述零命中查询
 全部命中且目标文档排第一。**当前只在演练环境手工起着，未纳入编排**——
 生产部署需要把它放进 compose/k8s 并加鉴权，见该目录 README 的
@@ -253,6 +323,13 @@ OpenAI 兼容端点，无需外部厂商与额外 key），实测切换后上述
 ---
 
 ## D10 追问丢主语，检索返回别的记录，模型照单全收（长对话最严重）
+
+> **2026-10-08 已覆盖于 `c995976`（默认关，待实机）**：依据是该提交的 `pkg/domain/subject.go`、
+> `router/internal/routing/subject.go` 及其测试，和 admin 侧 `aisettings/subjectcarry.go`。
+> 走的是下文方向 2 的变体：追问缺主语时，用客户**原话里说过的对象**补全检索与模型的 query；
+> 判定、落库、经验回写一律用原文；对象名清单由运营手填（只填名称）。没有选方向 1（多一次模型调用）。
+> 未验证：开关默认关，下文那段 21 轮长对话没有在开启后重跑过，所以"华亭书苑"一例是否修好
+> 目前没有证据。
 
 2026-08-13 21 轮长对话实测（`doc/test-ajyj-kb-import.md` §七）。客户先锁定
 「华亭书苑」聊了几轮，然后问：
@@ -291,6 +368,13 @@ OpenAI 兼容端点，无需外部厂商与额外 key），实测切换后上述
 
 ## D11 知识库来源的内容没有任何事实校验
 
+> **2026-10-08 部分覆盖于 `c995976`（默认关）**：依据是 `pkg/domain/commitment.go` /
+> `figures.go` 与 `routing/judge.go` 的接入。承诺/金额防火墙开启后，答复里的承诺句与带单位数字
+> 必须在检索原文、本体渲染或已校验 claim 里找到同值同单位的出处，否则扣下交人工；`scope=money`
+> 时任何无出处的金额/比例/折扣都扣。这正是下文"数值必须在检索片段里逐字出现"的长期方向。
+> **未覆盖的部分**：非数值的事实（产地、规格名、条款文字）仍无校验；有出处不等于出处对
+> （D10 那种错配到另一条记录的数字，若另一条记录里确有该数字，仍会放行）。
+
 `pkg/domain` 的 claim 校验只覆盖 **ontology 属性**：解析回答里的
 `[FACT:属性=值]` 标签，比对断言、range、伴生要求。知识库（Dify dataset）
 来的内容**完全在校验范围之外**——模型不为它打标签，校验器也无从比对。
@@ -310,6 +394,12 @@ D10 那次对话里模型编造了物业费、错配了车位价、还凭常识�
 ---
 
 ## D12 知识库明确说"要咨询"的事，模型会自己编出一张表
+
+> **2026-10-08 部分覆盖于 `c995976`（默认关）**：依据是 `pkg/domain/commitment.go` 的
+> `deferralPattern`（需咨询/建议咨询/以…为准/另行核定/需按最新政策 等）：检索原文含这类说法时，
+> 答复给出的数字一律扣下交人工，原因写明"知识库写明此类数字需咨询"。这是判定层兜底，
+> 不是下文建议的提示词指令。**未做**：下文那次长对话未在开启后重跑；提示词规则 7 的风险
+> 仍未单独验证；"免征"这类不带数字的矛盾说法不在数字防火墙的覆盖范围内。
 
 同一次长对话，客户问「税费大概多少？」。知识库对该房源只写了
 「非满五唯一，涉及增值税及附加，具体税费需按最新政策计算，建议客户在
@@ -495,7 +585,7 @@ Dify 侧零写入（前后哈希 10/10 相同）。
 | TechZone 改前 | 约 4000 字符 |
 | TechZone 改后 | **19195 字符**（约 5 倍） |
 
-代价是六条**原本通过**的基础政策题回退（旧基线 `baseline-deepseek-v4-flash.json`
+代价是六条**原本通过**的基础政策题回退（旧基线，`unica/router/testdata/golden/` 下的基线文件
 里 tech-06 / tech-08 / mega-02 / mega-09 / mega-17 / mega-19 全为 True，
 改后全部失败）：「手机保修多久？」答不出"1年"、「拆开包装了还能退吗？」答不出"7天"。
 两条线跑分从常年 20+/24 掉到 18/24。
@@ -524,7 +614,14 @@ Dify 侧零写入（前后哈希 10/10 相同）。
 
 ## D18 max_tokens 耗尽时答复整条丢失，链路当作正常答复照发
 
-**形态**：模型 `deepseek-v4-flash` 会先输出推理内容再给答复。当
+> **2026-10-08 核对：已覆盖于 `3e7174d`**（下文"未根治的部分"已过时）。依据：
+> `routing/judge.go` 末尾的检查——`domain.IsBlankAnswer(j.Answer)` 且判定为投递时改为
+> `handoff`（原因 `empty_answer`；模型自己请求过转人工则保留原因），不代填任何话术；
+> 谓词覆盖零宽字符、BOM 与标签剥离后只剩标点的情形；`judge_empty_test.go` 钉住"凡投递必非空"。
+> 本轮 D20 让全角标签也能被剥离，只含全角标签的答复剥离后为空，同样被拦下（`judge_tags_test.go`）。
+> 未验证：真实流量里空答复转人工的实际发生情况。
+
+**形态**：平台当时声明的模型会先输出推理内容再给答复。当
 `max_tokens` 不够走完推理，生成在"还在想"的阶段就被截断，
 Dify 返回 **`answer: ""`**——不是被截短的半句话，是**一个字都没有**。
 
@@ -554,7 +651,7 @@ Q: 到货挑出来1.2斤是坏的，能赔我多少？
 **2026-08-26 补记，处置范围比当时以为的窄**：上面那次处置用的是一次性脚本，
 只覆盖了参与跑分的五条线。模型漂移清单上线当天（配置面重构阶段 4）实机一查，
 **演练线 DrillCo / DrillCo2 / DrillCo3 / DrillCo4 / DrillCo5 五条根本没被扫到**：
-它们跑在 `deepseek-chat` 上而不是平台声明的模型，且 `temperature` 与 `max_tokens`
+它们跑在工作空间默认的另一个模型上而不是平台声明的模型，且 `temperature` 与 `max_tokens`
 双双为 0 —— 即 `completion_params` 从未被写过，一直吃 Dify 工作空间的默认值。
 这正是 `pkg/difyapp/model.go` 顶部注释记的那笔账（"nothing wrote
 model_config["model"] at all, so every app inherited whatever the Dify workspace
@@ -564,7 +661,7 @@ default happened to be"），它从未被清掉，只是没人再看。
 开通新应用时一个调用点，存量应用一律不碰，于是任何在脚本之后新建的、
 或脚本当时没列进去的线，都会重新漂回工作空间默认值而无人知晓。
 阶段 4 把这条路补成常规能力——漂移清单逐线读 Dify 实况比对，
-勾选即可重推，写审计——并已借它把上述五条线纠正到 `deepseek-v4-flash` / 4096。
+勾选即可重推，写审计——并已借它把上述五条线纠正到平台声明的模型 / 4096。
 
 **未根治的部分**：空答复本身仍会被照发。参数调大只是把触发概率压低——
 问题更长、知识库更大、推理更绕的时候还会撞上。真正的修复是
@@ -574,6 +671,12 @@ default happened to be"），它从未被清掉，只是没人再看。
 ---
 
 ## D19 金标对"空答复"没有断言，什么都不说也能通过
+
+> **2026-10-08 核对：已覆盖于 `3e7174d`**。依据：`router/internal/eval/assert.go` 在所有
+> `must_*` 断言与转人工短路之前无条件检查 `domain.IsBlankAnswer`，只有"用例要求转人工且实际转了"
+> 才允许空；`cmd/evalset` 与重放都经 `JudgeAnswer` 后再断言。`assert_test.go` 有
+> `EmptyAnswerFailsWhenNotHandoff` / `EmptyAnswerFailsOnSendAndHandoff` /
+> `BlankAnswerWithheldByRouterStillFails` 等用例。本轮未改动该执行器。
 
 D18 那 18 条空答复里，**有 6 条被金标判为通过**
 （`ajyj-14` `ajyj-15` `ajyj-19` `ajyj-23` `fresh-20` `xdyx-23`）。
@@ -592,6 +695,15 @@ D18 那 18 条空答复里，**有 6 条被金标判为通过**
 ---
 
 ## D20 标签协议只认半角方括号与半角冒号，全角写法原样投给客户
+
+> **2026-10-08 本轮已修（未提交）**：三套协议不再各持一份正则，统一走 `pkg/domain/tags.go`
+> 的 `ScanTags`：括号认 `[ ]`、`［ ］`、`【 】`且可混配，分隔符认半角/全角冒号，名称不分大小写，
+> 名称、分隔符、值两侧的半角空白与全角空格都容忍；`[FACT:]` 的等号认半角/全角。剥离是全量的
+> （畸形标签也剥），解析由各协议决定；名称后紧跟字母、数字或下划线的（如 `[FACTORY]`）不算标签。
+> `ParseClaims` / `ParseEscalation` / `marketing.DetectIntents` 已改用它。单测：`tags_test.go`
+> （半角/全角/混合/空白 × 三协议、非标签不误伤、未闭合标签不吞掉后面的标签）、
+> `detector_test.go`、`routing/judge_tags_test.go`（全角 `HANDOFF` 照常升级且原因为 payout）。
+> 仍不认的写法：`<HANDOFF>` 这类尖括号、全角字母拼的标签名。
 
 三套标签协议（`[HANDOFF:原因]`、`[FACT:属性=值]`、`[INTENT:意图]`）的识别正则
 要求 ASCII 方括号与半角冒号。中文输入法下模型写出全角形式时：
@@ -615,6 +727,12 @@ D18 的修复（`pkg/domain.IsBlankAnswer`）能兜住"剥离后为空"的情形
 但兜不住"根本没被剥离"——那种情况下答复非空，只是内容是内部标记。
 
 ## D21 配置项为空不是报错，是功能静默消失
+
+> **2026-10-08 核对：已覆盖于 `a263c97`**。依据：该提交新增 `admin/internal/capability/probe.go`
+> （及测试），按"开/关/未知"三态列出 `DIFY_DATASET_API_KEY`（知识库管理）、`ROUTER_INTERNAL_URL`
+> （运行开关只读镜像）、`ACEST_KB_URL`（经验库，经 router 查询）三项，每项写明后果；平台与租户
+> 两侧页面都展示，租户侧不含内部地址。提交说明记录了在预览环境清空 `DIFY_DATASET_API_KEY`
+> 后两页都列出该能力及后果。可按记录规则删除本条。
 
 有一类环境变量，**没配等于把整块功能悄悄关掉**，而界面上完全看不出来：
 
@@ -659,7 +777,16 @@ D 组的续期上线时这条已经先修掉了。
 
 ---
 
-## D23 refresh token 能当 Bearer 用（低危，未修）
+## D23 refresh token 能当 Bearer 用（低危，本轮已修）
+
+> **2026-10-08 本轮已修（未提交）**：`admin/internal/auth/jwt.go` 签发时 access 带 `typ=access`、
+> refresh 带 `typ=refresh`；`AuthMiddleware` 改用 `ValidateAccessToken`，`typ=refresh` 或未知类型一律 401。
+> 兼容：无 `typ` 的旧 access token 照常接受直到过期（它一定带 role，`users.role` 非空）；
+> 无 `typ` 且无 role 的旧 token 只可能是旧 refresh token，作 Bearer 时拒绝，但在 `/auth/refresh`
+> 仍可正常换取（该端点不经中间件，靠 Redis 里登记的 refresh 哈希判定），换回的是带类型的新一对，
+> 所以一个 refresh 有效期之后不再有无类型 token。`/auth/refresh` 只认 refresh 这一半无需改代码：
+> access token 从未登记进 `refresh:<哈希>`，本来就会被拒。单测覆盖：新签发的类型、refresh 作 Bearer
+> 被拒（401）、旧 access 接受、旧 refresh 作 Bearer 被拒且仍可解析、未知类型被拒。
 
 `AuthMiddleware`（`admin/internal/auth/middleware.go:80-106`）只校验签名，不区分
 token 类型。refresh token 与 access token 用同一把密钥签发、载荷结构相同，

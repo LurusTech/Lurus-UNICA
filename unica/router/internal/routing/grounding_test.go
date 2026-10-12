@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/router/internal/bridge"
-	"github.com/kefu/unica/router/internal/guardrail"
 )
 
 func respWithScores(scores ...float64) *bridge.DifyResponse {
@@ -44,7 +44,7 @@ func TestGroundedConfidence_UngroundedIsUnchanged(t *testing.T) {
 // ontology working perfectly made the guardrail reject perfect answers.
 func TestGroundedConfidence_InjectedFactsEscapeTheNoMatchFloor(t *testing.T) {
 	noRetrieval := respWithScores()
-	threshold := guardrail.DefaultGuardrailConfig().ConfidenceThreshold
+	threshold := guardrail.Defaults().ConfidenceThreshold
 
 	if CalculateConfidence(noRetrieval) >= threshold {
 		t.Fatal("test premise broken: the retrieval-only score no longer falls below the threshold")
@@ -128,7 +128,7 @@ func TestGroundedConfidence_KeepsStrongRetrieval(t *testing.T) {
 // ontology hands off every answer.
 func TestGroundedConfidence_ExperienceAlsoEscapesTheFloor(t *testing.T) {
 	noRetrieval := respWithScores()
-	threshold := guardrail.DefaultGuardrailConfig().ConfidenceThreshold
+	threshold := guardrail.Defaults().ConfidenceThreshold
 
 	got := GroundedConfidence(noRetrieval, GroundingEvidence{ExperienceInjected: true})
 	if got < threshold {

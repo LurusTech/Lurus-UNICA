@@ -309,3 +309,28 @@ func TestSignals_Stats_OutOfScopeIsForbidden(t *testing.T) {
 		}
 	}
 }
+
+// Firewall findings share claim_violations but their property column is a pack
+// label or a quoted figure. One that spells a declared property's name must not
+// count as that constraint firing, or a dead constraint is hidden.
+func TestCoverageFor_ExcludesFirewallKinds(t *testing.T) {
+	o := &domain.Ontology{Properties: map[string]domain.Property{"退款时效": {}}}
+	hits := []domain.PropertyHits{
+		{Kind: string(domain.ViolationRedline), Property: "退款时效", Hits: 4, Enforced: 4},
+		{Kind: string(domain.ViolationRedlineFlag), Property: "退款时效", Hits: 2},
+		{Kind: string(domain.ViolationUnbackedCommitment), Property: "退款时效", Hits: 3, Enforced: 3},
+		{Kind: string(domain.ViolationUngroundedFigure), Property: "退款时效", Hits: 1},
+		{Kind: string(domain.ViolationDeferredFigure), Property: "退款时效", Hits: 1},
+	}
+	cov := coverageFor(o, hits)
+	if len(cov) != 1 || cov[0].Hits != 0 || cov[0].Enforced != 0 {
+		t.Fatalf("coverage = %+v, want 退款时效 with zero hits", cov)
+	}
+
+	// The ontology's own kinds still attribute.
+	hits = append(hits, domain.PropertyHits{Kind: string(domain.ViolationRange), Property: "退款时效", Hits: 2, Enforced: 1})
+	cov = coverageFor(o, hits)
+	if cov[0].Hits != 2 || cov[0].Enforced != 1 {
+		t.Errorf("coverage = %+v, want the range hits only", cov[0])
+	}
+}

@@ -109,7 +109,7 @@ func TestChatwootWebhook_MessageCreated_AgentReply(t *testing.T) {
 			DisplayID  int               `json:"display_id,omitempty"`
 			CustomAttr map[string]string `json:"custom_attributes,omitempty"`
 		}{
-			ID: 100,
+			ID:         100,
 			CustomAttr: map[string]string{"channel_id": "ch-wechat"},
 		},
 		Sender: struct {
@@ -199,7 +199,7 @@ func TestChatwootWebhook_MessageCreated_PrivateSkipped(t *testing.T) {
 		Event:       "message_created",
 		ID:          400,
 		Content:     "Internal note",
-		MessageType: 1, // outgoing
+		MessageType: 1,    // outgoing
 		Private:     true, // private - should be skipped
 	}
 	body, _ := json.Marshal(payload)
@@ -246,22 +246,34 @@ func TestChatwootWebhook_ConversationResolved(t *testing.T) {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
 
-	// Verify close event was published
-	result, err := rdb.XRange(context.Background(), outboundStream, "-", "+").Result()
+	// D2: the close request goes to the handoff stream, whose router consumer
+	// owns the state machine, and never to the outbound stream, where a close
+	// event has no channel adapter and used to end in the dead-letter stream.
+	outbound, err := rdb.XRange(context.Background(), outboundStream, "-", "+").Result()
 	if err != nil {
 		t.Fatalf("failed to read outbound stream: %v", err)
 	}
-
-	found := false
-	for _, entry := range result {
-		if source, ok := entry.Values["source"].(string); ok && source == "chatwoot" {
-			if typ, ok := entry.Values["type"].(string); ok && typ == "event.conversation_closed" {
-				found = true
-			}
-		}
+	if len(outbound) != 0 {
+		t.Errorf("outbound stream got %d entries, want none: %+v", len(outbound), outbound)
 	}
-	if !found {
-		t.Error("expected conversation_closed event in outbound stream")
+
+	result, err := rdb.XRange(context.Background(), handoffStream, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("failed to read handoff stream: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("handoff stream got %d entries, want 1", len(result))
+	}
+	entry := result[0]
+	if typ, _ := entry.Values["type"].(string); typ != "event.conversation_closed" {
+		t.Errorf("type = %q, want event.conversation_closed", typ)
+	}
+	var ev resolvedEvent
+	if err := json.Unmarshal([]byte(entry.Values["payload"].(string)), &ev); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if ev.Type != "event.conversation_closed" || ev.ConversationID != "unica-conv-002" {
+		t.Errorf("payload = %+v", ev)
 	}
 }
 
@@ -292,6 +304,11 @@ func TestChatwootWebhook_ConversationNotResolved_Ignored(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
+	}
+	for _, stream := range []string{handoffStream, outboundStream} {
+		if n, _ := rdb.XLen(context.Background(), stream).Result(); n != 0 {
+			t.Errorf("%s got %d entries for a non-resolved status, want none", stream, n)
+		}
 	}
 }
 

@@ -331,3 +331,27 @@ func TestErrNotTierAliasIsDistinguishable(t *testing.T) {
 		t.Error("ErrNotTierAlias must be matchable")
 	}
 }
+
+// The direction of a change is set where it is found, not read back out of its
+// wording: deleting a property whose own name says "新增" is still a removal.
+func TestDiffOntologies_OpIgnoresWording(t *testing.T) {
+	base := tierBase(t)
+	withOdd := cloneOntology(base)
+	p := withOdd.Properties["服务费"]
+	p.Requires = nil
+	withOdd.Properties["新增修改渠道费"] = p
+	var got []DiffChange
+	for _, c := range DiffOntologies(withOdd, base) {
+		if strings.Contains(c.What, "新增修改渠道费") {
+			got = append(got, c)
+		}
+	}
+	if len(got) != 1 || got[0].Op != DiffRemoved {
+		t.Fatalf("removing 新增修改渠道费: got %+v, want one removal", got)
+	}
+	for _, c := range DiffOntologies(base, withOdd) {
+		if strings.Contains(c.What, "新增修改渠道费") && c.Op != DiffAdded {
+			t.Errorf("adding 新增修改渠道费 reported %q", c.Op)
+		}
+	}
+}

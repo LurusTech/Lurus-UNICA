@@ -106,3 +106,38 @@ func TestDetectIntents_TagNameIsCaseInsensitive(t *testing.T) {
 		t.Fatalf("intents = %v, want price_inquiry and comparison", got.Intents)
 	}
 }
+
+// D20: the intent protocol shares its recogniser with [FACT:] and [HANDOFF:],
+// so the full-width and spaced shapes a Chinese input method produces are read
+// and stripped like the documented one.
+func TestDetectIntents_FullWidthAndSpacedForms(t *testing.T) {
+	for _, answer := range []string{
+		"【INTENT:price_inquiry】价格是299元。",
+		"[INTENT：price_inquiry]价格是299元。",
+		"【INTENT：PRICE_INQUIRY】价格是299元。",
+		"［INTENT:price_inquiry］价格是299元。",
+		"[ INTENT : price_inquiry ]价格是299元。",
+		"【INTENT:price_inquiry]价格是299元。",
+	} {
+		result := DetectIntents(answer)
+		if result.CleanedAnswer != "价格是299元。" {
+			t.Errorf("%q: CleanedAnswer = %q", answer, result.CleanedAnswer)
+		}
+		if len(result.Intents) != 1 || result.Intents[0] != "price_inquiry" {
+			t.Errorf("%q: Intents = %v", answer, result.Intents)
+		}
+	}
+}
+
+// A tag that names nothing we track, or is malformed, is still markup.
+func TestDetectIntents_MalformedTagsStripped(t *testing.T) {
+	for _, answer := range []string{"【INTENT：价格】你好", "[INTENT]你好", "【INTENT:】你好"} {
+		result := DetectIntents(answer)
+		if result.CleanedAnswer != "你好" {
+			t.Errorf("%q: CleanedAnswer = %q", answer, result.CleanedAnswer)
+		}
+		if len(result.Intents) != 0 {
+			t.Errorf("%q: Intents = %v, want none", answer, result.Intents)
+		}
+	}
+}

@@ -76,8 +76,22 @@ func (t Tier) Generable() bool { return t == TierAlias || t == TierDimension }
 // belongs to.
 type DiffChange struct {
 	Tier Tier   `json:"tier"`
+	Op   DiffOp `json:"op"`
 	What string `json:"what"`
 }
+
+// DiffOp says which way a change points. It is set where the change is found,
+// beside its wording, so nothing downstream has to read direction back out of
+// Chinese text — an ontology name containing "新增" would fool that.
+type DiffOp string
+
+const (
+	DiffAdded   DiffOp = "added"
+	DiffRemoved DiffOp = "removed"
+	// DiffChanged is an edit to something present on both sides, or a change
+	// that names no single direction (the whole ontology appearing or going).
+	DiffChanged DiffOp = "changed"
+)
 
 // ClassifyDiff returns the tier of the change from old to cand: the most
 // restricted tier among everything that differs.
@@ -101,7 +115,7 @@ func DiffOntologies(old, cand *Ontology) []DiffChange {
 		if old == nil && cand == nil {
 			return nil
 		}
-		return []DiffChange{{TierMissingFact, "本体整体新增或删除"}}
+		return []DiffChange{{TierMissingFact, DiffChanged, "本体整体新增或删除"}}
 	}
 
 	var out []DiffChange
@@ -133,14 +147,14 @@ func diffAliases(old, cand *Ontology) []DiffChange {
 		after := phraseSet(cand.Aliases[ref])
 		for _, p := range sortedMapKeys(after) {
 			if !before[p] {
-				out = append(out, DiffChange{TierAlias, fmt.Sprintf("新增别名「%s」→ %s", p, ref)})
+				out = append(out, DiffChange{TierAlias, DiffAdded, fmt.Sprintf("新增别名「%s」→ %s", p, ref)})
 			}
 		}
 		// Withdrawing an alias of a denial narrows the denial scan, so removal
 		// is never tier A, whatever the alias pointed at.
 		for _, p := range sortedMapKeys(before) {
 			if !after[p] {
-				out = append(out, DiffChange{TierDimension, fmt.Sprintf("删除别名「%s」→ %s", p, ref)})
+				out = append(out, DiffChange{TierDimension, DiffRemoved, fmt.Sprintf("删除别名「%s」→ %s", p, ref)})
 			}
 		}
 	}
@@ -153,20 +167,20 @@ func diffDimensions(old, cand *Ontology) []DiffChange {
 		before := old.Dimensions[name]
 		after, ok := cand.Dimensions[name]
 		if !ok {
-			out = append(out, DiffChange{TierMissingFact, "删除维度 " + name})
+			out = append(out, DiffChange{TierMissingFact, DiffRemoved, "删除维度 " + name})
 			continue
 		}
 		if before.Label != after.Label {
-			out = append(out, DiffChange{TierMissingFact, "修改维度名称 " + name})
+			out = append(out, DiffChange{TierMissingFact, DiffChanged, "修改维度名称 " + name})
 		}
 		for _, v := range before.Values {
 			if !containsFold(after.Values, v) {
-				out = append(out, DiffChange{TierMissingFact, fmt.Sprintf("删除维度取值 %s.%s", name, v)})
+				out = append(out, DiffChange{TierMissingFact, DiffRemoved, fmt.Sprintf("删除维度取值 %s.%s", name, v)})
 			}
 		}
 		for _, v := range after.Values {
 			if !containsFold(before.Values, v) {
-				out = append(out, DiffChange{TierDimension, fmt.Sprintf("新增维度取值 %s.%s", name, v)})
+				out = append(out, DiffChange{TierDimension, DiffAdded, fmt.Sprintf("新增维度取值 %s.%s", name, v)})
 			}
 		}
 		// A label on an existing value changes how an existing fact's scope
@@ -176,15 +190,15 @@ func diffDimensions(old, cand *Ontology) []DiffChange {
 				continue
 			}
 			if containsFold(before.Values, v) {
-				out = append(out, DiffChange{TierMissingFact, fmt.Sprintf("修改维度取值的说法 %s.%s", name, v)})
+				out = append(out, DiffChange{TierMissingFact, DiffChanged, fmt.Sprintf("修改维度取值的说法 %s.%s", name, v)})
 			} else {
-				out = append(out, DiffChange{TierDimension, fmt.Sprintf("新增维度取值的说法 %s.%s", name, v)})
+				out = append(out, DiffChange{TierDimension, DiffAdded, fmt.Sprintf("新增维度取值的说法 %s.%s", name, v)})
 			}
 		}
 	}
 	for _, name := range cand.DimensionNames() {
 		if _, ok := old.Dimensions[name]; !ok {
-			out = append(out, DiffChange{TierDimension, "新增维度 " + name})
+			out = append(out, DiffChange{TierDimension, DiffAdded, "新增维度 " + name})
 		}
 	}
 	return out
@@ -195,16 +209,16 @@ func diffClasses(old, cand *Ontology) []DiffChange {
 	for _, name := range old.ClassNames() {
 		after, ok := cand.Classes[name]
 		if !ok {
-			out = append(out, DiffChange{TierMissingFact, "删除类别 " + name})
+			out = append(out, DiffChange{TierMissingFact, DiffRemoved, "删除类别 " + name})
 			continue
 		}
 		if after != old.Classes[name] {
-			out = append(out, DiffChange{TierMissingFact, "修改类别 " + name})
+			out = append(out, DiffChange{TierMissingFact, DiffChanged, "修改类别 " + name})
 		}
 	}
 	for _, name := range cand.ClassNames() {
 		if _, ok := old.Classes[name]; !ok {
-			out = append(out, DiffChange{TierDimension, "新增类别 " + name})
+			out = append(out, DiffChange{TierDimension, DiffAdded, "新增类别 " + name})
 		}
 	}
 	return out
@@ -223,12 +237,12 @@ func diffRequires(old, cand *Ontology) []DiffChange {
 		now := stringSet(after.Requires)
 		for _, r := range sortedMapKeys(now) {
 			if !before[r] {
-				out = append(out, DiffChange{TierDimension, fmt.Sprintf("%s 新增伴随约束 %s", name, r)})
+				out = append(out, DiffChange{TierDimension, DiffAdded, fmt.Sprintf("%s 新增伴随约束 %s", name, r)})
 			}
 		}
 		for _, r := range sortedMapKeys(before) {
 			if !now[r] {
-				out = append(out, DiffChange{TierMissingFact, fmt.Sprintf("%s 删除伴随约束 %s", name, r)})
+				out = append(out, DiffChange{TierMissingFact, DiffRemoved, fmt.Sprintf("%s 删除伴随约束 %s", name, r)})
 			}
 		}
 	}
@@ -242,32 +256,32 @@ func diffResidue(old, cand *Ontology) []DiffChange {
 	var out []DiffChange
 
 	if old.IsClosedWorld() != cand.IsClosedWorld() {
-		out = append(out, DiffChange{TierMissingFact, "修改 closed_world"})
+		out = append(out, DiffChange{TierMissingFact, DiffChanged, "修改 closed_world"})
 	}
 	for _, name := range old.PropertyNames() {
 		after, ok := cand.Properties[name]
 		if !ok {
-			out = append(out, DiffChange{TierMissingFact, "删除属性 " + name})
+			out = append(out, DiffChange{TierMissingFact, DiffRemoved, "删除属性 " + name})
 			continue
 		}
 		if !sameJSON(old.Properties[name].Range, after.Range) {
-			out = append(out, DiffChange{TierMissingFact, "修改属性取值范围 " + name})
+			out = append(out, DiffChange{TierMissingFact, DiffChanged, "修改属性取值范围 " + name})
 		}
 	}
 	for _, name := range cand.PropertyNames() {
 		if _, ok := old.Properties[name]; !ok {
-			out = append(out, DiffChange{TierMissingFact, "新增属性 " + name})
+			out = append(out, DiffChange{TierMissingFact, DiffAdded, "新增属性 " + name})
 		}
 	}
 	if !sameJSON(old.Assertions, cand.Assertions) {
-		out = append(out, DiffChange{TierMissingFact, "修改事实断言"})
+		out = append(out, DiffChange{TierMissingFact, DiffChanged, "修改事实断言"})
 	}
 	if !sameJSON(old.Denials, cand.Denials) {
-		out = append(out, DiffChange{TierMissingFact, "修改否定项"})
+		out = append(out, DiffChange{TierMissingFact, DiffChanged, "修改否定项"})
 	}
 
 	if len(out) == 0 && !sameJSON(residue(old), residue(cand)) {
-		out = append(out, DiffChange{TierMissingFact, "修改了事实、约束或其他未归类字段"})
+		out = append(out, DiffChange{TierMissingFact, DiffChanged, "修改了事实、约束或其他未归类字段"})
 	}
 	return out
 }

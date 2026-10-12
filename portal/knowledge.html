@@ -1,102 +1,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>知识库 - UNICA 统一管理门户</title>
+<link rel="stylesheet" href="./ui/unica-ui.css?v=1">
 <style>
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-    --lt-accent: #FF5D1F;
-    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
-    --lt-on-accent: #14130F;
-    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-  }
-  :root {
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --ok: var(--lt-ok);
-    --bad: var(--lt-err);
-    --warn: var(--lt-warn);
-    /* Neutral elevation shadow, no brand hue — kept at original value. */
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-    :root {
-      --lt-paper: #14130F;
-      --lt-bg:    #0A0908;
-      --lt-ink:   #F0EDE4;
-      --lt-rule:  #25221C;
-      --lt-ok:    #3FA876;
-      --lt-warn:  #E0A040;
-      --lt-err:   #EE6F5E;
-      --lt-info:  #5A7BC7;
-
-      --bg: var(--lt-paper);
-      --surface: var(--lt-bg);
-      --text: var(--lt-ink);
-      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-      --border: var(--lt-rule);
-      --primary: var(--lt-accent);
-      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-      --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
-    }
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-  :root[data-theme="dark"] {
-    --lt-paper: #14130F;
-    --lt-bg:    #0A0908;
-    --lt-ink:   #F0EDE4;
-    --lt-rule:  #25221C;
-    --lt-ok:    #3FA876;
-    --lt-warn:  #E0A040;
-    --lt-err:   #EE6F5E;
-    --lt-info:  #5A7BC7;
-
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root[data-theme="light"] {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --row-hover: color-mix(in srgb, var(--lt-ink) 6%, var(--lt-bg));
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
+  /* Brand tokens, toasts, modals and pills come from ui/unica-ui.css. */
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -109,8 +16,6 @@
     justify-content: space-between; gap: 12px;
   }
   header .left { display: flex; align-items: center; gap: 14px; }
-  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
-  header a.back:hover { color: var(--primary); }
   header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
   #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
   main {
@@ -188,15 +93,6 @@
      keep the full value in the title attribute. */
   td.name-cell { max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
   td.actions-cell { width: 1%; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
-    font-size: 0.78rem; border: 1px solid var(--border); white-space: nowrap;
-  }
-  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
-  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
-  .pill.info { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
-  .pill.muted { color: var(--text-muted); }
   .progress { color: var(--text-muted); font-size: 0.8rem; margin-left: 6px; }
   .row-actions { display: flex; gap: 6px; flex-wrap: nowrap; }
   .row-actions button { padding: 5px 10px; font-size: 0.78rem; white-space: nowrap; }
@@ -207,23 +103,12 @@
   .pager { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
   .pager .count { margin-right: auto; font-size: 0.82rem; color: var(--text-muted); }
 
-  /* Modal */
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(10, 12, 16, 0.45); display: none;
-    align-items: center; justify-content: center; padding: 20px; z-index: 50;
-  }
-  .modal-backdrop.open { display: flex; }
-  .modal {
-    background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
-    max-width: 560px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 26px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
-  }
-  .modal h3 { margin: 0 0 18px; font-size: 1.1rem; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
   /* A document's segments need width to be readable and their own scroll: the
      modal must not grow past the viewport, and the page behind it must not
      scroll instead. */
-  .modal.wide { max-width: min(960px, 92vw); }
+  /* The paste form keeps the wider box it always had: the textarea is the
+     whole point of it. */
+  #modal-backdrop .uu-modal { max-width: 560px; }
   .seg-meta { color: var(--text-muted); font-size: 0.84rem; margin: -8px 0 14px; word-break: break-all; }
   .seg-toolbar { margin-bottom: 12px; }
   .seg-toolbar input { width: 100%; }
@@ -240,28 +125,12 @@
     white-space: pre-wrap; font-size: 0.86rem; line-height: 1.7; word-break: break-word;
   }
 
-  /* Toasts */
-  #toast-host {
-    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
-    gap: 10px; z-index: 100; max-width: 320px;
-  }
-  .toast {
-    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
-    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
-    animation: slide-in 0.2s ease; line-height: 1.6; word-break: break-word;
-  }
-  .toast.success { border-left-color: var(--ok); }
-  .toast.error { border-left-color: var(--bad); }
-  .toast.warn { border-left-color: var(--warn); }
-  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-
   .loading-text { color: var(--text-muted); font-size: 0.85rem; padding: 16px; }
   [hidden] { display: none !important; }
 </style>
 
 <header>
   <div class="left">
-    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
     <h1>知识库管理</h1>
   </div>
   <div id="user-info" hidden>
@@ -344,8 +213,8 @@
 </main>
 
 <!-- Paste-text modal -->
-<div class="modal-backdrop" id="modal-backdrop">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+<div class="uu-modal-backdrop" id="modal-backdrop">
+  <div class="uu-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <h3 id="modal-title">粘贴文本</h3>
     <form id="text-form">
       <div class="field">
@@ -358,7 +227,7 @@
         <textarea id="f-text" required placeholder="粘贴纯文本内容，建议一篇文档只讲一个主题"></textarea>
         <div class="hint" id="text-size-hint">内容上限 15 MB</div>
       </div>
-      <div class="modal-actions">
+      <div class="uu-modal-actions">
         <button type="button" id="modal-cancel">取消</button>
         <button type="submit" class="primary" id="modal-submit">提交</button>
       </div>
@@ -367,24 +236,23 @@
 </div>
 
 <!-- Segments modal -->
-<div class="modal-backdrop" id="segments-backdrop">
-  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="segments-title">
+<div class="uu-modal-backdrop" id="segments-backdrop">
+  <div class="uu-modal wide" role="dialog" aria-modal="true" aria-labelledby="segments-title">
     <h3 id="segments-title">文档分段</h3>
     <div class="seg-meta" id="segments-meta"></div>
     <div class="seg-toolbar">
       <input id="segments-filter" placeholder="在分段内容中筛选…" autocomplete="off" />
     </div>
     <div class="seg-list" id="segments-list"></div>
-    <div class="modal-actions">
+    <div class="uu-modal-actions">
       <button type="button" id="segments-more" hidden></button>
       <button type="button" id="segments-close">关闭</button>
     </div>
   </div>
 </div>
 
-<div id="toast-host" aria-live="polite"></div>
-
 <script src="./auth.js?v=1"></script>
+<script src="./ui/unica-ui.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -436,7 +304,6 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
-    backLink: document.getElementById("back-link"),
     tenantName: document.getElementById("tenant-name"),
     plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
@@ -463,22 +330,12 @@
     segmentsClose: document.getElementById("segments-close"),
     modalSubmit: document.getElementById("modal-submit"),
     fName: document.getElementById("f-name"),
-    fText: document.getElementById("f-text"),
-    toastHost: document.getElementById("toast-host")
+    fText: document.getElementById("f-text")
   };
 
-  // ---------- Toasts ----------
-  function toast(message, kind) {
-    var el = document.createElement("div");
-    el.className = "toast" + (kind ? " " + kind : "");
-    el.textContent = message;
-    els.toastHost.appendChild(el);
-    setTimeout(function () {
-      el.style.opacity = "0";
-      el.style.transition = "opacity 0.3s";
-      setTimeout(function () { el.remove(); }, 300);
-    }, 4200);
-  }
+  // ---------- Shared interface layer ----------
+  var toast = UnicaUI.toast;
+  var announce = UnicaUI.liveRegion.announce;
 
   // ---------- Auth / API ----------
   // Token storage, claim decoding, the fetch wrapper and silent token renewal
@@ -525,6 +382,10 @@
   function showLogin(message) {
     UnicaAuth.dropTab();
     cancelPolling();
+    // A dialog left open over the login form would trap focus away from it.
+    UnicaUI.modal.close(els.segmentsBackdrop);
+    UnicaUI.modal.close(els.modalBackdrop);
+    UnicaUI.topbar.unmount();
     els.appView.hidden = true;
     els.userInfo.hidden = true;
     els.loginView.hidden = false;
@@ -534,10 +395,13 @@
     }
   }
 
+  // The top bar is mounted only once there is a session: mounted on the login
+  // form it would show "未登录" and keep showing it after signing in.
   function showApp() {
     els.loginView.hidden = true;
     els.appView.hidden = false;
     els.userInfo.hidden = false;
+    UnicaUI.topbar.mount({ title: "知识库管理" });
   }
 
   // ---------- Login ----------
@@ -608,7 +472,6 @@
     // A user has one tenant and nothing to choose between, so the selector is
     // an administrator's control only.
     els.plField.hidden = !isAdmin();
-    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
 
     if (state.tenants.length === 0) {
       els.plSelect.innerHTML = '<option value="">暂无租户</option>';
@@ -640,6 +503,9 @@
   function selectTenant(id) {
     cancelPolling();
     state.currentTenant = findTenant(id);
+    // An administrator's choice goes on the address, where the top bar and
+    // every link built from it read the tenant.
+    if (state.currentTenant) UnicaUI.topbar.setTenant(state.currentTenant.id);
     els.tenantName.textContent = state.currentTenant
       ? (state.currentTenant.display_name || state.currentTenant.name)
       : "";
@@ -710,6 +576,7 @@
               ? ' <a href="./ai-settings.html' + tenantQuery() + '">前往设置页修复绑定 →</a>'
               : " 请联系管理员完成知识库绑定。");
           render();
+          announce("该租户还没有绑定知识库");
           return;
         }
 
@@ -723,6 +590,7 @@
           return loadDocs();
         }
         render();
+        announce(state.docs.length ? "已加载 " + state.docs.length + " 个文档" : els.tbody.textContent.trim());
       })
       .catch(function (err) {
         if (gen !== state.gen || err.message === "unauthorized") return;
@@ -734,6 +602,7 @@
           // The deployment has no dataset API key, so nothing here can work.
           setUploadEnabled(false);
           showNotice("bad", "知识库管理当前不可用", err.message);
+          announce("知识库管理当前不可用", "assertive");
           els.tbody.innerHTML =
             '<tr><td colspan="5" class="empty-state">服务端未启用知识库管理，暂时无法查看或上传文档</td></tr>';
           return;
@@ -780,7 +649,7 @@
     var statusCell = pend
       ? statusPillHtml(pend.status, pend.completed, pend.total)
       : statusPillHtml(doc.indexing_status, null, null);
-    if (doc.enabled === false) statusCell += ' <span class="pill muted">已停用</span>';
+    if (doc.enabled === false) statusCell += ' <span class="uu-pill muted">已停用</span>';
     var name = doc.name || "(未命名文档)";
     return (
       "<tr>" +
@@ -821,7 +690,7 @@
     if (isFinite(done) && isFinite(all) && all > 0) {
       progress = '<span class="progress">' + escapeHtml(done + "/" + all) + "</span>";
     }
-    return '<span class="pill ' + kind + '">' + escapeHtml(label) + "</span>" + progress;
+    return '<span class="uu-pill ' + kind + '">' + escapeHtml(label) + "</span>" + progress;
   }
 
   function renderPager() {
@@ -922,7 +791,9 @@
     els.segmentsFilter.disabled = true;
     els.segmentsList.innerHTML = '<div class="empty-state">加载中…</div>';
     els.segmentsMore.hidden = true;
-    els.segmentsBackdrop.classList.add("open");
+    // Esc, the scrim and the close button all end in resetSegments, so a reply
+    // still in flight lands nowhere however the dialog was dismissed.
+    UnicaUI.modal.open(els.segmentsBackdrop, { onClose: resetSegments });
 
     UnicaAuth.api(knowledgePath("/documents/" + encodeURIComponent(docID) + "/segments"))
       .then(function (data) {
@@ -988,7 +859,7 @@
   function segmentHtml(seg) {
     var meta = formatCount(seg.word_count) + " 字";
     if (Number(seg.hit_count) > 0) meta += " · 命中 " + seg.hit_count + " 次";
-    var disabled = seg.enabled === false ? ' <span class="pill muted">已停用</span>' : "";
+    var disabled = seg.enabled === false ? ' <span class="uu-pill muted">已停用</span>' : "";
     var answer = "";
     if (segState.docForm === "qa_model" && seg.answer) {
       answer = '<div class="seg-answer">答：' + escapeHtml(seg.answer) + "</div>";
@@ -1013,13 +884,11 @@
     renderSegments();
   });
 
-  els.segmentsClose.addEventListener("click", closeSegments);
-  els.segmentsBackdrop.addEventListener("click", function (e) {
-    if (e.target === els.segmentsBackdrop) closeSegments();
+  els.segmentsClose.addEventListener("click", function () {
+    UnicaUI.modal.close(els.segmentsBackdrop);
   });
 
-  function closeSegments() {
-    els.segmentsBackdrop.classList.remove("open");
+  function resetSegments() {
     // Dropping the identity is what makes an in-flight reply land nowhere.
     segState = { docID: "", name: "", all: [], shown: 0, docForm: "text_model" };
     els.segmentsList.innerHTML = "";
@@ -1073,23 +942,16 @@
   els.pasteBtn.addEventListener("click", function () {
     if (!state.canUpload) return;
     els.textForm.reset();
-    els.modalBackdrop.classList.add("open");
-    els.fName.focus();
+    UnicaUI.modal.open(els.modalBackdrop, {
+      trigger: els.pasteBtn,
+      onClose: function () { els.textForm.reset(); }
+    });
   });
 
   els.modalCancel.addEventListener("click", closeModal);
-  els.modalBackdrop.addEventListener("click", function (e) {
-    if (e.target === els.modalBackdrop) closeModal();
-  });
-  document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
-    if (els.segmentsBackdrop.classList.contains("open")) closeSegments();
-    else if (els.modalBackdrop.classList.contains("open")) closeModal();
-  });
 
   function closeModal() {
-    els.modalBackdrop.classList.remove("open");
-    els.textForm.reset();
+    UnicaUI.modal.close(els.modalBackdrop);
   }
 
   els.textForm.addEventListener("submit", function (e) {
