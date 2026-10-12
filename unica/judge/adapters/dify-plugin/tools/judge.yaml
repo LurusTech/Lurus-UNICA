@@ -47,10 +47,10 @@ parameters:
     type: string
     required: false
     label:
-      zh_Hans: 产品线 / 证据链
+      zh_Hans: 产品线 / 留痕链
       en_US: Product line / evidence chain
     human_description:
-      zh_Hans: 证据链与影子统计的键；留空用 default。
+      zh_Hans: 留痕链与影子统计的键；留空用 default。
       en_US: Keys the evidence chain and shadow summary; empty means default.
     llm_description: Optional product line id.
     form: form

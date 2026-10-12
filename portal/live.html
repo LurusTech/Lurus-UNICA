@@ -187,7 +187,7 @@
         <dl class="sw" id="st-switches"></dl>
       </div>
       <div class="st-block" aria-labelledby="st-chain-h">
-        <h3 id="st-chain-h">证据链</h3>
+        <h3 id="st-chain-h">判定留痕</h3>
         <div id="st-chain"><div class="st-line hint">读取中…</div></div>
       </div>
       <div class="st-block rail-foot">
@@ -870,7 +870,7 @@
       }
     },
     {
-      key: "evidence", label: "判定证据链", page: "evidence.html",
+      key: "evidence", label: "判定留痕", page: "evidence.html",
       load: function () {
         return api(tenantPath("/evidence/config")).then(function (cfg) {
           return cfg && cfg.enabled ? ["已开启", "ok"] : ["未开启", "muted"];

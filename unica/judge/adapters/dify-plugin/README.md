@@ -38,7 +38,7 @@ def main(result: list) -> dict:
 - `{{#judge.body.withheld#}}` 为 `true` → 走转人工分支（把 `{{#judge.body.detail#}}` 和 `{{#judge.body.answer#}}` 作为坐席草稿一起带过去）
 - 否则 → 回复节点输出 `{{#judge.body.answer#}}`（**用这个，不要用 `llm.text`**：闸门已剥掉 `[FACT:]`/`[INTENT:]`/`[HANDOFF:]` 标签）
 
-影子模式下 `withheld` 永远是 `false`，分支不会触发；`would_withhold` 记在证据链里，`GET /shadow/<product_line>` 看汇总。切到 `-mode enforce` 后，同一套节点自动开始拦截。
+影子模式下 `withheld` 永远是 `false`，分支不会触发；`would_withhold` 记在留痕链里，`GET /shadow/<product_line>` 看汇总。切到 `-mode enforce` 后，同一套节点自动开始拦截。
 
 **失败即转人工**：HTTP 节点请把"异常处理"设为走转人工分支。闸门不可达不能等于放行。
 

@@ -21,7 +21,7 @@ curl -s localhost:8787/judge -H 'Content-Type: application/json' \
  "evidence_id":"default/1","evidence_hash":"…"}
 ```
 
-默认**影子模式**：全部判定、全部记录、一条不拦。`GET /shadow/<line>` 告诉你"若开启将扣下 N 条"——这个数是从证据链里数出来的，不是估的；样本不足 30 条时只给条数不给比例。切到 `-mode enforce`，同一套接法开始拦截。
+默认**影子模式**：全部判定、全部记录、一条不拦。`GET /shadow/<line>` 告诉你"若开启将扣下 N 条"——这个数是从留痕链里数出来的，不是估的；样本不足 30 条时只给条数不给比例。切到 `-mode enforce`，同一套接法开始拦截。
 
 ## 四轴正交
 
@@ -56,7 +56,7 @@ curl -s localhost:8787/judge -H 'Content-Type: application/json' \
 | `query` | 客户原话。用于关键词规则；客户自己说出的数字不算承诺的出处 |
 | `grounding` | 检索段落原文数组。出现在里面的数字算有出处。只存摘要哈希进证据 |
 | `retrieval_scores` | 检索相关度。**不传则不启用置信度门槛**——置信度是对检索管道的陈述，人的回复没有 |
-| `product_line` | 选用哪条线的事实、写入哪条证据链、计入哪份影子汇总；默认 `default`。小写字母、数字与 `_ . -`，最长 64，不能以点结尾；因为它直接做文件名，所以不分大小写、拒绝系统保留名 |
+| `product_line` | 选用哪条线的事实、写入哪条留痕链、计入哪份影子汇总；默认 `default`。小写字母、数字与 `_ . -`，最长 64，不能以点结尾；因为它直接做文件名，所以不分大小写、拒绝系统保留名 |
 | `conversation_id` · `correlation_id` | 写入证据行 |
 | `speaker` | `ai` / `human`，只影响统计 |
 
@@ -66,7 +66,7 @@ curl -s localhost:8787/judge -H 'Content-Type: application/json' \
 
 ## 事实（facts）
 
-就是 UNICA 的本体 YAML（`doc/ontology-schema.md`）。`-facts` 给一个 `.yaml` 文件就是一家店（默认线）；给一个目录就是一家代运营机构：`<目录>/<店>.yaml` 一店一份，`product_line` 选用，`PUT /facts/<店>` 新建或替换，各店证据链与影子汇总互不相干。最小可用：
+就是 UNICA 的本体 YAML（`doc/ontology-schema.md`）。`-facts` 给一个 `.yaml` 文件就是一家店（默认线）；给一个目录就是一家代运营机构：`<目录>/<店>.yaml` 一店一份，`product_line` 选用，`PUT /facts/<店>` 新建或替换，各店留痕链与影子汇总互不相干。最小可用：
 
 ```yaml
 product_line: Shop
@@ -81,7 +81,7 @@ assertions:
 
 没有事实也能跑：承诺防火墙与红线包不依赖本体。
 
-## 证据链
+## 留痕链
 
 每条判定是一行 `answer_audit` 同构的记录（`pkg/compliance`），按 `product_line` 成链，行哈希覆盖本行内容与上一行哈希。`-evidence <dir>` 时按行追加到 `<dir>/<line>.jsonl`，重启续链不归零；启动时整链校验，文件被改过会**拒绝启动**并指出第几条。不设 `-evidence` 则只在内存里，重启从 1 开始——试用可以，部署不行，启动日志会写明。
 
@@ -97,7 +97,7 @@ assertions:
 
 ## 许可与边界
 
-本模块与 `unica/pkg` 以 Apache-2.0 发布（见各自 `LICENSE`），且 `judge/go.mod` 只依赖 `pkg`——`GOWORK=off go build ./...` 在本目录可独立通过。UNICA 的自演化闭环、证据链校验服务、多租户控制台与官方渠道接入在其他模块，不在此许可下。
+本模块与 `unica/pkg` 以 Apache-2.0 发布（见各自 `LICENSE`），且 `judge/go.mod` 只依赖 `pkg`——`GOWORK=off go build ./...` 在本目录可独立通过。UNICA 的自演化闭环、留痕链校验服务、多租户控制台与官方渠道接入在其他模块，不在此许可下。
 
 ## 不做
 

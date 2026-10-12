@@ -201,7 +201,7 @@
 
     <div class="card" id="config-card" hidden>
       <div class="card-head">
-        <h2>证据链</h2>
+        <h2>判定留痕</h2>
         <span class="uu-pill muted" id="config-pill">—</span>
       </div>
       <p class="card-sub">
@@ -521,7 +521,7 @@
       .then(function (cfg) { renderConfig(!!(cfg && cfg.enabled)); })
       .catch(function (err) {
         els.configCard.hidden = true;
-        reportError("读取证据链开关失败", err);
+        reportError("读取判定留痕开关失败", err);
       });
   }
 
@@ -530,7 +530,7 @@
     els.configCard.hidden = false;
     els.configPill.textContent = enabled ? "已开启" : "未开启";
     els.configPill.className = "uu-pill " + (enabled ? "ok" : "muted");
-    els.configToggle.textContent = enabled ? "关闭证据链" : "开启证据链";
+    els.configToggle.textContent = enabled ? "关闭判定留痕" : "开启判定留痕";
   }
 
   els.configToggle.addEventListener("click", function () {
@@ -549,7 +549,7 @@
         if (cfg && cfg.cache_invalidated === false) {
           toast("已保存，但路由缓存未能刷新：新设置会在缓存过期后生效", "error");
         } else {
-          toast(next ? "证据链已开启" : "证据链已关闭", "success");
+          toast(next ? "判定留痕已开启" : "判定留痕已关闭", "success");
         }
       })
       .catch(function (err) { reportError("保存失败", err); })
@@ -657,7 +657,7 @@
         setQuery({ conversation: conv, conversation_id: "" });
         var n = Array.isArray(data && data.entries) ? data.entries.length : 0;
         announce("已载入会话 " + conv + " 的判定证据，共 " + n + " 条" +
-          (data && data.chain && !data.chain.ok ? "；证据链校验未通过" : ""));
+          (data && data.chain && !data.chain.ok ? "；留痕链校验未通过" : ""));
       })
       .catch(function (err) {
         state.lastEvidence = null;
@@ -673,13 +673,13 @@
     var box = els.chainStatus;
     if (chain && chain.ok) {
       box.className = "chain-status ok";
-      box.innerHTML = '<div class="title">证据链校验通过</div>' +
+      box.innerHTML = '<div class="title">留痕链校验通过</div>' +
         '<div class="meta">校验了第 ' + escapeHtml(chain.from_seq) + " – " + escapeHtml(chain.to_seq) +
         " 条，共 " + escapeHtml(chain.checked) + " 条记录（含同一时段其他会话的记录），逐条重算哈希并核对衔接均一致。</div>" +
         (chain.note ? '<div class="meta">' + escapeHtml(chain.note) + "</div>" : "");
     } else {
       box.className = "chain-status bad";
-      box.innerHTML = '<div class="title">证据链校验未通过：从第 ' + escapeHtml(chain && chain.first_bad_seq) + " 条起</div>" +
+      box.innerHTML = '<div class="title">留痕链校验未通过：从第 ' + escapeHtml(chain && chain.first_bad_seq) + " 条起</div>" +
         '<div class="meta">' + escapeHtml((chain && chain.problem) || "") + "</div>";
     }
   }
