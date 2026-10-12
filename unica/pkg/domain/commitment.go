@@ -63,6 +63,19 @@ var refusalForms = []string{
 	"不保证", "不承诺", "不包含", "不含", "不退", "不赔", "不在", "不属于", "不享受", "不适用",
 }
 
+// cueFreePhrases contain a cue's characters without making its promise: the
+// 质保 in 品质保障 is "quality", the 保价 in 确保价格 is "ensure the price".
+// Matching cues by substring would read both as a warranty or price-protection
+// promise, and an industry pack's short cues (质保, 保价, 保修) make that
+// common: "我们的商品品质保障，支持7天无理由退货" was held as an unbacked
+// warranty. A cue found inside one of these is not a cue.
+var cueFreePhrases = []string{"品质保", "确保价", "确保修", "担保价"}
+
+// adjacentDenials deny a cue when they sit directly against it: 不保修, 无质保,
+// 不包邮. Unlike refusalForms they must touch the cue, because a bare 不
+// further back ("不满意可全额退款") belongs to another clause.
+var adjacentDenials = []string{"不", "无"}
+
 // deferralPattern recognises a passage that hands a figure to a person: the
 // knowledge base says "ask us", so any figure the answer supplies instead was
 // not taken from it.
@@ -484,6 +497,10 @@ func findMarkers(answer string, sent sentence, extraCues []string) []marker {
 			}
 			a := sent.start + from + idx
 			b := a + len(w)
+			if words[w].cue && !words[w].absolute && insidePhrase(text, a-sent.start, b-sent.start, cueFreePhrases) {
+				from += idx + len(w)
+				continue
+			}
 			if k := overlap(a, b); k < 0 {
 				m := *words[w]
 				m.start, m.end = a, b
@@ -509,13 +526,44 @@ func findMarkers(answer string, sent sentence, extraCues []string) []marker {
 			lo = sent.start
 		}
 		window := answer[lo:found[j-1].end]
-		exempt := containsAny(window, refusalForms)
+		exempt := containsAny(window, refusalForms) || deniedRightBefore(answer[sent.start:found[i].start])
 		for k := i; k < j; k++ {
 			found[k].exempt = exempt
 		}
 		i = j
 	}
 	return found
+}
+
+// insidePhrase reports whether text[a:b] lies within an occurrence of one of
+// phrases.
+func insidePhrase(text string, a, b int, phrases []string) bool {
+	for _, p := range phrases {
+		from := 0
+		for {
+			idx := strings.Index(text[from:], p)
+			if idx < 0 {
+				break
+			}
+			s := from + idx
+			if s <= a && b <= s+len(p) {
+				return true
+			}
+			from = s + 1
+		}
+	}
+	return false
+}
+
+// deniedRightBefore reports whether the text just before a chain of markers
+// ends in one of adjacentDenials.
+func deniedRightBefore(before string) bool {
+	for _, d := range adjacentDenials {
+		if strings.HasSuffix(before, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // commitmentSentence reports whether a sentence promises something: an

@@ -39,3 +39,41 @@ func got0(t *testing.T, answer string, cues []string) string {
 	}
 	return g[0].Got
 }
+
+// Short industry cues found inside other words, and cues denied by a
+// directly preceding 不 or 无, are not promises: nothing below may be held.
+// (Their figures are still counted as ungrounded, which holds nothing.)
+func TestCommitmentCues_NotPromises(t *testing.T) {
+	cues := CommitmentCuesFor([]string{"ecommerce"})
+	for _, s := range []string{
+		"我们的商品品质保障，支持7天无理由退货。",
+		"我们确保价格与官网一致，现价199元。",
+		"人为损坏不保修，维修费200元。",
+		"此款无质保，售价88元。",
+		"这项服务不免费，收费30元。",
+	} {
+		for _, f := range CheckCommitmentsWithCues(s, nil, GroundingSources{}, CommitmentScopeCommitment, cues) {
+			if IsBlockingFinding(f.Kind) {
+				t.Errorf("%s: blocking finding %+v, want none", s, f)
+			}
+		}
+	}
+}
+
+// The same cues still catch the promise they exist for.
+func TestCommitmentCues_StillCatchPromises(t *testing.T) {
+	cues := CommitmentCuesFor([]string{"ecommerce"})
+	for _, s := range []string{
+		"本商品保修24个月。",
+		"下单后保价30天，降价补差价。",
+		"质保两年，坏了包换，换新只需3天。",
+	} {
+		blocking := false
+		for _, f := range CheckCommitmentsWithCues(s, nil, GroundingSources{}, CommitmentScopeCommitment, cues) {
+			blocking = blocking || IsBlockingFinding(f.Kind)
+		}
+		if !blocking {
+			t.Errorf("%s: no blocking finding, want an unbacked commitment", s)
+		}
+	}
+}
