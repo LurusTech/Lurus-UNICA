@@ -334,29 +334,9 @@ func setupDynamicChannelPipeline(
 				continue
 			}
 
-			key := c.Platform + ":" + c.ID
-			xhsCfg := xiaohongshu.Config{
-				AppID:         c.AppID,
-				AppSecret:     c.AppSecret,
-				WebhookSecret: c.WebhookToken,
-			}
-
-			// Register credentials with TokenManager so SendMessage can
-			// obtain (and lazily refresh) an access token on demand.
-			tokenMgr.RegisterChannel(key, token.ChannelCredentials{
-				AppID:     c.AppID,
-				AppSecret: c.AppSecret,
-			}, token.NewXiaohongshuRefresher())
-
-			chKey := key
-			xhsTokenGetter := func(ctx context.Context) (string, error) {
-				return tokenMgr.GetToken(ctx, chKey)
-			}
-
-			xhsAdapter := xiaohongshu.NewAdapter(xhsCfg, key, xhsTokenGetter)
-			registry.Register(key, xhsAdapter)
-			newHandlers[key] = xiaohongshu.NewWebhookHandler(xhsAdapter, producer)
-			newKeys[key] = true
+			regKey, h := wireXiaohongshuChannel(c, registry, tokenMgr, producer)
+			newHandlers[c.Platform+":"+c.ID] = h
+			newKeys[regKey] = true
 		}
 
 		// Drop registry entries for channels that disappeared or were
@@ -384,6 +364,39 @@ func setupDynamicChannelPipeline(
 	log.Println("[gateway] dynamic channel config pipeline enabled")
 
 	return db
+}
+
+// wireXiaohongshuChannel registers one portal-managed Xiaohongshu channel with
+// the token manager and the adapter registry, and returns the registry key and
+// the channel's webhook handler.
+//
+// Inbound messages are stamped with, and the adapter is registered under, the
+// bare channel_configs UUID: the router resolves routes and stores
+// conversations by that UUID (channel_id is a UUID column), and outbound replies
+// reach the registry carrying the same value. "platform:id" stays the webhook
+// dispatch key and the token manager's internal key.
+func wireXiaohongshuChannel(c channelcfg.ChannelConfig, registry *adapter.Registry, tokenMgr *token.TokenManager, producer *stream.Producer) (string, http.Handler) {
+	key := c.Platform + ":" + c.ID
+	xhsCfg := xiaohongshu.Config{
+		AppID:         c.AppID,
+		AppSecret:     c.AppSecret,
+		WebhookSecret: c.WebhookToken,
+	}
+
+	// Register credentials with TokenManager so SendMessage can
+	// obtain (and lazily refresh) an access token on demand.
+	tokenMgr.RegisterChannel(key, token.ChannelCredentials{
+		AppID:     c.AppID,
+		AppSecret: c.AppSecret,
+	}, token.NewXiaohongshuRefresher())
+
+	xhsTokenGetter := func(ctx context.Context) (string, error) {
+		return tokenMgr.GetToken(ctx, key)
+	}
+
+	xhsAdapter := xiaohongshu.NewAdapter(xhsCfg, c.ID, xhsTokenGetter)
+	registry.Register(c.ID, xhsAdapter)
+	return c.ID, xiaohongshu.NewWebhookHandler(xhsAdapter, producer)
 }
 
 // dynamicHandlerSet holds the current set of webhook handlers for
