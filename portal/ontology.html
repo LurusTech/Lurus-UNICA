@@ -593,7 +593,7 @@
   function requestedTenant() {
     if (!isAdmin()) return "";
     var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
-    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+    try { return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : ""; } catch (e) { return ""; }
   }
 
   // The path segment this page addresses its tenant by.
@@ -828,7 +828,8 @@
     var m = /[?&]property=([^&]*)/.exec(window.location.search);
     if (!m) return;
     propertyFocused = true;
-    var name = decodeURIComponent(m[1].replace(/\+/g, " "));
+    var name = "";
+    try { name = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch (e) { return; }
     if (!name) return;
     var text = els.yamlEditor.value;
     var escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

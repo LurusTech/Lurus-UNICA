@@ -227,6 +227,11 @@
   // DOM kept per lane. The feed itself is unbounded; a lane is a glance, and
   // the full history of any item is on the page its link opens.
   var LANE_MAX = 80;
+  // Events kept in memory for the detail view and the resolve links. A page
+  // left open all day would otherwise hold every event of the day, each with
+  // its before/after snapshots; the oldest beyond this are dropped unless
+  // still in the inbox or open.
+  var BYID_MAX = 1000;
   var READ_MAX = 500;
   var VERSION_WINDOW_DAYS = 7;
   var LANE_ORDER = ["forced_handoff", "withheld", "reducible_handoff", "violation", "ontology", "config"];
@@ -239,6 +244,7 @@
     tenant: "",
     me: "",
     byId: {},          // id -> event
+    byIdOrder: [],     // ids in arrival order, for trimming byId
     resolved: {},      // id -> id of the event that settled it
     inboxEls: {},      // id -> li
     lanes: {},         // category -> { track, count, items: [{ev, el}] }
@@ -633,8 +639,14 @@
   function take(ev, live) {
     if (!ev || typeof ev !== "object") return;
     var id = eventKey(ev);
-    if (state.byId[id]) return;
+    var prev = state.byId[id];
+    // The same row changed again (a proposal approved, then published) is a
+    // new event under the same id; the same delivery twice is not.
+    if (prev && prev.at === ev.at) return;
+    if (prev) state.byIdOrder.splice(state.byIdOrder.indexOf(id), 1);
     state.byId[id] = ev;
+    state.byIdOrder.push(id);
+    trimById();
     state.total++;
 
     if (ev.resolves) {
@@ -649,6 +661,19 @@
 
     if (live && (ev.category === "config" || ev.category === "ontology")) scheduleRail();
     if (ev.resolves && state.detailId === String(ev.resolves) && state.byId[ev.resolves]) openDetail(state.byId[ev.resolves]);
+  }
+
+  function trimById() {
+    var budget = state.byIdOrder.length;
+    while (state.byIdOrder.length > BYID_MAX && budget-- > 0) {
+      var old = state.byIdOrder.shift();
+      if (state.inboxEls[old] || state.detailId === old) {
+        state.byIdOrder.push(old);
+        continue;
+      }
+      delete state.byId[old];
+      delete state.resolved[old];
+    }
   }
 
   function renderEmpty() {

@@ -1,0 +1,7 @@
+{
+  "name": "unica-portal-test",
+  "private": true,
+  "devDependencies": {
+    "happy-dom": "15.11.7"
+  }
+}
