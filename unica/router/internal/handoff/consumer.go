@@ -48,6 +48,7 @@ const (
 // conversationCloser is the part of state.Manager the resolve path needs. It
 // is an interface so the consumer can be tested without a database.
 type conversationCloser interface {
+	CurrentState(ctx context.Context, convID string) (state.ConversationState, error)
 	TransitionState(ctx context.Context, convID string, newState state.ConversationState, actor string) error
 }
 
@@ -223,12 +224,14 @@ func (c *HandoffConsumer) processEntry(ctx context.Context, entry redis.XMessage
 // through the state manager so the close runs the same path as the idle sweep:
 // database, session cache, and the on-close hooks (the satisfaction survey).
 //
-// A conversation that is already closed is not an error. Chatwoot can resolve,
-// reopen and resolve again, the idle sweep may have got there first, and the
-// event may be redelivered after a restart; none of those is a failure worth a
-// dead-letter entry. Any other refused transition (a conversation still
-// pending, which has never been answered) is reported as an error, because
-// closing it would drop a customer nobody has answered yet.
+// Only a conversation an agent is handling is closed. A resolve ends the human
+// session it belongs to; a conversation in any other state is past it — the
+// idle sweep closed it and the customer has since come back to the AI, say —
+// and closing that would cut off a live AI conversation and send the survey
+// again. Such an event is stale and is dropped, as is one for a conversation
+// already closed: Chatwoot can resolve, reopen and resolve again, the sweep may
+// have got there first, and the event may be redelivered after a restart; none
+// of those is a failure worth a dead-letter entry.
 func (c *HandoffConsumer) closeResolved(ctx context.Context, event *HandoffEvent) error {
 	if event.ConversationID == "" {
 		return errors.New("resolved event has no conversation_id")
@@ -236,7 +239,20 @@ func (c *HandoffConsumer) closeResolved(ctx context.Context, event *HandoffEvent
 	if c.closer == nil {
 		return errors.New("no state manager to close the conversation with")
 	}
-	err := c.closer.TransitionState(ctx, event.ConversationID, state.StateClosed, resolvedActor)
+	current, err := c.closer.CurrentState(ctx, event.ConversationID)
+	if err != nil {
+		return fmt.Errorf("read state of conversation %s: %w", event.ConversationID, err)
+	}
+	switch current {
+	case state.StateHumanProcessing:
+	case state.StateClosed:
+		log.Printf("[handoff] conversation %s already closed, resolve event ignored", event.ConversationID)
+		return nil
+	default:
+		log.Printf("[handoff] conversation %s is %s, not with an agent: resolve event ignored", event.ConversationID, current)
+		return nil
+	}
+	err = c.closer.TransitionState(ctx, event.ConversationID, state.StateClosed, resolvedActor)
 	var invalid *state.ErrInvalidTransition
 	if errors.As(err, &invalid) && invalid.From == state.StateClosed {
 		log.Printf("[handoff] conversation %s already closed, resolve event ignored", event.ConversationID)

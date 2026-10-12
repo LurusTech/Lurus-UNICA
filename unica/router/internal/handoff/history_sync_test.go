@@ -106,8 +106,10 @@ func TestBuildChatwootMessage_AIMessage(t *testing.T) {
 	if !strings.Contains(req.Content, "[AI]") {
 		t.Errorf("expected [AI] tag, got %s", req.Content)
 	}
-	if req.Private {
-		t.Error("AI message should not be private")
+	// Public outgoing messages come back through the webhook as agent
+	// replies and would be sent to the customer.
+	if !req.Private {
+		t.Error("AI message must be a private note")
 	}
 }
 
@@ -139,8 +141,8 @@ func TestBuildChatwootMessage_HumanMessage(t *testing.T) {
 	if req.MessageType != "outgoing" {
 		t.Errorf("expected outgoing, got %s", req.MessageType)
 	}
-	if req.Private {
-		t.Error("human message should not be private")
+	if !req.Private {
+		t.Error("an earlier agent reply must be a private note")
 	}
 	if strings.Contains(req.Content, "[AI]") || strings.Contains(req.Content, "[System]") {
 		t.Errorf("human message should not have AI/System tag, got %s", req.Content)
@@ -278,7 +280,7 @@ func TestBuildChatwootMessage_AllSenderTypes(t *testing.T) {
 			senderType:   "ai",
 			content:      "Sure thing",
 			wantType:     "outgoing",
-			wantPrivate:  false,
+			wantPrivate:  true,
 			wantContains: "[AI]",
 		},
 		{
@@ -292,14 +294,14 @@ func TestBuildChatwootMessage_AllSenderTypes(t *testing.T) {
 			senderType:      "human",
 			content:         "I'll help",
 			wantType:        "outgoing",
-			wantPrivate:     false,
+			wantPrivate:     true,
 			wantNotContains: "[AI]",
 		},
 		{
 			senderType:      "agent",
 			content:         "Let me check",
 			wantType:        "outgoing",
-			wantPrivate:     false,
+			wantPrivate:     true,
 			wantNotContains: "[AI]",
 		},
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -164,6 +165,17 @@ func (m *Manager) TransitionState(ctx context.Context, convID string, newState C
 
 	// Update database
 	if err := m.repo.UpdateConversationState(ctx, convID, newState); err != nil {
+		if errors.Is(err, ErrAlreadyClosed) {
+			// Another closer got there between the read above and the write:
+			// the cached state was stale. Report it as the refused transition
+			// it now is, and do not fire the on-close hooks a second time.
+			if m.cache != nil {
+				if cerr := m.cache.InvalidateSession(ctx, convID); cerr != nil {
+					log.Printf("[state] warning: failed to invalidate session cache for %s: %v", convID, cerr)
+				}
+			}
+			return &ErrInvalidTransition{From: StateClosed, To: newState}
+		}
 		return fmt.Errorf("update db state: %w", err)
 	}
 
@@ -298,6 +310,13 @@ func (m *Manager) findOrCreateConversation(ctx context.Context, customerID, chan
 	return convID, nil
 }
 
+// CurrentState reports a conversation's state, from the session cache when it
+// holds one and from the database otherwise.
+func (m *Manager) CurrentState(ctx context.Context, convID string) (ConversationState, error) {
+	s, _, _, err := m.getConversationState(ctx, convID)
+	return s, err
+}
+
 // getConversationState retrieves the current state, product line, and agent from cache or DB.
 func (m *Manager) getConversationState(ctx context.Context, convID string) (ConversationState, string, string, error) {
 	// Try cache first
@@ -376,7 +395,9 @@ func (m *Manager) closeIdleConversations(ctx context.Context) {
 		}
 
 		if err := m.repo.UpdateConversationState(ctx, id, StateClosed); err != nil {
-			log.Printf("[state] error closing idle conversation %s: %v", id, err)
+			if !errors.Is(err, ErrAlreadyClosed) {
+				log.Printf("[state] error closing idle conversation %s: %v", id, err)
+			}
 			continue
 		}
 		if m.cache != nil {

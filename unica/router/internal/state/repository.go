@@ -179,7 +179,11 @@ func (r *Repository) GetConversationByCustomer(ctx context.Context, customerID s
 func (r *Repository) UpdateConversationState(ctx context.Context, id string, newState ConversationState) error {
 	var query string
 	if newState == StateClosed {
-		query = `UPDATE conversations SET state = $1, updated_at = NOW(), closed_at = NOW() WHERE id = $2`
+		// Conditional, so that of two closers racing — the idle sweep and an
+		// agent's resolve, or two replicas — exactly one changes the row and
+		// goes on to run the on-close hooks (the survey); the other gets
+		// ErrAlreadyClosed.
+		query = `UPDATE conversations SET state = $1, updated_at = NOW(), closed_at = NOW() WHERE id = $2 AND state <> 'closed'`
 	} else {
 		query = `UPDATE conversations SET state = $1, updated_at = NOW(), closed_at = NULL WHERE id = $2`
 	}
@@ -192,10 +196,18 @@ func (r *Repository) UpdateConversationState(ctx context.Context, id string, new
 		return fmt.Errorf("update conversation state (rows affected): %w", err)
 	}
 	if rows == 0 {
+		if newState == StateClosed {
+			return ErrAlreadyClosed
+		}
 		return fmt.Errorf("conversation not found: %s", id)
 	}
 	return nil
 }
+
+// ErrAlreadyClosed is UpdateConversationState's answer to a close that changed
+// nothing: the conversation was closed already (or no longer exists), so there
+// is nothing to close and no on-close hook to run.
+var ErrAlreadyClosed = errors.New("conversation already closed")
 
 // CreateMessage inserts a new message record and returns its generated ID.
 //
