@@ -181,3 +181,35 @@ test("the same id at a new time is a new event; the same delivery twice is not",
     h.restore();
   }
 });
+
+test("a poll still in flight when the tab comes back does not tear the new stream down", async () => {
+  const h = harness();
+  try {
+    let release: (v: any) => void = () => {};
+    h.ui.events.subscribe("pl-1", () => {});
+    await flush();
+    h.setHidden(true);
+    await h.advance(31000); // now polling
+    // The next poll hangs until we release it.
+    h.win.UnicaAuth.api = (path: string) => {
+      h.lists.push(path);
+      return new Promise((resolve) => { release = resolve; });
+    };
+    await h.advance(15000);
+    h.setHidden(false);
+    await flush();
+    expect(h.open()).toBe(1);
+    const streamsBefore = h.streams.length;
+    release({ events: [], cursor: "c9", has_more: false });
+    await flush();
+    // Well inside the stream's 60 s silence window (this fake stream sends no
+    // heartbeats): any new stream here was opened by the late poll.
+    await h.advance(1000);
+    expect(h.streams.length).toBe(streamsBefore); // no reconnect
+    expect(h.open()).toBe(1);
+    expect(h.ui.events.status("pl-1")).toBe("connected");
+  } finally {
+    h.restore();
+  }
+});
+

@@ -1178,6 +1178,9 @@
       var list = data && Array.isArray(data.events) ? data.events : [];
       for (var i = 0; i < list.length; i++) self.accept(list[i], false);
       if (data && typeof data.cursor === "string" && data.cursor) self.cursor = data.cursor;
+      // A stream took over while this poll was in flight (the tab came back
+      // to the front): keep what it brought, leave the stream alone.
+      if (!self.pollingSince) return;
       self.setState("polling");
       // Catch up a backlog straight away, but within reason.
       if (data && data.has_more && round < 10) { self.poll(round + 1); return; }
@@ -1190,7 +1193,7 @@
       }
       self.later(function () { self.poll(0); }, POLL_MS);
     }, function (err) {
-      if (self.stopped) return;
+      if (self.stopped || !self.pollingSince) return;
       if (err && err.message === "unauthorized") { self.setState("disconnected"); return; }
       self.setState("disconnected");
       self.later(function () { self.poll(0); }, POLL_MS);

@@ -254,8 +254,11 @@ func (c *HandoffConsumer) closeResolved(ctx context.Context, event *HandoffEvent
 	}
 	err = c.closer.TransitionState(ctx, event.ConversationID, state.StateClosed, resolvedActor)
 	var invalid *state.ErrInvalidTransition
-	if errors.As(err, &invalid) && invalid.From == state.StateClosed {
-		log.Printf("[handoff] conversation %s already closed, resolve event ignored", event.ConversationID)
+	if errors.As(err, &invalid) {
+		// It moved on between the read above and the close: closed by the
+		// idle sweep, or reopened by the customer. Either way not the agent's
+		// session any more.
+		log.Printf("[handoff] conversation %s is now %s, resolve event ignored", event.ConversationID, invalid.From)
 		return nil
 	}
 	if err != nil {

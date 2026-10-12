@@ -60,13 +60,23 @@ func TestCommitmentCues_NotPromises(t *testing.T) {
 	}
 }
 
-// The same cues still catch the promise they exist for.
+// The same cues still catch the promise they exist for — including where a
+// word next to them looks like an exclusion or a denial but is not one: 产品质保
+// is the warranty itself, a denied 包邮 leaves the refund after it promised, and
+// 不得不 commits.
 func TestCommitmentCues_StillCatchPromises(t *testing.T) {
 	cues := CommitmentCuesFor([]string{"ecommerce"})
 	for _, s := range []string{
 		"本商品保修24个月。",
 		"下单后保价30天，降价补差价。",
 		"质保两年，坏了包换，换新只需3天。",
+		"本产品质保2年。",
+		"该商品质保3年。",
+		"我们明确保修3年。",
+		"本品不包邮，全额退款。",
+		"无质保，全额退款。",
+		"这款不包邮，但全额退款。",
+		"不得不全额退款。",
 	} {
 		blocking := false
 		for _, f := range CheckCommitmentsWithCues(s, nil, GroundingSources{}, CommitmentScopeCommitment, cues) {

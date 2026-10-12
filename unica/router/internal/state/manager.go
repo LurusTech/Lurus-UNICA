@@ -163,20 +163,31 @@ func (m *Manager) TransitionState(ctx context.Context, convID string, newState C
 		return err
 	}
 
-	// Update database
-	if err := m.repo.UpdateConversationState(ctx, convID, newState); err != nil {
-		if errors.Is(err, ErrAlreadyClosed) {
-			// Another closer got there between the read above and the write:
-			// the cached state was stale. Report it as the refused transition
-			// it now is, and do not fire the on-close hooks a second time.
+	// Update database. A close is conditional on the state read above (see
+	// Repository.CloseConversation); other transitions are written as before.
+	var err2 error
+	if newState == StateClosed {
+		err2 = m.repo.CloseConversation(ctx, convID, currentState)
+	} else {
+		err2 = m.repo.UpdateConversationState(ctx, convID, newState)
+	}
+	if err2 != nil {
+		if errors.Is(err2, ErrStateChanged) {
+			// The conversation moved on between the read and the write: the
+			// state read was stale. Report the refused transition from where it
+			// actually is now, and do not fire the on-close hooks.
 			if m.cache != nil {
 				if cerr := m.cache.InvalidateSession(ctx, convID); cerr != nil {
 					log.Printf("[state] warning: failed to invalidate session cache for %s: %v", convID, cerr)
 				}
 			}
-			return &ErrInvalidTransition{From: StateClosed, To: newState}
+			actual, _, _, gerr := m.getConversationState(ctx, convID)
+			if gerr != nil {
+				return fmt.Errorf("close conversation %s: state changed, then unreadable: %w", convID, gerr)
+			}
+			return &ErrInvalidTransition{From: actual, To: newState}
 		}
-		return fmt.Errorf("update db state: %w", err)
+		return fmt.Errorf("update db state: %w", err2)
 	}
 
 	// Update cache
@@ -394,8 +405,8 @@ func (m *Manager) closeIdleConversations(ctx context.Context) {
 			continue
 		}
 
-		if err := m.repo.UpdateConversationState(ctx, id, StateClosed); err != nil {
-			if !errors.Is(err, ErrAlreadyClosed) {
+		if err := m.repo.CloseConversation(ctx, id, currentState); err != nil {
+			if !errors.Is(err, ErrStateChanged) {
 				log.Printf("[state] error closing idle conversation %s: %v", id, err)
 			}
 			continue

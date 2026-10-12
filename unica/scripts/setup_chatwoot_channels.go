@@ -26,7 +26,6 @@ import (
 	"log"
 	"net/http"
 	neturl "net/url"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -274,15 +273,22 @@ func updateProductLineConfig(ctx context.Context, db *sql.DB, plID string, exist
 // token. Chatwoot sends no header of its own on a webhook call, so a token the
 // gateway checks has to travel in the URL (?token=); without it every
 // callback is refused with 401.
+//
+// The token parameter is set, not appended: a URL that already carries one
+// (an earlier token, before a rotation) gets the current value, and other
+// parameters whose names end in "token" are left alone.
 func callbackURL(webhookURL, webhookToken string) string {
-	if webhookToken == "" || strings.Contains(webhookURL, "token=") {
+	if webhookToken == "" {
 		return webhookURL
 	}
-	sep := "?"
-	if strings.Contains(webhookURL, "?") {
-		sep = "&"
+	u, err := neturl.Parse(webhookURL)
+	if err != nil {
+		log.Fatalf("invalid -webhook-url %q: %v", webhookURL, err)
 	}
-	return webhookURL + sep + "token=" + neturl.QueryEscape(webhookToken)
+	q := u.Query()
+	q.Set("token", webhookToken)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // configureWebhook sets up the account-level webhook in Chatwoot. Together

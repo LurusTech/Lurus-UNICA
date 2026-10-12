@@ -209,7 +209,7 @@ func (h *Handler) conversation(w http.ResponseWriter, r *http.Request, pl *repos
 		return
 	}
 	if len(entries) == 0 {
-		errorJSON(w, http.StatusNotFound, "没有找到这个会话的判定证据：会话不属于本租户，或者记录时证据链尚未开启")
+		errorJSON(w, http.StatusNotFound, "没有找到这个会话的判定证据：会话不属于本租户，或者记录时判定留痕尚未开启")
 		return
 	}
 

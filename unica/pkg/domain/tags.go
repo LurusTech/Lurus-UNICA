@@ -180,26 +180,51 @@ func ScanTags(answer, name string) ([]ProtocolTag, string) {
 // leave "X1]" in front of the customer. The extension stays on the line and
 // never swallows the start of another tag; when the brackets do not balance
 // there, the span keeps its first closer, as before.
+//
+// Brackets inside the value pair by kind (square with square, lenticular with
+// lenticular); only the tag's own opener accepts any closer, as the tag does.
+// An inner bracket closed by the wrong kind is not a balanced value but a
+// stray one, and following it would swallow visible text: in
+// "[FACT:x=【旗舰 X1] 价格 3999 元】，欢迎选购" the tag ends at the "]".
 func balancedEnd(s string, start, openerSize, end int) int {
-	depth := 0
+	var inner []rune // kinds of the inner brackets still open
+	first := true
 	for i, r := range s[start:] {
 		switch {
 		case r == '\n':
 			return end
 		case strings.ContainsRune(openerRunes, r):
-			depth++
+			if first {
+				first = false
+				continue
+			}
+			inner = append(inner, bracketKind(r))
 		case strings.ContainsRune(closerRunes, r):
-			depth--
-			if depth == 0 {
-				e := start + i + utf8.RuneLen(r)
-				if e > end && nestedTagStart.MatchString(s[start+openerSize:e]) {
+			if len(inner) > 0 {
+				if inner[len(inner)-1] != bracketKind(r) {
 					return end
 				}
-				return e
+				inner = inner[:len(inner)-1]
+				continue
 			}
+			e := start + i + utf8.RuneLen(r)
+			if e > end && nestedTagStart.MatchString(s[start+openerSize:e]) {
+				return end
+			}
+			return e
 		}
 	}
 	return end
+}
+
+// bracketKind folds a bracket to its kind: square ([ ] ［ ］) or lenticular
+// (【 】), the same for an opener and its closer.
+func bracketKind(r rune) rune {
+	switch r {
+	case '【', '】':
+		return '【'
+	}
+	return '['
 }
 
 // parseTagSpan splits a matched span into its separator and value. The span is

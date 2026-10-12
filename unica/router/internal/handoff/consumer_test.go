@@ -74,16 +74,21 @@ func TestProcessEntry_ResolvedClosesConversation(t *testing.T) {
 	}
 }
 
-// Already closed — by the idle sweep, or by an earlier delivery of the same
-// event — is the expected race, not a failure.
-func TestProcessEntry_ResolvedAlreadyClosedIsNotAFailure(t *testing.T) {
-	closer := &fakeCloser{err: &state.ErrInvalidTransition{From: state.StateClosed, To: state.StateClosed}}
-	c, rdb := newTestConsumer(t, closer)
+// Moved on between the read and the close — closed by the idle sweep or an
+// earlier delivery of the same event, or reopened by the customer — is the
+// expected race, not a failure.
+func TestProcessEntry_ResolvedRaceIsNotAFailure(t *testing.T) {
+	for _, from := range []state.ConversationState{state.StateClosed, state.StateAIProcessing} {
+		t.Run(string(from), func(t *testing.T) {
+			closer := &fakeCloser{err: &state.ErrInvalidTransition{From: from, To: state.StateClosed}}
+			c, rdb := newTestConsumer(t, closer)
 
-	c.processEntry(context.Background(), resolvedEntry(t, "conv-1"))
+			c.processEntry(context.Background(), resolvedEntry(t, "conv-1"))
 
-	if n, _ := rdb.XLen(context.Background(), deadLetterStream).Result(); n != 0 {
-		t.Errorf("dead-letter stream got %d entries, want none", n)
+			if n, _ := rdb.XLen(context.Background(), deadLetterStream).Result(); n != 0 {
+				t.Errorf("dead-letter stream got %d entries, want none", n)
+			}
+		})
 	}
 }
 

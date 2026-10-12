@@ -71,7 +71,28 @@ func TestTransitionState_ConcurrentCloseFiresOnCloseOnce(t *testing.T) {
 	}
 
 	// The idle sweep finding it closed already is no error and no second hook.
-	if err := NewRepository(db).UpdateConversationState(ctx, convID, StateClosed); !errors.Is(err, ErrAlreadyClosed) {
-		t.Errorf("repeated close = %v, want ErrAlreadyClosed", err)
+	if err := NewRepository(db).CloseConversation(ctx, convID, StateHumanProcessing); !errors.Is(err, ErrStateChanged) {
+		t.Errorf("repeated close = %v, want ErrStateChanged", err)
+	}
+
+	// Reopened between the read and the write: the customer wrote again after
+	// the close and the AI picked the conversation up. A closer still holding
+	// "human_processing" must not close the AI conversation it has become.
+	if _, err := db.ExecContext(ctx, `UPDATE conversations SET state = 'ai_processing', closed_at = NULL WHERE id = $1`, convID); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetSession(ctx, convID, stale); err != nil {
+		t.Fatal(err)
+	}
+	err = m.TransitionState(ctx, convID, StateClosed, "late")
+	if !errors.As(err, &invalid) || invalid.From != StateAIProcessing {
+		t.Fatalf("late close = %v, want an invalid transition from ai_processing", err)
+	}
+	var st string
+	if err := db.QueryRowContext(ctx, `SELECT state FROM conversations WHERE id = $1`, convID).Scan(&st); err != nil {
+		t.Fatal(err)
+	}
+	if st != string(StateAIProcessing) || fired != 1 {
+		t.Errorf("state = %s, OnClose fired %d times; want ai_processing and 1", st, fired)
 	}
 }

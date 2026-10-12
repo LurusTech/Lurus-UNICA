@@ -124,6 +124,18 @@ func TestScanTags_BracketsInsideAValue(t *testing.T) {
 	if len(tags) != 1 || tags[0].Value != "note=[a" || cleaned != "，后面没有了" {
 		t.Errorf("tags = %+v, cleaned = %q", tags, cleaned)
 	}
+	// An inner bracket closed by the wrong kind is stray, not part of a
+	// balanced value: the tag ends at its first closer and the text after it
+	// stays visible.
+	tags, cleaned = ScanTags("[FACT:Phone.name=【旗舰 X1] 价格 3999 元】，欢迎选购", TagFact)
+	if len(tags) != 1 || tags[0].Value != "Phone.name=【旗舰 X1" || cleaned != " 价格 3999 元】，欢迎选购" {
+		t.Errorf("tags = %+v, cleaned = %q", tags, cleaned)
+	}
+	// The tag's own opener still takes any closer: 【FACT:a=[1]】.
+	tags, cleaned = ScanTags("【FACT:a=[1]】好的", TagFact)
+	if len(tags) != 1 || tags[0].Value != "a=[1]" || cleaned != "好的" {
+		t.Errorf("tags = %+v, cleaned = %q", tags, cleaned)
+	}
 	// Balancing never runs into the next line.
 	tags, cleaned = ScanTags("[FACT:a=[1]\n下一行]", TagFact)
 	if len(tags) != 1 || tags[0].Value != "a=[1" || cleaned != "\n下一行]" {

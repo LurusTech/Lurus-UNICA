@@ -256,15 +256,18 @@ func TestChatwootWebhook_AgentReply_AttributeBeatsDisplayIDMapping(t *testing.T)
 	}
 }
 
-func TestChatwootWebhook_AgentReply_FallsBackToMapping(t *testing.T) {
+// A Chatwoot conversation without the attribute was not created by UNICA (a
+// website widget, an e-mail inbox) or had it removed. The display-id mapping
+// would name some tenant's conversation 7 — possibly another tenant's — so it
+// is not consulted, and the reply goes nowhere.
+func TestChatwootWebhook_AgentReply_IgnoresDisplayIDMapping(t *testing.T) {
 	h, rdb := newHandler(t)
-	rdb.Set(context.Background(), "cw_conv:7", "unica-conv-legacy", 0)
+	rdb.Set(context.Background(), "cw_conv:7", "other-tenant-conv", 0)
 	post(t, h, fixture(t, messageFixture, func(m map[string]any) {
 		delete(convAttrs(m), "unica_conversation_id")
 	}))
-	got := outboundReplies(t, rdb)
-	if len(got) != 1 || got[0]["data"].(map[string]any)["conversation_id"] != "unica-conv-legacy" {
-		t.Errorf("reply = %+v, want it on unica-conv-legacy", got)
+	if got := outboundReplies(t, rdb); len(got) != 0 {
+		t.Errorf("reply published by display-id mapping: %+v", got)
 	}
 }
 
