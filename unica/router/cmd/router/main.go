@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -324,6 +326,18 @@ type config struct {
 }
 
 // loadConfig reads configuration from environment variables with defaults.
+// dsnPassword matches the password field of a key=value PostgreSQL DSN.
+var dsnPassword = regexp.MustCompile(`(?i)(password=)\S+`)
+
+// redactURL hides the password in a connection string (URL or key=value DSN)
+// so it can be logged.
+func redactURL(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.User != nil {
+		return u.Redacted()
+	}
+	return dsnPassword.ReplaceAllString(raw, "${1}xxxxx")
+}
+
 func loadConfig() config {
 	cfg := config{
 		postgresURL:   envOrDefault("POSTGRES_URL", "postgres://postgres:password@localhost:5432/unica_core?sslmode=disable"),
@@ -447,7 +461,7 @@ func loadConfig() config {
 	cfg.acestQueueSize = queueSize
 
 	log.Printf("[router] config: postgres=%s redis=%s group=%s consumer=%s workers=%d cache_ttl=%s port=%s idle_timeout=%s",
-		cfg.postgresURL, cfg.redisURL, cfg.consumerGroup, cfg.consumerName,
+		redactURL(cfg.postgresURL), redactURL(cfg.redisURL), cfg.consumerGroup, cfg.consumerName,
 		cfg.workers, cfg.routeCacheTTL, cfg.port, cfg.idleTimeout)
 
 	return cfg
