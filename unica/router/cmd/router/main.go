@@ -325,7 +325,6 @@ type config struct {
 	acestQueueSize     int
 }
 
-// loadConfig reads configuration from environment variables with defaults.
 // dsnPassword matches the password field of a key=value PostgreSQL DSN.
 var dsnPassword = regexp.MustCompile(`(?i)(password=)\S+`)
 
@@ -338,6 +337,7 @@ func redactURL(raw string) string {
 	return dsnPassword.ReplaceAllString(raw, "${1}xxxxx")
 }
 
+// loadConfig reads configuration from environment variables with defaults.
 func loadConfig() config {
 	cfg := config{
 		postgresURL:   envOrDefault("POSTGRES_URL", "postgres://postgres:password@localhost:5432/unica_core?sslmode=disable"),
