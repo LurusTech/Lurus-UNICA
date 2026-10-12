@@ -126,7 +126,7 @@ func (h *HandoffHandler) Handle(ctx context.Context, event *HandoffEvent) error 
 	h.enrichContactMetadata(ctx, cwConfig, contactID, conv)
 
 	// Step 6: Create or reuse Chatwoot conversation
-	cwConvID, err := h.findOrCreateCWConversation(ctx, cwConfig, convID, contactID)
+	cwConvID, err := h.findOrCreateCWConversation(ctx, cwConfig, convID, conv.ChannelID, contactID)
 	if err != nil {
 		metrics.HandoffErrorsTotal.WithLabelValues("conversation_create").Inc()
 		return fmt.Errorf("find/create chatwoot conversation: %w", err)
@@ -316,7 +316,7 @@ func (h *HandoffHandler) generateSummaryBestEffort(ctx context.Context, productL
 }
 
 // findOrCreateCWConversation checks Redis for an existing mapping or creates a new one.
-func (h *HandoffHandler) findOrCreateCWConversation(ctx context.Context, cwConfig *bridge.ChatwootConfig, unicaConvID string, contactID int) (int, error) {
+func (h *HandoffHandler) findOrCreateCWConversation(ctx context.Context, cwConfig *bridge.ChatwootConfig, unicaConvID, channelID string, contactID int) (int, error) {
 	// Check Redis for existing mapping
 	key := unicaConvCWPrefix + unicaConvID
 	cwConvIDStr, err := h.rdb.Get(ctx, key).Result()
@@ -328,16 +328,23 @@ func (h *HandoffHandler) findOrCreateCWConversation(ctx context.Context, cwConfi
 		}
 	}
 
-	// Create new conversation in Chatwoot
+	// Create new conversation in Chatwoot. channel_id must sit on the
+	// conversation, not only on the contact: the gateway's Chatwoot webhook
+	// reads it from the conversation's custom_attributes to route an agent
+	// reply back to the customer's platform (gateway/internal/webhook/chatwoot.go).
+	attrs := map[string]string{
+		"unica_conversation_id": unicaConvID,
+		"handoff":               "true",
+	}
+	if channelID != "" {
+		attrs["channel_id"] = channelID
+	}
 	conv, err := h.chatwootClient.CreateConversation(ctx, *cwConfig, bridge.CWCreateConversationRequest{
-		SourceID:  unicaConvID,
-		InboxID:   cwConfig.InboxID,
-		ContactID: contactID,
-		Status:    "open",
-		CustomAttr: map[string]string{
-			"unica_conversation_id": unicaConvID,
-			"handoff":               "true",
-		},
+		SourceID:   unicaConvID,
+		InboxID:    cwConfig.InboxID,
+		ContactID:  contactID,
+		Status:     "open",
+		CustomAttr: attrs,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("create chatwoot conversation: %w", err)
