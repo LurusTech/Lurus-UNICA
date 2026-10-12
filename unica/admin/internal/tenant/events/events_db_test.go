@@ -84,7 +84,7 @@ func seedFeed(t *testing.T, db *sql.DB, line string, t0 time.Time) []string {
 	// audit_logs.created_at is TIMESTAMP: store the UTC wall time of the
 	// instant, exactly what the admin process (TZ unset, so UTC) writes.
 	must(db.QueryRow(`INSERT INTO audit_logs (actor_id, actor_role, action, resource_type, resource_id, product_line_id, after_state, created_at)
-		VALUES ('00000000-0000-4000-8000-000000000001', 'user', 'update', 'ai_settings', $1, $1, '{"x":1}', ($2::timestamptz AT TIME ZONE 'UTC'))
+		VALUES ('00000000-0000-4000-8000-000000000001', 'user', 'update', 'ai_settings', $1::text, $1::uuid, '{"x":1}', ($2::timestamptz AT TIME ZONE 'UTC'))
 		RETURNING id`, line, at(4)).Scan(&aID), "audit")
 	// Same instant as the handoff: the source breaks the tie, "audit" first.
 	must(db.QueryRow(`INSERT INTO audit_logs (actor_id, actor_role, action, resource_type, resource_id, product_line_id, after_state, created_at)
@@ -256,7 +256,7 @@ func TestFeed_Postgres_SettleMark(t *testing.T) {
 	// An audit row whose wall-clock stamp is inside the settle window must
 	// wait too, which pins the TIMESTAMP side of the comparison.
 	if _, err := db.Exec(`INSERT INTO audit_logs (actor_id, actor_role, action, resource_type, resource_id, product_line_id, created_at)
-		VALUES ('00000000-0000-4000-8000-000000000001', 'user', 'update', 'ai_settings', $1, $1, ($2::timestamptz AT TIME ZONE 'UTC'))`,
+		VALUES ('00000000-0000-4000-8000-000000000001', 'user', 'update', 'ai_settings', $1::text, $1::uuid, ($2::timestamptz AT TIME ZONE 'UTC'))`,
 		line, now); err != nil {
 		t.Fatal(err)
 	}
