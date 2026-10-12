@@ -33,8 +33,10 @@ func postAgentReply(t *testing.T, h *ChatwootWebhookHandler) int {
 		"id":           321,
 		"content":      "您好，这单可以按坏损退款处理，请上传照片。",
 		"message_type": 1,
-		"conversation": map[string]any{"id": 100},
-		"sender":       map[string]any{"id": 5, "type": "user"},
+		"conversation": map[string]any{"id": 100, "custom_attributes": map[string]any{
+			"channel_id": "ch-wechat", "platform_user_id": "oWx-openid-cap",
+		}},
+		"sender": map[string]any{"id": 5, "type": "user"},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhook/chatwoot", strings.NewReader(string(body)))
 	req.Header.Set("X-Chatwoot-Webhook-Token", "secret")

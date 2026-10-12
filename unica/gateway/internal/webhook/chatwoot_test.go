@@ -173,6 +173,28 @@ func TestChatwootWebhook_AgentReply_RealPayload(t *testing.T) {
 		data["platform_msg_id"] != "cw-902" {
 		t.Errorf("reply = %+v", got[0])
 	}
+	// Every channel adapter refuses to send without the recipient.
+	if meta, _ := data["platform_meta"].(map[string]any); meta == nil || meta["platform_user_id"] != "oWx-openid-001" {
+		t.Errorf("platform_meta = %v, want the customer's platform user id", data["platform_meta"])
+	}
+}
+
+// A reply that cannot be addressed is reported, not published: every adapter
+// would refuse it, and it would only retry its way into the dead-letter stream.
+func TestChatwootWebhook_AgentReply_WithoutRecipientIsNotPublished(t *testing.T) {
+	for _, attr := range []string{"platform_user_id", "channel_id"} {
+		t.Run(attr, func(t *testing.T) {
+			h, rdb := newHandler(t)
+			post(t, h, fixture(t, messageFixture, func(m map[string]any) { delete(convAttrs(m), attr) }))
+			if n := len(outboundReplies(t, rdb)); n != 0 {
+				t.Errorf("outbound got %d replies without %s, want none", n, attr)
+			}
+			// Not marked as handled: a later delivery may still succeed.
+			if n, _ := rdb.Exists(context.Background(), "cw_seen:msg:902").Result(); n != 0 {
+				t.Errorf("message marked as forwarded although nothing was sent")
+			}
+		})
+	}
 }
 
 // The REST API's own responses use the number; a sender passing that shape

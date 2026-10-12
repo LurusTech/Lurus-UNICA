@@ -205,7 +205,7 @@ func TestHandoffHandler_FindOrCreateCWConversation_ExistingMapping(t *testing.T)
 		APIToken:  "test-token",
 	}
 
-	cwConvID, err := handler.findOrCreateCWConversation(ctx, cwConfig, unicaConvID, "", 42)
+	cwConvID, err := handler.findOrCreateCWConversation(ctx, cwConfig, unicaConvID, "", "", 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestHandoffHandler_FindOrCreateCWConversation_NewConversation(t *testing.T)
 		APIToken:  "test-token",
 	}
 
-	cwConvID, err := handler.findOrCreateCWConversation(ctx, cwConfig, unicaConvID, "", 42)
+	cwConvID, err := handler.findOrCreateCWConversation(ctx, cwConfig, unicaConvID, "", "", 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestHandoffHandler_FindOrCreateCWConversation_CarriesChannelIDForReplyRouti
 	}
 	cwConfig := &bridge.ChatwootConfig{BaseURL: cwSrv.URL, AccountID: 1, InboxID: 1, APIToken: "test-token"}
 
-	if _, err := handler.findOrCreateCWConversation(context.Background(), cwConfig, "test-conv-789", "wechat", 42); err != nil {
+	if _, err := handler.findOrCreateCWConversation(context.Background(), cwConfig, "test-conv-789", "wechat", "oWx-openid-789", 42); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -323,6 +323,10 @@ func TestHandoffHandler_FindOrCreateCWConversation_CarriesChannelIDForReplyRouti
 	}
 	if got := created.CustomAttr["channel_id"]; got != "wechat" {
 		t.Errorf("conversation custom_attributes channel_id = %q, want %q", got, "wechat")
+	}
+	// The recipient of an agent's reply: without it no adapter can send.
+	if got := created.CustomAttr["platform_user_id"]; got != "oWx-openid-789" {
+		t.Errorf("conversation custom_attributes platform_user_id = %q, want %q", got, "oWx-openid-789")
 	}
 }
 

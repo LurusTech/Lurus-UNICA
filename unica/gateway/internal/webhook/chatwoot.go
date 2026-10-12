@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -323,6 +324,11 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 		return nil
 	}
 
+	recipient, err := h.recipientOf(ctx, unicaConvID, payload.Conversation.CustomAttr)
+	if err != nil {
+		return err
+	}
+
 	seenKey := seenKeyPrefix + "msg:" + strconv.Itoa(payload.ID)
 	if !h.firstDelivery(ctx, seenKey) {
 		log.Printf("[chatwoot-webhook] message %d already forwarded, duplicate delivery skipped", payload.ID)
@@ -347,10 +353,8 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 		},
 	}
 
-	// Try to enrich with channel/customer info from custom_attributes
-	if chID := payload.Conversation.CustomAttr.str("channel_id"); chID != "" {
-		outMsg.Data.ChannelID = chID
-	}
+	outMsg.Data.ChannelID = recipient.channelID
+	outMsg.Data.PlatformMeta.PlatformUserID = recipient.platformUserID
 
 	// Publish to unica:outbound stream
 	outJSON, err := json.Marshal(outMsg)
@@ -399,9 +403,10 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 // has been forwarded and never fails the webhook: this is observation, and a
 // customer's reply must not wait on it.
 //
-// Replies arriving after the Chatwoot-to-UNICA mapping has expired (72h) never
-// get here — the lookup above fails, is logged, and the reply is dropped, as
-// it always has been.
+// A reply that cannot be attributed to a UNICA conversation (no
+// unica_conversation_id on the Chatwoot conversation and no live cw_conv
+// mapping) never gets here: the lookup fails, is logged, and the reply is
+// dropped.
 func (h *ChatwootWebhookHandler) captureAgentReply(ctx context.Context, outMsg model.StandardMessage) {
 	if h.replies == nil || h.capture == nil || !h.capture.On(ctx) {
 		return
@@ -495,6 +500,48 @@ func (h *ChatwootWebhookHandler) unicaConversation(ctx context.Context, cwConvID
 		return "", fmt.Errorf("lookup unica conversation for cw conv %d: %w", cwConvID, err)
 	}
 	return id, nil
+}
+
+// replyRecipient is where an agent's reply goes: the channel picks the
+// adapter, the platform user id is who it is addressed to.
+type replyRecipient struct {
+	channelID      string
+	platformUserID string
+}
+
+// recipientOf finds who an agent's reply is addressed to. UNICA writes both
+// onto the Chatwoot conversation when it creates it; a conversation created
+// before platform_user_id was written has only the channel there, and the
+// database (when this gateway has one) knows both. Without a platform user id
+// no adapter can send — each refuses an outbound message that lacks one — so
+// the reply is reported here rather than published to fail three times and
+// land in the dead-letter stream.
+func (h *ChatwootWebhookHandler) recipientOf(ctx context.Context, unicaConvID string, attrs cwAttrs) (replyRecipient, error) {
+	r := replyRecipient{channelID: attrs.str("channel_id"), platformUserID: attrs.str("platform_user_id")}
+	if (r.channelID == "" || r.platformUserID == "") && h.db != nil {
+		var platformUserID, channelID string
+		err := h.db.QueryRowContext(ctx,
+			`SELECT cu.platform_identity, cv.channel_id::text
+			   FROM conversations cv JOIN customers cu ON cu.id = cv.customer_id
+			  WHERE cv.id = $1`, unicaConvID).Scan(&platformUserID, &channelID)
+		switch {
+		case err == nil:
+			if r.platformUserID == "" {
+				r.platformUserID = platformUserID
+			}
+			if r.channelID == "" {
+				r.channelID = channelID
+			}
+		case errors.Is(err, sql.ErrNoRows):
+		default:
+			log.Printf("[chatwoot-webhook] warning: recipient lookup for %s failed: %v", unicaConvID, err)
+		}
+	}
+	if r.platformUserID == "" || r.channelID == "" {
+		return r, fmt.Errorf("agent reply for conversation %s cannot be addressed (channel_id=%q, platform_user_id set=%t)",
+			unicaConvID, r.channelID, r.platformUserID != "")
+	}
+	return r, nil
 }
 
 // firstDelivery reports whether key is seen for the first time, marking it.

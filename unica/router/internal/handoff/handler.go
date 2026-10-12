@@ -126,7 +126,7 @@ func (h *HandoffHandler) Handle(ctx context.Context, event *HandoffEvent) error 
 	h.enrichContactMetadata(ctx, cwConfig, contactID, conv)
 
 	// Step 6: Create or reuse Chatwoot conversation
-	cwConvID, err := h.findOrCreateCWConversation(ctx, cwConfig, convID, conv.ChannelID, contactID)
+	cwConvID, err := h.findOrCreateCWConversation(ctx, cwConfig, convID, conv.ChannelID, h.platformUserID(ctx, conv), contactID)
 	if err != nil {
 		metrics.HandoffErrorsTotal.WithLabelValues("conversation_create").Inc()
 		return fmt.Errorf("find/create chatwoot conversation: %w", err)
@@ -315,8 +315,25 @@ func (h *HandoffHandler) generateSummaryBestEffort(ctx context.Context, productL
 	return summary
 }
 
+// platformUserID is the customer's id on their own platform (an OpenID, a
+// buyer id). Every channel adapter addresses an outbound message by it, so
+// without it an agent's reply cannot be sent; it goes on the Chatwoot
+// conversation for the gateway to read back. Best-effort: a lookup failure
+// leaves it empty and the gateway falls back to the database.
+func (h *HandoffHandler) platformUserID(ctx context.Context, conv *state.Conversation) string {
+	if h.stateManager == nil {
+		return ""
+	}
+	customer, err := h.stateManager.GetCustomer(ctx, conv.CustomerID)
+	if err != nil || customer == nil {
+		log.Printf("[handoff] warning: no platform user id for conversation %s: %v", conv.ID, err)
+		return ""
+	}
+	return customer.PlatformIdentity
+}
+
 // findOrCreateCWConversation checks Redis for an existing mapping or creates a new one.
-func (h *HandoffHandler) findOrCreateCWConversation(ctx context.Context, cwConfig *bridge.ChatwootConfig, unicaConvID, channelID string, contactID int) (int, error) {
+func (h *HandoffHandler) findOrCreateCWConversation(ctx context.Context, cwConfig *bridge.ChatwootConfig, unicaConvID, channelID, platformUserID string, contactID int) (int, error) {
 	// Check Redis for existing mapping
 	key := unicaConvCWPrefix + unicaConvID
 	cwConvIDStr, err := h.rdb.Get(ctx, key).Result()
@@ -328,16 +345,21 @@ func (h *HandoffHandler) findOrCreateCWConversation(ctx context.Context, cwConfi
 		}
 	}
 
-	// Create new conversation in Chatwoot. channel_id must sit on the
-	// conversation, not only on the contact: the gateway's Chatwoot webhook
-	// reads it from the conversation's custom_attributes to route an agent
-	// reply back to the customer's platform (gateway/internal/webhook/chatwoot.go).
+	// Create new conversation in Chatwoot. channel_id and platform_user_id
+	// must sit on the conversation, not only on the contact: the gateway's
+	// Chatwoot webhook reads them from the conversation's custom_attributes
+	// to send an agent reply back to the customer — the channel picks the
+	// adapter, the platform user id is the recipient
+	// (gateway/internal/webhook/chatwoot.go).
 	attrs := map[string]string{
 		"unica_conversation_id": unicaConvID,
 		"handoff":               "true",
 	}
 	if channelID != "" {
 		attrs["channel_id"] = channelID
+	}
+	if platformUserID != "" {
+		attrs["platform_user_id"] = platformUserID
 	}
 	conv, err := h.chatwootClient.CreateConversation(ctx, *cwConfig, bridge.CWCreateConversationRequest{
 		SourceID:   unicaConvID,
