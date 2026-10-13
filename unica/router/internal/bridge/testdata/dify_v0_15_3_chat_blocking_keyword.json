@@ -1,0 +1,40 @@
+{
+  "event": "message",
+  "task_id": "5a5c2a51-9169-4fd8-b219-ce06613c28a8",
+  "id": "bd35320e-8c1d-4b6e-8d8b-48655c6c0b88",
+  "message_id": "bd35320e-8c1d-4b6e-8d8b-48655c6c0b88",
+  "conversation_id": "1f4e2507-d1c4-4ff0-bd09-fcf6f1d5f119",
+  "mode": "chat",
+  "answer": "您好，我们门店的营业时间是每天早上九点到晚上九点。",
+  "metadata": {
+    "retriever_resources": [
+      {
+        "dataset_id": "d291a945-b37c-4d36-a249-1ad2af1cd6a6",
+        "dataset_name": "UNICA-e2e_fresh",
+        "document_id": "f9c3cfba-58b2-40f9-b7df-00a56df5f05d",
+        "document_name": "门店信息",
+        "data_source_type": "upload_file",
+        "segment_id": "fc6af0fc-190b-4171-a360-f328c39990cf",
+        "retriever_from": "api",
+        "score": 0.0,
+        "content": "门店营业时间：每天早上九点到晚上九点，节假日照常营业。\n门店地址：示例市示例区鲜果路 8 号。\n配送范围：门店三公里内，下单后两小时送达。",
+        "position": 1
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 10,
+      "prompt_unit_price": "0",
+      "prompt_price_unit": "0",
+      "prompt_price": "0E-7",
+      "completion_tokens": 25,
+      "completion_unit_price": "0",
+      "completion_price_unit": "0",
+      "completion_price": "0E-7",
+      "total_tokens": 35,
+      "total_price": "0E-7",
+      "currency": "USD",
+      "latency": 0.002466787000230397
+    }
+  },
+  "created_at": 1791859478
+}
