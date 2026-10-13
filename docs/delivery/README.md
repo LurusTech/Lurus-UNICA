@@ -77,10 +77,9 @@
 ### 本轮没有修、需要决定的
 
 - **`AES_ENCRYPTION_KEY` / `JWT_SECRET` 未设置时会用代码里写死的值**（运维手册 7.2）。改成"未设置即拒绝启动"更安全，但如果现场已经在用默认密钥加密了渠道凭据，升级后会解不开。必须先查现场配置再改。
-- **WSL 虚拟机卡死，需 owner 重启**（2026-10-12 约 10:34 起，所有发行版无响应、CPU 为 0；`wsl --terminate/--shutdown` 按工作站规则只能 owner 执行）。受影响：本版本镜像未能用 Docker 重建（已按 Dockerfile 方式交叉编译通过，运维手册待核实-34）、18 个需要 Redis 7 的集成测试未跑。重启后：在 `unica/` 执行 `make docker-build DOCKER_BUILD_ARGS="--no-cache --build-arg GOPROXY=https://goproxy.cn,direct"`，并起一个 Redis 7 重跑 gateway 模块测试。
 - **Chatwoot 回调令牌全平台共用**：令牌写在每个产品线收件箱的回调地址里，各产品线的 Chatwoot 管理员都看得到。本项目两个产品线同属甲方，风险可接受；若以后接入互不信任的租户，须改为按产品线的令牌（`ChatwootConfig.WebhookToken` 字段已有，开户与 gateway 未接）。
 - **`unica/pkg` 与 `unica/judge` 带 Apache-2.0 许可文件**：依据 `doc/judge-gate.md` 记载的 2026-10-10 代决（这两个模块开源）。随源码交付即意味着甲方按 Apache-2.0 获得这两个模块；许可文件里的版权人仍是模板占位，也没有 NOTICE 文件，交付前须填写版权人。若不想随这次交付开源，先删掉两个 LICENSE。
 
 ## 四、自动化测试结果（2026-10-12，版本 `bd7dced`）
 
-7 个模块共 2,354 个用例：2,335 通过 / 0 失败 / 19 跳过。需要 PostgreSQL 的 32 个集成测试首次在真库（本机 PostgreSQL 16.4，按迁移 001–026 建库）上执行并全部通过；跳过的 18 个需要 Redis 7、1 个需要 Dify 实例。另有门户脚本行为测试 5 个（`scripts/portal-test`，bun）全部通过。本轮新增的回归测试都先在修正前的代码上确认失败、修正后通过。原始结果不入库；复现：各模块目录 `go test -count=1 ./...`，带数据库时设 `ROUTER_TEST_POSTGRES_URL` 与 `ADMIN_TEST_POSTGRES_URL`。
+7 个模块共 2,354 个用例：2,353 通过 / 0 失败 / 1 跳过。需要 PostgreSQL 的 32 个集成测试首次在真库（本机 PostgreSQL 16.4，按迁移 001–026 建库）上执行并全部通过，需要 Redis 的 18 个集成测试在 Redis 7.4 上执行并全部通过；跳过的 1 个需要 Dify 实例。另有门户脚本行为测试 5 个（`scripts/portal-test`，bun）全部通过。本轮新增的回归测试都先在修正前的代码上确认失败、修正后通过。原始结果不入库；复现：各模块目录 `go test -count=1 ./...`，带数据库时设 `ROUTER_TEST_POSTGRES_URL` 与 `ADMIN_TEST_POSTGRES_URL`，带 Redis 时设 `REDIS_URL`（不得指向 15 号库，见测试报告第三节）。本版本五个镜像已于 2026-10-12 不带缓存重新构建并做启动检查（运维手册 2.2）。
