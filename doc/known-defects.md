@@ -289,6 +289,8 @@ AJYJ 与 XDYX 有，上传正常。而 `POST .../ai-settings/dataset/bind` 只�
 
 ## D9 没有嵌入模型时，知识库静默降级为一个查不准的关键词库
 
+> **2026-10-12 补记（本地 Dify 0.15.3 实测）**：economy 下即使关键词检索**命中**，Dify 返回的段落分值也恒为 0.0（`unica/router/internal/bridge/testdata/dify_v0_15_3_chat_blocking_keyword.json`）。router 的置信度取检索分值的平均（`judge.RetrievalConfidence`），默认阈值 0.7，阈值设为 0 视为未设置、回落到 0.7，所以 economy 下**每个回答都按 `low_confidence` 转人工，AI 不会自动答复任何客户**——比下文的"查不准"更彻底，而且同样不报错。置信度规则属判定口径，未改；须配嵌入模型并用 high_quality。
+
 **2026-08-25 现状更新**（缺陷未解，但两种失败模式要分清）：当前部署的嵌入模型
 （本地中文向量模型）已可用，`DIFY_INDEXING_TECHNIQUE=high_quality`，
 XDYX / AJYJ 与本轮新建的三条零售线都是 high_quality + 语义检索。
