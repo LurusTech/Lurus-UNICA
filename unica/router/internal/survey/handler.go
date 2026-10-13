@@ -33,10 +33,17 @@ const (
 type SurveyConfig = shared.Config
 
 // pendingSurveyData is stored in Redis to track pending surveys.
+//
+// PlatformUserID and ProductLineID address the thank-you: every channel
+// adapter refuses an outbound message without the customer's platform user id.
+// A record written by an earlier version has neither, so readers fall back to
+// the database for both.
 type pendingSurveyData struct {
-	SentAt     string `json:"sent_at"`
-	ChannelID  string `json:"channel_id"`
-	CustomerID string `json:"customer_id"`
+	SentAt         string `json:"sent_at"`
+	ChannelID      string `json:"channel_id"`
+	CustomerID     string `json:"customer_id"`
+	PlatformUserID string `json:"platform_user_id,omitempty"`
+	ProductLineID  string `json:"product_line_id,omitempty"`
 }
 
 // StateManager defines the interface for state management operations needed by survey handler.
@@ -173,9 +180,11 @@ func (h *Handler) SendSurvey(ctx context.Context, conv *ConversationInfo, cfg *S
 
 	// Store pending survey data in Redis
 	pendingData := pendingSurveyData{
-		SentAt:     time.Now().UTC().Format(time.RFC3339),
-		ChannelID:  conv.ChannelID,
-		CustomerID: conv.CustomerID,
+		SentAt:         time.Now().UTC().Format(time.RFC3339),
+		ChannelID:      conv.ChannelID,
+		CustomerID:     conv.CustomerID,
+		PlatformUserID: conv.CustomerPlatformUserID,
+		ProductLineID:  conv.ProductLineID,
 	}
 	pendingJSON, _ := json.Marshal(pendingData)
 	key := surveyPendingKeyPrefix + conv.ID
@@ -243,6 +252,32 @@ func thanksText(cfg *SurveyConfig) string {
 	return cfg.ThanksMessage
 }
 
+// parseRating reads a survey reply as a 1-5 score. Besides the bare digit the
+// prompt asks for, it takes the forms customers type on a phone: the full-width
+// digit a Chinese input method produces ("５") and a trailing 分 or 星 ("5分",
+// "４ 星"). Anything else — a sentence, "3.5", "10分" — is not a rating and goes
+// back to the caller as an ordinary message.
+func parseRating(text string) (int, bool) {
+	s := strings.TrimSpace(text)
+	for _, unit := range []string{"分", "星"} {
+		if trimmed, ok := strings.CutSuffix(s, unit); ok {
+			s = strings.TrimSpace(trimmed)
+			break
+		}
+	}
+	r := []rune(s)
+	if len(r) != 1 {
+		return 0, false
+	}
+	switch c := r[0]; {
+	case c >= '1' && c <= '5':
+		return int(c - '0'), true
+	case c >= '１' && c <= '５':
+		return int(c-'１') + 1, true
+	}
+	return 0, false
+}
+
 // HandleSurveyReply processes a potential survey reply message.
 // Checks if survey:pending:{conversation_id} exists.
 // Parses message as 1-5 rating. Stores in DB. Returns true if handled as survey.
@@ -257,10 +292,8 @@ func (h *Handler) HandleSurveyReply(ctx context.Context, convID, messageText str
 		return false, fmt.Errorf("get pending survey: %w", err)
 	}
 
-	// Parse the message as a rating (1-5)
-	text := strings.TrimSpace(messageText)
-	score, err := strconv.Atoi(text)
-	if err != nil || score < 1 || score > 5 {
+	score, ok := parseRating(messageText)
+	if !ok {
 		// Not a valid survey reply, let the caller decide (reopen conversation)
 		return false, nil
 	}
@@ -275,16 +308,28 @@ func (h *Handler) HandleSurveyReply(ctx context.Context, convID, messageText str
 		log.Printf("[survey] warning: failed to delete pending survey key for %s: %v", convID, err)
 	}
 
-	// The product line is resolved from the conversation rather than read out of
-	// the pending record. The record was written when the survey was sent, and
-	// widening it would leave every survey already in flight deserialising to an
-	// empty string on the day this ships — which is exactly the blank message
-	// the router now refuses to deliver.
-	productLineID := h.getProductLineID(ctx, convID)
+	var pending pendingSurveyData
+	if err := json.Unmarshal([]byte(val), &pending); err != nil {
+		log.Printf("[survey] warning: failed to parse pending data for %s: %v", convID, err)
+	}
+
+	// A record written before the pending data carried the product line reads
+	// back an empty one; the conversation still knows it.
+	productLineID := pending.ProductLineID
+	if productLineID == "" {
+		productLineID = h.getProductLineID(ctx, convID)
+	}
 	metrics.SurveyCompletedTotal.WithLabelValues(productLineID, strconv.Itoa(score)).Inc()
 
-	// Send thank-you message
-	h.sendThankYouMessage(ctx, convID, val, h.thankYouConfig(ctx, productLineID))
+	if pending.ChannelID != "" {
+		if pending.PlatformUserID == "" {
+			pending.PlatformUserID = h.getPlatformUserID(ctx, convID)
+		}
+		if productLineID != "unknown" {
+			pending.ProductLineID = productLineID
+		}
+		h.sendThankYouMessage(ctx, convID, pending, h.thankYouConfig(ctx, productLineID))
+	}
 
 	log.Printf("[survey] survey completed for conversation %s (score=%d)", convID, score)
 	return true, nil
@@ -322,6 +367,27 @@ func (h *Handler) getProductLineID(ctx context.Context, convID string) string {
 	return plID
 }
 
+// getPlatformUserID looks up the customer's platform user id through the
+// conversation, for a pending record that predates carrying it. Empty when it
+// cannot be found; the gateway then dead-letters the thank-you, where it can be
+// traced.
+func (h *Handler) getPlatformUserID(ctx context.Context, convID string) string {
+	if h.db == nil {
+		return ""
+	}
+	var platformUserID string
+	err := h.db.QueryRowContext(ctx,
+		`SELECT cu.platform_identity FROM conversations c
+		 JOIN customers cu ON cu.id = c.customer_id
+		 WHERE c.id = $1`, convID,
+	).Scan(&platformUserID)
+	if err != nil {
+		log.Printf("[survey] warning: no platform user id for thank-you on %s: %v", convID, err)
+		return ""
+	}
+	return platformUserID
+}
+
 // thankYouConfig loads the settings behind the thank-you message, degrading to
 // the platform text rather than to silence: the rating has already been
 // recorded at this point, and a customer who rated and heard nothing back has
@@ -338,13 +404,9 @@ func (h *Handler) thankYouConfig(ctx context.Context, productLineID string) *Sur
 	return cfg
 }
 
-// sendThankYouMessage sends a thank-you response after survey completion.
-func (h *Handler) sendThankYouMessage(ctx context.Context, convID, pendingDataJSON string, cfg *SurveyConfig) {
-	var pending pendingSurveyData
-	if err := json.Unmarshal([]byte(pendingDataJSON), &pending); err != nil {
-		log.Printf("[survey] warning: failed to parse pending data for thank-you: %v", err)
-		return
-	}
+// sendThankYouMessage sends a thank-you response after survey completion,
+// addressed from the pending record the survey left.
+func (h *Handler) sendThankYouMessage(ctx context.Context, convID string, pending pendingSurveyData, cfg *SurveyConfig) {
 
 	outMsg := model.StandardMessage{
 		ID:      uuid.New().String(),
@@ -355,10 +417,14 @@ func (h *Handler) sendThankYouMessage(ctx context.Context, convID, pendingDataJS
 		Data: model.MessageData{
 			ConversationID: convID,
 			ChannelID:      pending.ChannelID,
+			ProductLineID:  pending.ProductLineID,
 			CustomerID:     pending.CustomerID,
 			Content: model.MessageContent{
 				Type: model.ContentTypeText,
 				Text: thanksText(cfg),
+			},
+			PlatformMeta: model.PlatformMeta{
+				PlatformUserID: pending.PlatformUserID,
 			},
 		},
 	}
