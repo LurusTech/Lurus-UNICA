@@ -111,22 +111,16 @@ func (h *HandoffHandler) Handle(ctx context.Context, event *HandoffEvent) error 
 		return fmt.Errorf("load chatwoot config for product line %s: %w", event.ProductLineID, err)
 	}
 
-	// Step 5: Find or create Chatwoot contact
-	contactID, err := h.chatwootClient.FindOrCreateContact(ctx, *cwConfig, conv.CustomerID, conv.CustomerID, map[string]string{
-		"channel_id":     conv.ChannelID,
-		"unica_conv_id":  convID,
-		"handoff_reason": event.Reason,
-	})
+	// Step 5: Find or create the Chatwoot contact, enriched with customer
+	// metadata (best-effort)
+	contactID, platformUserID, err := h.ensureContact(ctx, cwConfig, conv, event.Reason)
 	if err != nil {
 		metrics.HandoffErrorsTotal.WithLabelValues("contact_create").Inc()
 		return fmt.Errorf("find/create chatwoot contact: %w", err)
 	}
 
-	// Step 5b: Enrich contact with customer metadata (best-effort)
-	h.enrichContactMetadata(ctx, cwConfig, contactID, conv)
-
 	// Step 6: Create or reuse Chatwoot conversation
-	cwConvID, err := h.findOrCreateCWConversation(ctx, cwConfig, convID, conv.ChannelID, h.platformUserID(ctx, conv), contactID)
+	cwConvID, err := h.findOrCreateCWConversation(ctx, cwConfig, convID, conv.ChannelID, platformUserID, contactID)
 	if err != nil {
 		metrics.HandoffErrorsTotal.WithLabelValues("conversation_create").Inc()
 		return fmt.Errorf("find/create chatwoot conversation: %w", err)
@@ -315,21 +309,59 @@ func (h *HandoffHandler) generateSummaryBestEffort(ctx context.Context, productL
 	return summary
 }
 
-// platformUserID is the customer's id on their own platform (an OpenID, a
-// buyer id). Every channel adapter addresses an outbound message by it, so
-// without it an agent's reply cannot be sent; it goes on the Chatwoot
-// conversation for the gateway to read back. Best-effort: a lookup failure
-// leaves it empty and the gateway falls back to the database.
-func (h *HandoffHandler) platformUserID(ctx context.Context, conv *state.Conversation) string {
-	if h.stateManager == nil {
-		return ""
+// ensureContact finds or creates the conversation's Chatwoot contact and
+// brings its details up to date. The contact is keyed by the UNICA customer
+// UUID — the key the forwarder uses too, so one customer is one contact — and
+// named for an agent to read rather than by that UUID.
+//
+// It also returns the customer's id on their own platform (an OpenID, a buyer
+// id). Every channel adapter addresses an outbound message by it, so without
+// it an agent's reply cannot be sent; it goes on the Chatwoot conversation for
+// the gateway to read back. Best-effort: a lookup failure leaves it empty and
+// the gateway falls back to the database.
+func (h *HandoffHandler) ensureContact(ctx context.Context, cwConfig *bridge.ChatwootConfig, conv *state.Conversation, reason string) (int, string, error) {
+	var customer *state.Customer
+	if h.stateManager != nil {
+		c, err := h.stateManager.GetCustomer(ctx, conv.CustomerID)
+		if err != nil || c == nil {
+			log.Printf("[handoff] warning: no customer record for conversation %s: %v", conv.ID, err)
+		} else {
+			customer = c
+		}
 	}
-	customer, err := h.stateManager.GetCustomer(ctx, conv.CustomerID)
-	if err != nil || customer == nil {
-		log.Printf("[handoff] warning: no platform user id for conversation %s: %v", conv.ID, err)
-		return ""
+	platformUserID := ""
+	if customer != nil {
+		platformUserID = customer.PlatformIdentity
 	}
-	return customer.PlatformIdentity
+
+	readable := bridge.ContactName(state.ChannelName(ctx, h.db, conv.ChannelID), platformUserID)
+	contact, err := h.chatwootClient.FindOrCreateContactRecord(ctx, *cwConfig, conv.CustomerID, readable, map[string]string{
+		"channel_id":     conv.ChannelID,
+		"unica_conv_id":  conv.ID,
+		"handoff_reason": reason,
+	})
+	if err != nil {
+		return 0, "", err
+	}
+	if customer != nil {
+		h.enrichContactMetadata(ctx, cwConfig, contact, conv, customer, readable)
+	}
+	return contact.ID, platformUserID, nil
+}
+
+// contactRename is the name to write on a contact, or "" to leave it as it is.
+// The platform's own name for the customer wins, as it always has. Failing
+// that, a contact still named by its identifier — what earlier versions wrote,
+// a UUID or an OpenID — or not named at all is given the readable name; a name
+// anybody else gave it, an agent above all, is left alone.
+func contactRename(displayName string, contact bridge.ContactRecord, readable string) string {
+	if displayName != "" {
+		return displayName
+	}
+	if contact.Name == "" || contact.Name == contact.Identifier {
+		return readable
+	}
+	return ""
 }
 
 // findOrCreateCWConversation checks Redis for an existing mapping or creates a new one.
@@ -460,13 +492,7 @@ func extractTextContent(contentJSON json.RawMessage) string {
 
 // enrichContactMetadata enriches a Chatwoot contact with customer metadata.
 // This is best-effort; errors are logged but do not fail the handoff.
-func (h *HandoffHandler) enrichContactMetadata(ctx context.Context, cwConfig *bridge.ChatwootConfig, contactID int, conv *state.Conversation) {
-	customer, err := h.stateManager.GetCustomer(ctx, conv.CustomerID)
-	if err != nil {
-		log.Printf("[handoff] warning: failed to load customer %s for enrichment: %v", conv.CustomerID, err)
-		return
-	}
-
+func (h *HandoffHandler) enrichContactMetadata(ctx context.Context, cwConfig *bridge.ChatwootConfig, contact bridge.ContactRecord, conv *state.Conversation, customer *state.Customer, readable string) {
 	convCount, err := h.stateManager.CountConversations(ctx, conv.CustomerID)
 	if err != nil {
 		log.Printf("[handoff] warning: failed to count conversations for %s: %v", conv.CustomerID, err)
@@ -484,12 +510,12 @@ func (h *HandoffHandler) enrichContactMetadata(ctx context.Context, cwConfig *br
 	}
 
 	update := bridge.ContactUpdate{
-		Name:             customer.DisplayName,
+		Name:             contactRename(customer.DisplayName, contact, readable),
 		CustomAttributes: attrs,
 	}
 
-	if err := h.chatwootClient.UpdateContact(ctx, *cwConfig, contactID, update); err != nil {
-		log.Printf("[handoff] warning: failed to update contact %d metadata: %v", contactID, err)
+	if err := h.chatwootClient.UpdateContact(ctx, *cwConfig, contact.ID, update); err != nil {
+		log.Printf("[handoff] warning: failed to update contact %d metadata: %v", contact.ID, err)
 	}
 }
 

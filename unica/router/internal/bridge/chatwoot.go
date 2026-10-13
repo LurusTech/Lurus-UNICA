@@ -168,19 +168,40 @@ func NewChatwootClientWithHTTP(hc *http.Client) *ChatwootClient {
 // FindOrCreateContact searches for an existing contact by identifier, or creates one.
 // Returns the contact ID.
 func (c *ChatwootClient) FindOrCreateContact(ctx context.Context, cfg ChatwootConfig, identifier, name string, customAttr map[string]string) (int, error) {
+	contact, err := c.FindOrCreateContactRecord(ctx, cfg, identifier, name, customAttr)
+	if err != nil {
+		return 0, err
+	}
+	return contact.ID, nil
+}
+
+// ContactRecord is a contact as FindOrCreateContactRecord left it: the name it
+// carries now, and whether this call created it.
+type ContactRecord struct {
+	ID         int
+	Name       string
+	Identifier string
+	Created    bool
+}
+
+// FindOrCreateContactRecord is FindOrCreateContact returning the contact's
+// current name as well, so a caller can tell a name somebody chose from the
+// identifier earlier versions wrote there. A created contact carries the name
+// it was created with.
+func (c *ChatwootClient) FindOrCreateContactRecord(ctx context.Context, cfg ChatwootConfig, identifier, name string, customAttr map[string]string) (ContactRecord, error) {
 	// Search for existing contact by identifier
 	// Escape the identifier: unescaped '&', '#', '%' or spaces would corrupt the
 	// query string and cause a mismatched search, creating a duplicate contact.
 	searchURL := fmt.Sprintf("%s/api/v1/accounts/%d/contacts/search?q=%s&include_contacts=true", cfg.BaseURL, cfg.AccountID, url.QueryEscape(identifier))
 	searchReq, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
-		return 0, fmt.Errorf("create search request: %w", err)
+		return ContactRecord{}, fmt.Errorf("create search request: %w", err)
 	}
 	c.setAuth(searchReq, cfg.APIToken)
 
 	searchResp, err := c.httpClient.Do(searchReq)
 	if err != nil {
-		return 0, fmt.Errorf("search contact: %w", err)
+		return ContactRecord{}, fmt.Errorf("search contact: %w", err)
 	}
 	defer searchResp.Body.Close()
 
@@ -190,7 +211,7 @@ func (c *ChatwootClient) FindOrCreateContact(ctx context.Context, cfg ChatwootCo
 			for _, contact := range result.Payload {
 				if contact.Identifier == identifier {
 					log.Printf("[chatwoot] found existing contact %d for identifier %s", contact.ID, identifier)
-					return contact.ID, nil
+					return ContactRecord{ID: contact.ID, Name: contact.Name, Identifier: contact.Identifier}, nil
 				}
 			}
 		}
@@ -205,11 +226,11 @@ func (c *ChatwootClient) FindOrCreateContact(ctx context.Context, cfg ChatwootCo
 	}
 	contactID, err := c.CreateContact(ctx, cfg, createReq)
 	if err != nil {
-		return 0, fmt.Errorf("create contact: %w", err)
+		return ContactRecord{}, fmt.Errorf("create contact: %w", err)
 	}
 
 	log.Printf("[chatwoot] created new contact %d for identifier %s", contactID, identifier)
-	return contactID, nil
+	return ContactRecord{ID: contactID, Name: name, Identifier: identifier, Created: true}, nil
 }
 
 // CreateContact creates a new contact in Chatwoot.
