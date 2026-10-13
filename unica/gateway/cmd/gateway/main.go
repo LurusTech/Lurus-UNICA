@@ -448,13 +448,25 @@ func dynamicDispatchHandler(handlers *dynamicHandlerSet) http.HandlerFunc {
 	}
 }
 
+// outboundDedupKey names one outbound message for the dedup check: its
+// platform message id when it has one (an agent reply's cw-<message id>, the
+// same for both Chatwoot webhooks that deliver it), else the message's own id,
+// which a redelivered stream entry repeats. It used to fall back to customer
+// and second (dedup.BuildDedupKey), so two different replies to one customer
+// within a second counted as one and the second was dropped unsent.
+func outboundDedupKey(msg *model.StandardMessage) string {
+	if msg.Data.PlatformMsgID != "" {
+		return msg.Data.PlatformMsgID
+	}
+	return msg.ID
+}
+
 // createDispatcher returns an OutboundDispatcher with dedup, retry, and adapter registry support.
 // The deduplicator filters duplicate messages; the retryer handles retries with
 // exponential backoff and dead-letter escalation; the registry routes messages to the correct adapter.
 func createDispatcher(deduplicator *dedup.Deduplicator, retryer *dedup.Retryer, registry *adapter.Registry) stream.OutboundDispatcher {
 	return func(ctx context.Context, msg *model.StandardMessage) error {
-		// Dedup check using platform_msg_id (or fallback key)
-		dedupKey := dedup.BuildDedupKey(msg.Data.PlatformMsgID, msg.Data.PlatformMeta.PlatformUserID, msg.Time)
+		dedupKey := outboundDedupKey(msg)
 		if dedupKey != "" {
 			isDup, err := deduplicator.IsDuplicate(ctx, dedupKey)
 			if err != nil {
