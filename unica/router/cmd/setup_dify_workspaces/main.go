@@ -1,12 +1,25 @@
 // Command setup_dify_workspaces is a ONE-OFF operations script, retired from
-// any production path. Tenant provisioning is owned exclusively by the admin
-// service (POST /api/v1/tenants), whose topology is one app + one dataset per
-// tenant inside the default workspace, keyed on dify_agent_id. This script's
-// workspace-per-line topology and its dify_workspace_id marker are the OTHER,
-// abandoned convention: running it against a live environment produces a second,
-// inconsistent binding for every tenant it touches. Its only remaining use is
-// migration guidance for pre-refactor environments that were laid out per
-// workspace. Do not run it against new environments.
+// any production path. It is not a second way to onboard a tenant (D7).
+//
+// Tenant provisioning is owned exclusively by the admin service: account
+// opening (POST /api/v1/tenants) and the repair endpoint
+// (POST .../ai-settings/knowledge/provision) both run the same code,
+// EnsureDifyLine in admin/internal/identity/dify_line.go. Its topology is fixed
+// — one app + one dataset per product line inside the default workspace — and
+// it has no single "already configured" marker: app, dataset, attachment,
+// retrieval and write-back each check their own precondition, and the
+// attachment and retrieval checks ask Dify rather than trusting a column. (The
+// old rule that dify_agent_id alone meant "configured" is what left lines with
+// an app and no dataset stuck for months; see D8 in doc/known-defects.md.)
+//
+// This script's workspace-per-line topology and its dify_workspace_id marker
+// are the OTHER, abandoned convention: running it against a live environment
+// produces a second, inconsistent binding for every tenant it touches, and
+// EnsureDifyLine does not read dify_workspace_id at all. Its only remaining use
+// is migration guidance for pre-refactor environments that were laid out per
+// workspace. Do not run it against new environments; once the remaining
+// pre-refactor environments are backfilled, it can be deleted together with
+// internal/bridge/dify_admin.go.
 //
 // For each product line in the database, it creates a workspace, a Chat application,
 // a knowledge base (dataset), configures the default system prompt, generates an

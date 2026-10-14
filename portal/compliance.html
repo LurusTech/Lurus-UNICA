@@ -2,52 +2,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>转人工与 AI 标识 - UNICA 统一管理门户</title>
+<link rel="stylesheet" href="./ui/unica-ui.css?v=1">
 <style>
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-    --lt-accent: #FF5D1F;
-    --lt-on-accent: #14130F;
-  }
-  :root {
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --ok: var(--lt-ok);
-    --bad: var(--lt-err);
-    --warn: var(--lt-warn);
-    --info: var(--lt-info);
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --lt-paper: #14130F;
-      --lt-bg:    #0A0908;
-      --lt-ink:   #F0EDE4;
-      --lt-rule:  #25221C;
-      --lt-ok:    #3FA876;
-      --lt-warn:  #E0A040;
-      --lt-err:   #EE6F5E;
-      --lt-info:  #5A7BC7;
-      --bg: var(--lt-paper);
-      --surface: var(--lt-bg);
-      --text: var(--lt-ink);
-      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-      --border: var(--lt-rule);
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
-    }
-  }
+  /* Brand tokens, toasts and pills come from ui/unica-ui.css. */
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -60,8 +17,6 @@
     justify-content: space-between; gap: 12px;
   }
   header .left { display: flex; align-items: center; gap: 14px; }
-  header a.back { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
-  header a.back:hover { color: var(--primary); }
   header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
   #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
   main {
@@ -120,14 +75,6 @@
   .card-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 14px; line-height: 1.7; }
   .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
-  .pill {
-    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
-    font-size: 0.78rem; border: 1px solid var(--border); white-space: nowrap;
-  }
-  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
-  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
-  .pill.muted { color: var(--text-muted); }
 
   .notice {
     border-left: 4px solid var(--info); padding: 10px 14px; border-radius: 10px; background: var(--bg);
@@ -147,22 +94,12 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; margin-right: 4px;
   }
 
-  #toast-host {
-    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
-    gap: 10px; z-index: 100; max-width: 340px;
-  }
-  .toast {
-    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
-    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow); line-height: 1.6;
-  }
-  .toast.success { border-left-color: var(--ok); }
-  .toast.error { border-left-color: var(--bad); }
   [hidden] { display: none !important; }
 
   /* Printing keeps the self-check only: the forms and the sign-in chrome are
      not part of what goes to a reviewer. */
   @media print {
-    header, .toolbar, #human-access-card, #disclosure-card, .no-print, #toast-host { display: none !important; }
+    header, .toolbar, #human-access-card, #disclosure-card, .no-print { display: none !important; }
     body { background: #fff; color: #000; }
     main { max-width: none; padding: 0; }
     .card { box-shadow: none; background: #fff; border: none; padding: 0; }
@@ -173,11 +110,9 @@
 
 <header>
   <div class="left">
-    <a class="back" id="back-link" href="./home.html">← 返回首页</a>
     <h1>转人工与 AI 标识</h1>
   </div>
   <div id="user-info" hidden>
-    <span id="tenant-name"></span>
     <span id="user-email"></span>
     <button id="logout-btn">退出登录</button>
   </div>
@@ -216,7 +151,7 @@
     <div class="card" id="human-access-card" hidden>
       <div class="card-head">
         <h2>转人工可达</h2>
-        <span class="pill muted" id="ha-pill">—</span>
+        <span class="uu-pill muted" id="ha-pill">—</span>
       </div>
       <p class="card-sub">
         这三项都在调用 AI 之前判断，命中即转人工（客户收到“转接中”的提示，坐席收到交接摘要），只会增加转人工，不会减少。
@@ -265,7 +200,7 @@
     <div class="card" id="disclosure-card" hidden>
       <div class="card-head">
         <h2>AI 标识与备案公示</h2>
-        <span class="pill muted" id="dc-pill">—</span>
+        <span class="uu-pill muted" id="dc-pill">—</span>
       </div>
       <p class="card-sub">
         标识加在 AI 回复的开头或末尾，只说明“这是 AI 在回复”，AI 回复的原文一字不改；转人工时的提示语不加标识。
@@ -323,9 +258,9 @@
   </section>
 </main>
 
-<div id="toast-host" aria-live="polite"></div>
 
 <script src="./auth.js?v=1"></script>
+<script src="./ui/unica-ui.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -360,8 +295,6 @@
     userInfo: document.getElementById("user-info"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
-    backLink: document.getElementById("back-link"),
-    tenantName: document.getElementById("tenant-name"),
     plField: document.getElementById("pl-field"),
     plSelect: document.getElementById("pl-select"),
     haCard: document.getElementById("human-access-card"),
@@ -386,18 +319,12 @@
     clBody: document.getElementById("cl-body"),
     clRefresh: document.getElementById("cl-refresh"),
     clPrint: document.getElementById("cl-print"),
-    clPrintMeta: document.getElementById("cl-print-meta"),
-    toastHost: document.getElementById("toast-host")
+    clPrintMeta: document.getElementById("cl-print-meta")
   };
 
-  // ---------- Toasts ----------
-  function toast(message, kind) {
-    var el = document.createElement("div");
-    el.className = "toast" + (kind ? " " + kind : "");
-    el.textContent = message;
-    els.toastHost.appendChild(el);
-    setTimeout(function () { el.remove(); }, 3600);
-  }
+  // ---------- Shared interface ----------
+  var toast = UnicaUI.toast;
+  var announce = UnicaUI.liveRegion.announce;
 
   // ---------- Tenant scope ----------
   var TENANT_ME = "me";
@@ -425,8 +352,16 @@
     return "/api/v1/tenants/" + encodeURIComponent(tenantSegment()) + suffix;
   }
 
+  // The top bar is built from the session as it is now, so it is mounted
+  // after sign-in and taken down on sign-out; a tenant switch goes through
+  // UnicaUI.topbar.setTenant.
+  function mountTopbar() {
+    UnicaUI.topbar.refresh({ title: "转人工与 AI 标识" });
+  }
+
   function showLogin(message) {
     UnicaAuth.dropTab();
+    UnicaUI.topbar.unmount();
     els.appView.hidden = true;
     els.userInfo.hidden = true;
     els.loginView.hidden = false;
@@ -440,6 +375,7 @@
     els.loginView.hidden = true;
     els.appView.hidden = false;
     els.userInfo.hidden = false;
+    if (!UnicaUI.topbar.current()) mountTopbar();
   }
 
   function errorText(err) {
@@ -511,7 +447,6 @@
 
   function renderTenantOptions() {
     els.plField.hidden = !isAdmin();
-    els.backLink.href = isAdmin() ? "./admin.html" : "./home.html";
     if (state.tenants.length === 0) {
       els.plSelect.innerHTML = '<option value="">暂无租户</option>';
       return;
@@ -528,8 +463,9 @@
 
   function selectTenant(id) {
     state.currentTenant = findTenant(id);
-    els.tenantName.textContent = state.currentTenant
-      ? (state.currentTenant.display_name || state.currentTenant.name) : "";
+    // An administrator's choice goes on the address, where the top bar and
+    // every link built from it read the tenant.
+    if (state.currentTenant) UnicaUI.topbar.setTenant(state.currentTenant.id);
     var has = !!state.currentTenant;
     els.haCard.hidden = !has;
     els.dcCard.hidden = !has;
@@ -594,7 +530,7 @@
       : "（无）");
     var mode = cfg.mode || "off";
     els.haPill.textContent = MODE_LABELS[mode] || mode;
-    els.haPill.className = "pill " + (mode === "on" ? "ok" : mode === "shadow" ? "warn" : "muted");
+    els.haPill.className = "uu-pill " + (mode === "on" ? "ok" : mode === "shadow" ? "warn" : "muted");
   }
 
   function loadHumanAccess() {
@@ -653,7 +589,7 @@
     els.dcFiling.value = cfg.filing_text || "";
     var mode = cfg.mode || "off";
     els.dcPill.textContent = DISCLOSURE_LABELS[mode] || mode;
-    els.dcPill.className = "pill " + (mode === "off" ? "muted" : "ok");
+    els.dcPill.className = "uu-pill " + (mode === "off" ? "muted" : "ok");
   }
 
   function loadDisclosure() {
@@ -683,8 +619,16 @@
   // ---------- Checklist ----------
   function loadChecklist() {
     UnicaAuth.api(tenantPath("/compliance/checklist"))
-      .then(renderChecklist)
-      .catch(function (err) { reportError("读取自查清单失败", err); });
+      .then(function (data) {
+        renderChecklist(data);
+        var items = Array.isArray(data && data.items) ? data.items : [];
+        var open = items.filter(function (it) { return it.status === "fail" || it.status === "warn"; }).length;
+        announce("自查清单已更新，共 " + items.length + " 项" + (open ? "，其中 " + open + " 项待处理或建议处理" : ""));
+      })
+      .catch(function (err) {
+        announce("读取自查清单失败：" + errorText(err), "assertive");
+        reportError("读取自查清单失败", err);
+      });
   }
 
   function renderChecklist(data) {
@@ -699,7 +643,7 @@
         '<td class="title">' + escapeHtml(it.title) + "</td>" +
         '<td class="basis">' + escapeHtml(it.basis) + "</td>" +
         "<td>" + escapeHtml(it.requirement) + "</td>" +
-        '<td><span class="pill ' + status.cls + '">' + escapeHtml(status.text) + "</span></td>" +
+        '<td><span class="uu-pill ' + status.cls + '">' + escapeHtml(status.text) + "</span></td>" +
         "<td>" + escapeHtml(it.evidence) + "</td>" +
         '<td class="no-print">' + (href && it.status !== "pass"
           ? '<a href="' + escapeHtml(href) + '">去修复 →</a>' : "") + "</td>" +

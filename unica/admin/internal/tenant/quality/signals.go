@@ -177,6 +177,12 @@ func (h *SignalsHandler) HandleViolationStats(w http.ResponseWriter, r *http.Req
 // counts. Structural kinds attribute to the declared property they name;
 // denied_capability attributes to the deny term; undeclared_property is
 // excluded on both sides — by definition it matches no declared constraint.
+//
+// Firewall kinds (commitment findings and redline phrases, domain.IsFirewallKind)
+// are excluded too. They share the claim_violations table but not its meaning:
+// their property column holds a pack label or a quoted figure, not an ontology
+// property, so one that happens to spell a property's name would be counted as
+// that constraint firing and keep a dead constraint off the dead list.
 func coverageFor(o *domain.Ontology, hits []domain.PropertyHits) []constraintCoverage {
 	out := make([]constraintCoverage, 0, len(o.Properties)+len(o.Denials))
 
@@ -189,7 +195,8 @@ func coverageFor(o *domain.Ontology, hits []domain.PropertyHits) []constraintCov
 		c := constraintCoverage{Name: name, Type: "property"}
 		for _, p := range hits {
 			if p.Property != name || p.Kind == string(domain.ViolationUndeclared) ||
-				p.Kind == string(domain.ViolationDenied) {
+				p.Kind == string(domain.ViolationDenied) ||
+				domain.IsFirewallKind(domain.ViolationKind(p.Kind)) {
 				continue
 			}
 			c.Hits += p.Hits

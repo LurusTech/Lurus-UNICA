@@ -3,6 +3,8 @@ package auth
 import (
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestGenerateAndValidateToken(t *testing.T) {
@@ -169,5 +171,78 @@ func TestGenerateTokenPair_UniquePerIssue(t *testing.T) {
 		if accessClaims.ID == refreshClaims.ID {
 			t.Errorf("%s: access and refresh share jti '%s'", name, accessClaims.ID)
 		}
+	}
+}
+
+// D23: each half of a pair says what it is for.
+func TestGenerateTokenPair_TypedClaims(t *testing.T) {
+	mgr := NewJWTManager("test-secret", 2*time.Hour, 7*24*time.Hour)
+	pair, err := mgr.GenerateTokenPair("user-1", "a@b.com", "user", "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := mgr.ValidateToken(pair.AccessToken)
+	if err != nil || access.Type != TokenTypeAccess {
+		t.Errorf("access token type = %q, err %v; want %q", access.Type, err, TokenTypeAccess)
+	}
+	refresh, err := mgr.ValidateToken(pair.RefreshToken)
+	if err != nil || refresh.Type != TokenTypeRefresh {
+		t.Errorf("refresh token type = %q, err %v; want %q", refresh.Type, err, TokenTypeRefresh)
+	}
+}
+
+func TestValidateAccessToken_RejectsRefreshToken(t *testing.T) {
+	mgr := NewJWTManager("test-secret", 2*time.Hour, 7*24*time.Hour)
+	pair, _ := mgr.GenerateTokenPair("user-1", "a@b.com", "admin", "")
+
+	if _, err := mgr.ValidateAccessToken(pair.AccessToken); err != nil {
+		t.Errorf("access token refused: %v", err)
+	}
+	if _, err := mgr.ValidateAccessToken(pair.RefreshToken); err == nil {
+		t.Error("refresh token accepted as an access token")
+	}
+}
+
+// signLegacy signs claims the way tokens were issued before Claims.Type.
+func signLegacy(t *testing.T, secret string, c *Claims) string {
+	t.Helper()
+	c.RegisteredClaims = jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		Issuer:    "unica-admin",
+		Subject:   c.UserID,
+	}
+	s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// Tokens issued before the type existed: an access token (it has a role) keeps
+// working until it expires; a refresh token (no role) is refused as a Bearer
+// token but still parses for the refresh endpoint.
+func TestValidateAccessToken_LegacyUntypedTokens(t *testing.T) {
+	mgr := NewJWTManager("test-secret", 2*time.Hour, 7*24*time.Hour)
+
+	legacyAccess := signLegacy(t, "test-secret", &Claims{UserID: "user-1", Email: "a@b.com", Role: "user", TenantID: "tenant-1"})
+	if claims, err := mgr.ValidateAccessToken(legacyAccess); err != nil || claims.TenantID != "tenant-1" {
+		t.Errorf("legacy access token refused: %v", err)
+	}
+
+	legacyRefresh := signLegacy(t, "test-secret", &Claims{UserID: "user-1", Email: "a@b.com"})
+	if _, err := mgr.ValidateAccessToken(legacyRefresh); err == nil {
+		t.Error("legacy refresh token accepted as an access token")
+	}
+	if _, err := mgr.ValidateToken(legacyRefresh); err != nil {
+		t.Errorf("legacy refresh token must still parse for /auth/refresh: %v", err)
+	}
+}
+
+func TestValidateAccessToken_UnknownTypeRefused(t *testing.T) {
+	mgr := NewJWTManager("test-secret", 2*time.Hour, 7*24*time.Hour)
+	tok := signLegacy(t, "test-secret", &Claims{UserID: "user-1", Role: "admin", Type: "id"})
+	if _, err := mgr.ValidateAccessToken(tok); err == nil {
+		t.Error("a token of an unknown type authenticated")
 	}
 }

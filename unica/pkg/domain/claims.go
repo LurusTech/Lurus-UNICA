@@ -1,12 +1,10 @@
 package domain
 
 import (
-	"regexp"
 	"strings"
 )
 
-// factTagPattern matches the claim tags an AI app is instructed to emit
-// alongside its answer:
+// Claim tags are what an AI app is instructed to emit alongside its answer:
 //
 //	[FACT:return_window_days=15]
 //	[FACT:Phone.warranty_months=12]
@@ -22,21 +20,18 @@ import (
 // survives a model that ignores it (no tags simply means no claims to check, and
 // the answer is delivered exactly as it is today), and needs no change to the
 // app's output format.
-// Matching is case-insensitive for the same reason the escalation protocol's
-// is: a tag the model wrote as [fact:...] is still a tag, and a pattern that
-// does not recognise it leaves internal markup in the customer's message.
-var factTagPattern = regexp.MustCompile(`(?i)\[FACT:([^\]=]+)=([^\]]*)\]`)
-
-// factTagStripPattern matches any [FACT:...] whatsoever, well-formed or not.
 //
-// Stripping cannot reuse the pattern above. That one requires the "=" and so
-// leaves a tag the model wrote without one — [FACT:学位免责] — sitting in the
+// Recognition is ScanTags (tags.go), shared with the other two protocols, so
+// case, full-width brackets, a full-width colon or equals sign and stray spaces
+// are tolerated here exactly as they are there.
+//
+// Parsing and stripping are deliberately different widths. Stripping is total:
+// a tag the model wrote without a value — [FACT:学位免责] — must not sit in the
 // text that goes to the customer, who sees internal markup the prompt promised
 // they never would. A model that half-follows the convention is the ordinary
 // case, not an exotic one: it was observed on 3 of 21 turns in a single
 // conversation. Parsing stays strict, because a tag with no value asserts
-// nothing checkable; removal is deliberately total.
-var factTagStripPattern = regexp.MustCompile(`(?i)\[FACT:[^\]]*\]`)
+// nothing checkable.
 
 // Claim is one factual assertion the model made about its own answer.
 type Claim struct {
@@ -69,16 +64,19 @@ type ClaimResult struct {
 // formatting slip, and treating it as a factual violation would punish an answer
 // that may be entirely correct.
 func ParseClaims(answer string) ClaimResult {
-	matches := factTagPattern.FindAllStringSubmatch(answer, -1)
+	tags, stripped := ScanTags(answer, TagFact)
 
-	claims := make([]Claim, 0, len(matches))
-	for _, m := range matches {
-		value := strings.TrimSpace(m[2])
-		if value == "" {
+	claims := make([]Claim, 0, len(tags))
+	for _, tag := range tags {
+		if !tag.Separated {
+			continue
+		}
+		key, value, ok := SplitTagAssignment(tag.Value)
+		if !ok || value == "" {
 			continue
 		}
 
-		segments := splitKey(m[1])
+		segments := splitKey(key)
 		if len(segments) == 0 {
 			continue
 		}
@@ -91,7 +89,7 @@ func ParseClaims(answer string) ClaimResult {
 	}
 
 	return ClaimResult{
-		CleanedAnswer: tidy(factTagStripPattern.ReplaceAllString(answer, "")),
+		CleanedAnswer: tidy(stripped),
 		Claims:        claims,
 	}
 }

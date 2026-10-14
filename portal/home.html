@@ -1,68 +1,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>我的工作台 - UNICA 统一管理门户</title>
+<link rel="stylesheet" href="./ui/unica-ui.css?v=1">
 <style>
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root {
-    --lt-paper: #F5F2E8;
-    --lt-bg:    #E8E4D6;
-    --lt-ink:   #14130F;
-    --lt-rule:  #D6D2C2;
-    --lt-ok:    #1F7A4F;
-    --lt-warn:  #B8821F;
-    --lt-err:   #B3392B;
-    --lt-info:  #2D4A8A;
-    --lt-accent: #FF5D1F;
-    /* Accent is theme-invariant, so its foreground is too. Local token, not in upstream tokens.css. */
-    --lt-on-accent: #14130F;
-    --lt-font-sans: 'Inter Tight', 'Noto Sans SC', "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-  }
-  :root {
-    --bg: var(--lt-paper);
-    --surface: var(--lt-bg);
-    --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule);
-    --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --ok: var(--lt-ok);
-    --bad: var(--lt-err);
-    --warn: var(--lt-warn);
-    /* Neutral elevation shadow, no brand hue — kept at original value. */
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  }
-  @media (prefers-color-scheme: dark) {
-    /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-    :root {
-      --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
-      --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
-      --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-      --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-      --border: var(--lt-rule); --primary: var(--lt-accent);
-      --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
-    }
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (dark), manual vendor copy */
-  :root[data-theme="dark"] {
-    --lt-paper: #14130F; --lt-bg: #0A0908; --lt-ink: #F0EDE4; --lt-rule: #25221C;
-    --lt-ok: #3FA876; --lt-warn: #E0A040; --lt-err: #EE6F5E; --lt-info: #5A7BC7;
-    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule); --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.5);
-  }
-  /* Lurus brand tokens — source: shared/lurus-design/tokens.css (light), manual vendor copy */
-  :root[data-theme="light"] {
-    --lt-paper: #F5F2E8; --lt-bg: #E8E4D6; --lt-ink: #14130F; --lt-rule: #D6D2C2;
-    --lt-ok: #1F7A4F; --lt-warn: #B8821F; --lt-err: #B3392B; --lt-info: #2D4A8A;
-    --bg: var(--lt-paper); --surface: var(--lt-bg); --text: var(--lt-ink);
-    --text-muted: color-mix(in srgb, var(--lt-ink) 62%, transparent);
-    --border: var(--lt-rule); --primary: var(--lt-accent);
-    --primary-hover: color-mix(in srgb, var(--lt-accent) 82%, var(--lt-ink));
-    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
-  }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -76,10 +16,6 @@
   }
   header .left { display: flex; align-items: center; gap: 14px; }
   header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
-  header .badge {
-    font-size: 0.72rem; color: var(--text-muted); border: 1px solid var(--border);
-    border-radius: 999px; padding: 3px 10px;
-  }
   #user-info { font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
   main {
     flex: 1; padding: clamp(24px, 5vw, 48px) clamp(16px, 4vw, 48px);
@@ -125,6 +61,9 @@
     text-align: left; font-family: inherit; font-size: 1rem; cursor: pointer;
   }
   .card:hover, .card:focus-visible { transform: translateY(-2px); border-color: var(--primary); }
+  @media (prefers-reduced-motion: reduce) {
+    .card:hover, .card:focus-visible { transform: none; }
+  }
   .card:disabled { transform: none; opacity: 0.55; cursor: progress; }
   .card .icon {
     font-size: 1.7rem; width: 48px; height: 48px; display: flex;
@@ -146,22 +85,12 @@
   .card-badge.attn {
     color: var(--warn); border-color: var(--warn); font-weight: 600;
   }
+  /* The feed's own card leads the grid; its tint says "live" without
+     competing with the attention badges. */
+  .card.live { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+  .card.live .icon { background: color-mix(in srgb, var(--primary) 14%, transparent); }
 
   footer { text-align: center; color: var(--text-muted); font-size: 0.8rem; padding: 20px; }
-
-  /* Toasts */
-  #toast-host {
-    position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column;
-    gap: 10px; z-index: 100; max-width: 320px;
-  }
-  .toast {
-    background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--lt-info);
-    border-radius: 10px; padding: 12px 16px; font-size: 0.85rem; box-shadow: var(--shadow);
-    animation: slide-in 0.2s ease;
-  }
-  .toast.success { border-left-color: var(--ok); }
-  .toast.error { border-left-color: var(--bad); }
-  @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
   /* .card sets display:flex, which would otherwise beat the UA rule for [hidden]. */
   [hidden] { display: none !important; }
@@ -170,7 +99,6 @@
 <header>
   <div class="left">
     <h1>我的工作台</h1>
-    <span class="badge" id="tenant-badge" hidden></span>
   </div>
   <div id="user-info">
     <a id="admin-link" href="./admin.html" hidden>平台管理</a>
@@ -195,6 +123,13 @@
   <div class="banner bad" id="workbench-banner" hidden></div>
 
   <div class="cards">
+    <a class="card live" id="card-live" href="./live.html">
+      <span class="card-badge" id="badge-live" hidden></span>
+      <div class="icon">📡</div>
+      <h3>实时运营台</h3>
+      <p>转人工、扣下的答复、事实冲突与配置变更实时汇在一处，需要你处理的排在最前。</p>
+      <span class="go">进入 →</span>
+    </a>
     <a class="card" id="card-knowledge" href="./knowledge.html">
       <span class="card-badge" id="badge-knowledge" hidden></span>
       <div class="icon">📚</div>
@@ -262,9 +197,8 @@
 
 <footer>UNICA 统一管理门户</footer>
 
-<div id="toast-host" aria-live="polite"></div>
-
 <script src="./auth.js?v=1"></script>
+<script src="./ui/unica-ui.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -280,7 +214,6 @@
   var state = { tenant: null, claims: null, workbenchBusy: false };
 
   var els = {
-    tenantBadge: document.getElementById("tenant-badge"),
     adminLink: document.getElementById("admin-link"),
     userEmail: document.getElementById("user-email"),
     logoutBtn: document.getElementById("logout-btn"),
@@ -289,30 +222,20 @@
     workbenchBanner: document.getElementById("workbench-banner"),
     workbenchCard: document.getElementById("card-workbench"),
     workbenchGo: document.getElementById("workbench-go"),
-    toastHost: document.getElementById("toast-host"),
     badgeKnowledge: document.getElementById("badge-knowledge"),
     badgeChannels: document.getElementById("badge-channels"),
     badgeFacts: document.getElementById("badge-facts"),
     badgeViolations: document.getElementById("badge-violations"),
-    badgeProposals: document.getElementById("badge-proposals")
+    badgeProposals: document.getElementById("badge-proposals"),
+    badgeLive: document.getElementById("badge-live")
   };
 
   // Cards that open another page of this portal; an administrator acting for a
   // tenant carries that tenant across to them.
-  var PAGE_CARDS = ["card-knowledge", "card-channels", "card-facts", "card-ai-settings", "card-violations", "card-proposals", "card-compliance", "card-evidence"];
+  var PAGE_CARDS = ["card-live", "card-knowledge", "card-channels", "card-facts", "card-ai-settings", "card-violations", "card-proposals", "card-compliance", "card-evidence"];
 
   // ---------- Toasts ----------
-  function toast(message, kind) {
-    var el = document.createElement("div");
-    el.className = "toast" + (kind ? " " + kind : "");
-    el.textContent = message;
-    els.toastHost.appendChild(el);
-    setTimeout(function () {
-      el.style.opacity = "0";
-      el.style.transition = "opacity 0.3s";
-      setTimeout(function () { el.remove(); }, 300);
-    }, 4200);
-  }
+  var toast = UnicaUI.toast;
 
   // ---------- Session ----------
   // Token storage, claim decoding and silent renewal live in the shared
@@ -387,9 +310,8 @@
   function renderTenant() {
     var name = state.tenant ? (state.tenant.display_name || state.tenant.name) : "";
     if (name) {
-      els.tenantBadge.textContent = name;
-      els.tenantBadge.hidden = false;
       els.greeting.textContent = isAdmin() ? "代管租户：" + name : name;
+      UnicaUI.liveRegion.announce("已进入" + (isAdmin() ? "代管租户 " : "") + name + " 的工作台");
     }
     if (isAdmin()) {
       showBanner(els.proxyBanner,
@@ -426,6 +348,11 @@
   // make. None of them may block the cards or report an error: a card is a
   // link to a page that already tells the full story, and a badge that could
   // not be read is simply not shown rather than guessed at.
+  //
+  // The first paint reads each count from its own endpoint, as before. After
+  // that the event feed says when a count may have moved, and only that count
+  // is read again: the feed tells that something happened, the endpoint stays
+  // the one source of the number.
   function setCardBadge(el, text, attn) {
     if (!el) return;
     el.textContent = text;
@@ -433,48 +360,141 @@
     el.hidden = false;
   }
 
-  function loadCardBadges() {
-    api(tenantPath("/knowledge?limit=1"))
-      .then(function (data) {
-        var total = data && typeof data.total === "number" ? data.total : null;
-        if (total === null) return;
-        setCardBadge(els.badgeKnowledge, total > 0 ? total + " 篇文档" : "还没有文档", total === 0);
-      })
-      .catch(function () {});
+  // A count badge: the number in its own span so it can roll to the next
+  // value, the words around it fixed. Zero reads as a sentence, not "0 条".
+  function setCountBadge(el, n, unit, zeroText, attnWhenNonZero) {
+    if (!el) return;
+    var attn = attnWhenNonZero ? n > 0 : n === 0;
+    el.className = "card-badge" + (attn ? " attn" : "");
+    el.hidden = false;
+    if (n === 0) {
+      el.textContent = zeroText;
+      return;
+    }
+    var num = el.querySelector(".n");
+    if (!num) {
+      el.textContent = "";
+      num = document.createElement("span");
+      num.className = "n";
+      num.textContent = String(n);
+      num.dataset.uuCount = String(n);
+      el.appendChild(num);
+      el.appendChild(document.createTextNode(" " + unit));
+      return;
+    }
+    UnicaUI.countTo(num, n);
+  }
 
-    api(tenantPath("/channels"))
-      .then(function (data) {
+  function totalOf(data) {
+    return data && typeof data.total === "number" ? data.total : null;
+  }
+
+  var BADGES = {
+    knowledge: function () {
+      return api(tenantPath("/knowledge?limit=1")).then(function (data) {
+        var total = totalOf(data);
+        if (total === null) return;
+        setCountBadge(els.badgeKnowledge, total, "篇文档", "还没有文档", false);
+      });
+    },
+    channels: function () {
+      return api(tenantPath("/channels")).then(function (data) {
         var list = Array.isArray(data) ? data : null;
         if (!list) return;
-        setCardBadge(els.badgeChannels, list.length > 0 ? list.length + " 个渠道" : "还没有接入渠道", list.length === 0);
-      })
-      .catch(function () {});
-
-    api(tenantPath("/facts"))
-      .then(function (data) {
+        setCountBadge(els.badgeChannels, list.length, "个渠道", "还没有接入渠道", false);
+      });
+    },
+    facts: function () {
+      return api(tenantPath("/facts")).then(function (data) {
         var active = data && typeof data.active_version === "number" ? data.active_version : null;
         if (active === null) return;
         setCardBadge(els.badgeFacts, active > 0 ? "已发布 v" + active : "尚未发布", active === 0);
-      })
-      .catch(function () {});
-
+      });
+    },
     // The violations endpoint's filter key is review_status, not status — the
     // list page itself sends review_status; matched here for the same total.
-    api(tenantPath("/violations?review_status=pending&limit=1"))
-      .then(function (data) {
-        var total = data && typeof data.total === "number" ? data.total : null;
+    violations: function () {
+      return api(tenantPath("/violations?review_status=pending&limit=1")).then(function (data) {
+        var total = totalOf(data);
         if (total === null) return;
-        setCardBadge(els.badgeViolations, total > 0 ? total + " 条待复核" : "无待复核", total > 0);
-      })
-      .catch(function () {});
+        setCountBadge(els.badgeViolations, total, "条待复核", "无待复核", true);
+      });
+    },
+    proposals: function () {
+      return api(tenantPath("/facts/proposals?status=pending&limit=1")).then(function (data) {
+        var total = totalOf(data);
+        if (total === null) return;
+        setCountBadge(els.badgeProposals, total, "条待审", "无待审", true);
+      });
+    }
+  };
 
-    api(tenantPath("/facts/proposals?status=pending&limit=1"))
-      .then(function (data) {
-        var total = data && typeof data.total === "number" ? data.total : null;
-        if (total === null) return;
-        setCardBadge(els.badgeProposals, total > 0 ? total + " 条待审" : "无待审", total > 0);
-      })
-      .catch(function () {});
+  function loadBadge(name) {
+    BADGES[name]().catch(function () {});
+  }
+
+  function loadCardBadges() {
+    Object.keys(BADGES).forEach(loadBadge);
+  }
+
+  // A burst of events (a review session, a publish) asks for each count
+  // once, after it settles.
+  var badgeTimers = {};
+  function refreshBadge(name) {
+    clearTimeout(badgeTimers[name]);
+    badgeTimers[name] = setTimeout(function () { loadBadge(name); }, 700);
+  }
+
+  // Which counts an event may have moved. Knowledge documents have no event
+  // of their own, so that badge keeps its first-paint value.
+  function badgesFor(ev) {
+    var out = {};
+    var settled = String(ev.resolves || "");
+    if (ev.source === "violation" || settled.indexOf("violation:") === 0) out.violations = true;
+    if (ev.source === "proposal" || ev.source === "proposal_decision" || settled.indexOf("proposal:") === 0) out.proposals = true;
+    if (ev.category === "ontology") { out.facts = true; out.proposals = true; }
+    if (ev.category === "config") out.channels = true;
+    return Object.keys(out);
+  }
+
+  // The live card counts what the top bar counts: urgent and attention events
+  // nobody has settled yet, within what the feed has seen.
+  var liveOpen = {};
+  var liveSettled = {};
+  var liveQueued = false;
+
+  function renderLiveBadge() {
+    liveQueued = false;
+    setCountBadge(els.badgeLive, Object.keys(liveOpen).length, "条待处理", "无待处理", true);
+  }
+
+  function queueLiveBadge() {
+    if (liveQueued) return;
+    liveQueued = true;
+    setTimeout(renderLiveBadge, 0);
+  }
+
+  function onFeedEvent(ev, meta) {
+    if (ev.resolves) {
+      liveSettled[ev.resolves] = true;
+      delete liveOpen[ev.resolves];
+    }
+    if ((ev.severity === "urgent" || ev.severity === "attention") && ev.id && !liveSettled[ev.id]) liveOpen[ev.id] = ev;
+    queueLiveBadge();
+    // History replayed on connect changed nothing since the first paint.
+    if (meta && meta.initial) return;
+    badgesFor(ev).forEach(refreshBadge);
+  }
+
+  function onFeedStatus(s) {
+    // Connected with nothing to report is itself an answer for the live card.
+    if (s === "connected" || s === "polling") queueLiveBadge();
+  }
+
+  function subscribeBadges() {
+    var t = UnicaUI.tenant();
+    if (!t) return;
+    UnicaUI.events.subscribe(t, onFeedEvent, { onStatus: onFeedStatus });
   }
 
   // ---------- Workbench ----------
@@ -548,6 +568,9 @@
     return;
   }
   els.userEmail.textContent = state.claims.email || "";
+  // The shared bar names the tenant and carries the feed state, so it goes up
+  // even for an administrator who has not picked a tenant yet.
+  UnicaUI.topbar.mount({ title: "我的工作台" });
 
   if (isAdmin()) {
     els.adminLink.hidden = false;
@@ -569,5 +592,6 @@
 
   loadTenant();
   loadCardBadges();
+  subscribeBadges();
 })();
 </script>

@@ -236,3 +236,22 @@ func TestTenantAuth_MissingTenantID(t *testing.T) {
 		t.Fatalf("status = %d, want 400", code)
 	}
 }
+
+// D23: a refresh token in the Authorization header no longer authenticates.
+func TestAuthMiddleware_RefreshTokenRejected(t *testing.T) {
+	mgr := NewJWTManager("test-secret", 2*time.Hour, 7*24*time.Hour)
+	pair, _ := mgr.GenerateTokenPair("user-1", "a@b.com", rbac.RoleAdmin, "")
+
+	handler := AuthMiddleware(mgr)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called with a refresh token")
+	}))
+
+	req := httptest.NewRequest("GET", "/api/v1/audit-logs", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.RefreshToken)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rr.Code)
+	}
+}

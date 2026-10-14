@@ -1,0 +1,1039 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>实时运营台 - UNICA 统一管理门户</title>
+<link rel="stylesheet" href="./ui/unica-ui.css?v=1">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: var(--lt-font-sans);
+  }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+  .page-head {
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 20px clamp(16px, 3vw, 32px) 0;
+  }
+  .page-head h1 { margin: 0 0 4px; font-size: 1.3rem; }
+  .page-head p { margin: 0; color: var(--text-muted); font-size: 0.86rem; line-height: 1.6; }
+  #user-info { font-size: 0.82rem; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
+
+  main { flex: 1; padding: 18px clamp(16px, 3vw, 32px) 32px; width: 100%; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px 20px; box-shadow: var(--shadow); min-width: 0;
+  }
+  .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .sec-head h2 { margin: 0; font-size: 1.02rem; display: inline-flex; align-items: center; gap: 8px; }
+  .sec-sub { margin: 6px 0 12px; color: var(--text-muted); font-size: 0.8rem; line-height: 1.55; }
+  .count-pill {
+    font-size: 0.78rem; min-width: 1.8em; text-align: center; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg); font-weight: 600;
+  }
+  .empty { color: var(--text-muted); font-size: 0.86rem; margin: 6px 0; }
+  .hint { color: var(--text-muted); font-size: 0.78rem; }
+
+  .banner {
+    border-radius: 12px; padding: 12px 16px; font-size: 0.85rem; margin-bottom: 16px; line-height: 1.6;
+    background: color-mix(in srgb, var(--info) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
+  }
+  .banner.bad {
+    background: color-mix(in srgb, var(--bad) 8%, transparent);
+    border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+  }
+  .banner a { color: var(--primary); font-weight: 500; margin-left: 8px; }
+
+  /* ---------- Inbox ---------- */
+  .inbox { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .inbox-item {
+    display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    background: var(--bg); border: 1px solid var(--border); border-left: 4px solid var(--uu-cat, var(--border));
+    border-radius: 10px; padding: 10px 12px;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .inbox-item.leaving { opacity: 0; transform: translateX(16px); }
+  .ib-main { min-width: 0; flex: 1 1 320px; }
+  .ib-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.78rem; color: var(--text-muted); }
+  .ib-title { margin: 6px 0 2px; font-weight: 600; font-size: 0.92rem; word-break: break-word; }
+  .ib-meta { color: var(--text-muted); font-size: 0.78rem; word-break: break-word; }
+  .ib-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+  /* ---------- Swimlanes ---------- */
+  .lanes { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .lane { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; align-items: center; }
+  @media (max-width: 720px) { .lane { grid-template-columns: minmax(0, 1fr); } }
+  .lane-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .lane-n { font-size: 0.78rem; color: var(--text-muted); }
+  .lane-track {
+    list-style: none; margin: 0; padding: 6px; display: flex; gap: 6px; overflow-x: auto;
+    min-height: 52px; background: var(--bg); border: 1px dashed var(--border); border-radius: 10px;
+    scroll-behavior: smooth;
+  }
+  .lane-track:empty::after { content: "—"; color: var(--text-muted); font-size: 0.8rem; align-self: center; padding: 0 6px; }
+  .ev { flex: none; }
+  .ev.arriving { animation: live-slide-in 0.45s cubic-bezier(.2, .8, .2, 1); }
+  @keyframes live-slide-in { from { transform: translateX(48px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .ev-btn {
+    font-family: inherit; cursor: pointer; text-align: left; color: var(--text);
+    display: flex; flex-direction: column; gap: 3px; width: 168px; padding: 6px 9px;
+    background: var(--surface); border: 1px solid color-mix(in srgb, var(--uu-cat) 45%, var(--border));
+    border-top: 3px solid var(--uu-cat); border-radius: 8px; font-size: 0.78rem; line-height: 1.35;
+  }
+  .ev-btn:hover { border-color: var(--uu-cat); }
+  .ev-top { display: flex; align-items: center; gap: 5px; color: var(--uu-cat); font-weight: 600; }
+  .ev-top time { margin-left: auto; color: var(--text-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .ev-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ev-sev { font-size: 0.7rem; padding: 0 5px; border-radius: 999px; border: 1px solid currentColor; }
+  .ev-sev.urgent { color: var(--bad); }
+  .ev-sev.attention { color: var(--warn); }
+  .ev.is-resolved .ev-btn { opacity: 0.6; border-top-style: dotted; }
+  .ev-done { font-size: 0.7rem; color: var(--ok); }
+
+  /* ---------- Status rail ---------- */
+  .rail { display: flex; flex-direction: column; gap: 14px; position: sticky; top: calc(var(--uu-topbar-h) + 12px); }
+  @media (max-width: 1100px) { .rail { position: static; } }
+  .st-block h3 { margin: 0 0 8px; font-size: 0.88rem; }
+  .st-block + .st-block { border-top: 1px solid var(--border); padding-top: 12px; }
+  .st-line { font-size: 0.84rem; line-height: 1.6; word-break: break-word; }
+  .st-line.warn { color: var(--warn); }
+  .st-line.bad { color: var(--bad); }
+  .st-suspect {
+    border: 1px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin-top: 6px;
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+  }
+  .sw { display: grid; grid-template-columns: 1fr auto; gap: 8px 10px; margin: 0; font-size: 0.84rem; align-items: center; }
+  .sw dt { margin: 0; }
+  .sw dt a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--text-muted); }
+  .sw dt a:hover { color: var(--primary); }
+  .sw dd { margin: 0; text-align: right; }
+  .rail-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+  /* ---------- Detail dialog ---------- */
+  .dt-grid { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 8px 12px; margin: 0; font-size: 0.86rem; }
+  .dt-grid dt { color: var(--text-muted); }
+  .dt-grid dd { margin: 0; word-break: break-word; white-space: pre-wrap; }
+  .diff { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 0.82rem; }
+  .diff th, .diff td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; word-break: break-word; }
+  .diff th { color: var(--text-muted); font-weight: 500; }
+  .diff td.k { font-family: var(--lt-font-mono); white-space: nowrap; }
+  .diff del { color: var(--bad); text-decoration-thickness: 1.5px; }
+  .diff ins {
+    text-decoration: none; font-weight: 600; padding: 0 3px; border-radius: 3px;
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+  }
+  .diff .none { color: var(--text-muted); font-style: italic; }
+  .dt-section { margin: 16px 0 0; font-size: 0.86rem; font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ev.arriving { animation: none; }
+    .inbox-item { transition: none; }
+    .lane-track { scroll-behavior: auto; }
+  }
+  [hidden] { display: none !important; }
+</style>
+
+<div class="page-head">
+  <div>
+    <h1>实时运营台</h1>
+    <p>转人工、扣下的答复、事实冲突与配置变更按发生顺序汇在这里；需要你处理的放在最上面。</p>
+  </div>
+  <div id="user-info">
+    <span id="user-email"></span>
+    <button class="uu-btn sm" id="logout-btn" type="button">退出登录</button>
+  </div>
+</div>
+
+<main>
+  <div class="banner" id="page-banner" hidden></div>
+
+  <div class="layout" id="layout">
+    <div class="col">
+      <section class="panel" id="inbox" aria-labelledby="inbox-h">
+        <div class="sec-head">
+          <h2 id="inbox-h" tabindex="-1">需要我处理 <span class="count-pill" id="inbox-count" aria-hidden="true">0</span></h2>
+          <button class="uu-btn sm" id="inbox-read-all" type="button" disabled>全部标为已读</button>
+        </div>
+        <p class="sec-sub">紧急与需关注、还没有人处理的事件。别人或你在对应页面处理之后，这里会自动移出；"标为已读"只在本浏览器里隐藏。</p>
+        <p class="empty" id="inbox-loading">正在读取最近的事件…</p>
+        <ul class="inbox" id="inbox-list" aria-live="off"></ul>
+        <p class="empty" id="inbox-empty" hidden>暂无需要处理的事件。</p>
+      </section>
+
+      <section class="panel" id="timeline" aria-labelledby="tl-h">
+        <div class="sec-head">
+          <h2 id="tl-h">事件时间线</h2>
+          <span class="hint" id="tl-note"></span>
+        </div>
+        <p class="sec-sub">每类一条泳道，新事件从右侧进入。点开任意一条看详情。</p>
+        <p class="empty" id="tl-empty" hidden>还没有事件</p>
+        <div class="lanes" id="lanes"></div>
+      </section>
+    </div>
+
+    <aside class="panel rail" id="rail" aria-labelledby="rail-h">
+      <div class="sec-head"><h2 id="rail-h">当前状态</h2></div>
+      <div class="st-block" aria-labelledby="st-onto-h">
+        <h3 id="st-onto-h">本体版本</h3>
+        <div id="st-onto"><div class="st-line hint">读取中…</div></div>
+      </div>
+      <div class="st-block" aria-labelledby="st-sw-h">
+        <h3 id="st-sw-h">开关档位</h3>
+        <dl class="sw" id="st-switches"></dl>
+      </div>
+      <div class="st-block" aria-labelledby="st-chain-h">
+        <h3 id="st-chain-h">证据链</h3>
+        <div id="st-chain"><div class="st-line hint">读取中…</div></div>
+      </div>
+      <div class="st-block rail-foot">
+        <span class="hint" id="rail-at"></span>
+        <button class="uu-btn sm" id="rail-refresh" type="button">刷新状态</button>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<div class="uu-modal-backdrop" id="detail-modal" hidden>
+  <div class="uu-modal wide" role="dialog" aria-modal="true" aria-labelledby="dt-title">
+    <h3 id="dt-title"></h3>
+    <div class="uu-modal-sub" id="dt-tags"></div>
+    <dl class="dt-grid" id="dt-fields"></dl>
+    <div id="dt-diff"></div>
+    <div class="uu-modal-actions">
+      <a class="uu-btn primary" id="dt-link" hidden></a>
+      <button class="uu-btn" id="dt-close" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script src="./auth.js?v=1"></script>
+<script src="./ui/unica-ui.js?v=1"></script>
+<script>
+(function () {
+  "use strict";
+
+  var LOGIN_PAGE = "./index.html";
+  var ADMIN_PAGE = "./admin.html";
+  var TENANT_ROOT = "/api/v1/tenants/";
+  // The first screen reads further back than the shared feed's default (100),
+  // so the inbox can show work that is a little older; the bar is mounted
+  // with the same depth so its pending count covers the same events.
+  var FIRST_TAIL = 200;
+  // DOM kept per lane. The feed itself is unbounded; a lane is a glance, and
+  // the full history of any item is on the page its link opens.
+  var LANE_MAX = 80;
+  var READ_MAX = 500;
+  var VERSION_WINDOW_DAYS = 7;
+  var LANE_ORDER = ["forced_handoff", "withheld", "reducible_handoff", "violation", "ontology", "config"];
+
+  var api = UnicaAuth.api;
+  var ui = window.UnicaUI;
+
+  var state = {
+    claims: null,
+    tenant: "",
+    me: "",
+    byId: {},          // id -> event
+    resolved: {},      // id -> id of the event that settled it
+    inboxEls: {},      // id -> li
+    lanes: {},         // category -> { track, count, items: [{ev, el}] }
+    total: 0,
+    read: {},
+    readOrder: [],
+    readBefore: 0,     // ms; "mark all read" watermark
+    lastVisit: 0,      // ms; previous visit, for the "new" marks
+    loaded: false,
+    railTimer: null
+  };
+
+  var els = {
+    banner: document.getElementById("page-banner"),
+    layout: document.getElementById("layout"),
+    userEmail: document.getElementById("user-email"),
+    logoutBtn: document.getElementById("logout-btn"),
+    inboxH: document.getElementById("inbox-h"),
+    inboxCount: document.getElementById("inbox-count"),
+    inboxList: document.getElementById("inbox-list"),
+    inboxEmpty: document.getElementById("inbox-empty"),
+    inboxLoading: document.getElementById("inbox-loading"),
+    readAll: document.getElementById("inbox-read-all"),
+    lanes: document.getElementById("lanes"),
+    tlEmpty: document.getElementById("tl-empty"),
+    tlNote: document.getElementById("tl-note"),
+    stOnto: document.getElementById("st-onto"),
+    stSwitches: document.getElementById("st-switches"),
+    stChain: document.getElementById("st-chain"),
+    railAt: document.getElementById("rail-at"),
+    railRefresh: document.getElementById("rail-refresh"),
+    modal: document.getElementById("detail-modal"),
+    dtTitle: document.getElementById("dt-title"),
+    dtTags: document.getElementById("dt-tags"),
+    dtFields: document.getElementById("dt-fields"),
+    dtDiff: document.getElementById("dt-diff"),
+    dtLink: document.getElementById("dt-link"),
+    dtClose: document.getElementById("dt-close")
+  };
+
+  // ---------- Session ----------
+  function isAdmin() { return !!state.claims && state.claims.role === "admin"; }
+
+  els.logoutBtn.addEventListener("click", function () {
+    UnicaAuth.logout();
+    window.location.replace(LOGIN_PAGE);
+  });
+
+  UnicaAuth.onSessionLost(function () {
+    UnicaAuth.dropTab();
+    window.location.replace(LOGIN_PAGE);
+  });
+
+  function tenantPath(suffix) {
+    return TENANT_ROOT + encodeURIComponent(state.tenant) + suffix;
+  }
+
+  // ---------- Small helpers ----------
+  function h(tag, cls, text) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text !== undefined && text !== null) el.textContent = text;
+    return el;
+  }
+
+  function pill(text, kind) { return h("span", "uu-pill" + (kind ? " " + kind : ""), text); }
+
+  function evTime(ev) {
+    var t = Date.parse(ev && ev.at);
+    return isFinite(t) ? t : 0;
+  }
+
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
+
+  function shortTime(ms) {
+    if (!ms) return "—";
+    var d = new Date(ms);
+    var now = new Date();
+    var hm = pad(d.getHours()) + ":" + pad(d.getMinutes());
+    if (d.toDateString() === now.toDateString()) return hm;
+    return (d.getMonth() + 1) + "/" + d.getDate() + " " + hm;
+  }
+
+  function fullTime(ms) {
+    if (!ms) return "—";
+    var d = new Date(ms);
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " +
+      pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  }
+
+  // Links come from the server, but they are put into href, so only a plain
+  // relative portal page is accepted: no scheme, no other host.
+  function safeLink(link) {
+    var s = String(link || "").replace(/^\.\//, "");
+    return /^[A-Za-z0-9_\-]+\.html(?:[?#][^\s]*)?$/.test(s) ? "./" + s : "";
+  }
+
+  function linkLabel(href) {
+    if (/evidence\.html/.test(href)) return "查看会话证据";
+    if (/violations\.html/.test(href)) return "去复核";
+    if (/proposals\.html/.test(href)) return "去审建议";
+    if (/ontology\.html/.test(href)) return "查看本体";
+    if (/compliance\.html|ai-settings\.html/.test(href)) return "查看设置";
+    return "查看";
+  }
+
+  function actorText(actor) {
+    if (!actor) return "";
+    return state.me && String(actor) === state.me ? "我" : String(actor);
+  }
+
+  function eventKey(ev) {
+    return ev.id ? String(ev.id) : "anon:" + (ev.at || "") + ":" + (ev.category || "") + ":" + (ev.title || "");
+  }
+
+  // ---------- Read marks ----------
+  // Kept per account and tenant in this browser only. They hide an item from
+  // this inbox; they settle nothing, which is why the server never hears of them.
+  function readKey() { return "unica_live_read:" + (state.me || "anon") + ":" + state.tenant; }
+  function seenScope() { return state.tenant + ":" + (state.me || "anon"); }
+
+  function loadReadMarks() {
+    try {
+      var list = JSON.parse(window.localStorage.getItem(readKey()) || "[]");
+      if (Array.isArray(list)) list.forEach(function (id) { state.read[id] = true; state.readOrder.push(id); });
+    } catch (e) { /* a lost list only shows items again */ }
+    var before = Date.parse(ui.seen.get(seenScope(), "live-read-before"));
+    state.readBefore = isFinite(before) ? before : 0;
+    var visit = Date.parse(ui.seen.get(seenScope(), "live-visit"));
+    state.lastVisit = isFinite(visit) ? visit : 0;
+  }
+
+  function saveReadMarks() {
+    while (state.readOrder.length > READ_MAX) delete state.read[state.readOrder.shift()];
+    try { window.localStorage.setItem(readKey(), JSON.stringify(state.readOrder)); } catch (e) { /* convenience */ }
+  }
+
+  // ---------- Inbox ----------
+  function isRead(ev) {
+    if (state.read[eventKey(ev)]) return true;
+    return !!state.readBefore && evTime(ev) <= state.readBefore;
+  }
+
+  function wantsInbox(ev) {
+    if (ev.severity !== "urgent" && ev.severity !== "attention") return false;
+    if (state.resolved[eventKey(ev)] || isRead(ev)) return false;
+    return true;
+  }
+
+  // The bar's pending count leaves out what was marked read here, so the two
+  // numbers on this page agree; it has to be told when the marks change.
+  function recountBar() {
+    var bar = ui.topbar.current();
+    if (bar && bar.recount) bar.recount();
+  }
+
+  function inboxItem(ev) {
+    var id = eventKey(ev);
+    var cat = ui.category(ev.category);
+    var li = h("li", "inbox-item");
+    li.dataset.id = id;
+    li.style.setProperty("--uu-cat", cat.color);
+
+    var main = h("div", "ib-main");
+    var tags = h("div", "ib-tags");
+    tags.appendChild(ui.categoryPill(ev.category));
+    var sev = ui.severities[ev.severity] || { label: ev.severity, pill: "muted" };
+    tags.appendChild(pill(sev.label, sev.pill));
+    if (state.lastVisit && evTime(ev) > state.lastVisit) tags.appendChild(ui.seen.badge());
+    var t = h("time", null, shortTime(evTime(ev)));
+    t.dateTime = ev.at || "";
+    t.title = fullTime(evTime(ev));
+    tags.appendChild(t);
+    main.appendChild(tags);
+    main.appendChild(h("div", "ib-title", ev.title || cat.label));
+    var meta = [];
+    if (ev.reason) meta.push("原因：" + ui.reasonLabel(ev.reason));
+    if (ev.conversation_id) meta.push("会话 " + ev.conversation_id);
+    if (ev.detail) meta.push(ev.detail);
+    if (meta.length) main.appendChild(h("div", "ib-meta", meta.join(" · ")));
+    li.appendChild(main);
+
+    var actions = h("div", "ib-actions");
+    var href = safeLink(ev.link);
+    if (href) {
+      var go = h("a", "uu-btn primary sm", linkLabel(href));
+      go.href = href;
+      go.setAttribute("aria-label", linkLabel(href) + "：" + (ev.title || cat.label));
+      actions.appendChild(go);
+    }
+    var more = h("button", "uu-btn sm", "详情");
+    more.type = "button";
+    more.addEventListener("click", function () { openDetail(ev, more); });
+    actions.appendChild(more);
+    var read = h("button", "uu-btn ghost sm", "标为已读");
+    read.type = "button";
+    read.setAttribute("aria-label", "标为已读：" + (ev.title || cat.label));
+    read.addEventListener("click", function () {
+      state.read[id] = true;
+      state.readOrder.push(id);
+      saveReadMarks();
+      recountBar();
+      removeFromInbox(id, "已标为已读");
+    });
+    actions.appendChild(read);
+    li.appendChild(actions);
+    return li;
+  }
+
+  // Urgent first, then newest first within each severity.
+  function inboxRank(ev) { return (ev.severity === "urgent" ? 1e15 : 0) + evTime(ev); }
+
+  function addToInbox(ev, live) {
+    var id = eventKey(ev);
+    if (state.inboxEls[id] || !wantsInbox(ev)) return;
+    var li = inboxItem(ev);
+    var rank = inboxRank(ev);
+    var before = null;
+    var items = els.inboxList.children;
+    for (var i = 0; i < items.length; i++) {
+      var other = state.byId[items[i].dataset.id];
+      if (other && inboxRank(other) < rank) { before = items[i]; break; }
+    }
+    els.inboxList.insertBefore(li, before);
+    state.inboxEls[id] = li;
+    if (live) {
+      ui.flashRow(li);
+      // The bar already speaks for urgent events; attention ones are said here.
+      if (ev.severity === "attention") ui.liveRegion.announce("新的待处理事件：" + (ev.title || ui.category(ev.category).label));
+    }
+    renderInboxCount();
+  }
+
+  function removeFromInbox(id, why) {
+    var li = state.inboxEls[id];
+    if (!li) return;
+    delete state.inboxEls[id];
+    // Focus must not fall to the page body when the item under it goes.
+    var hadFocus = li.contains(document.activeElement);
+    var next = li.nextElementSibling || li.previousElementSibling;
+    function drop() {
+      if (li.parentNode) li.parentNode.removeChild(li);
+      if (hadFocus) {
+        var target = next && document.body.contains(next) ? next.querySelector("a, button") : null;
+        (target || els.inboxH).focus();
+      }
+      renderInboxCount();
+    }
+    if (ui.reducedMotion() || document.hidden) drop();
+    else {
+      li.classList.add("leaving");
+      setTimeout(drop, 320);
+    }
+    var ev = state.byId[id];
+    if (why) ui.liveRegion.announce(why + "：" + ((ev && ev.title) || "一条事件"));
+  }
+
+  function renderInboxCount() {
+    var n = Object.keys(state.inboxEls).length;
+    ui.countTo(els.inboxCount, n, { instant: !state.loaded });
+    els.inboxH.setAttribute("aria-label", "需要我处理，" + n + " 条");
+    els.inboxEmpty.hidden = !state.loaded || n > 0;
+    els.readAll.disabled = n === 0;
+  }
+
+  els.readAll.addEventListener("click", function () {
+    var newest = 0;
+    Object.keys(state.inboxEls).forEach(function (id) {
+      var ev = state.byId[id];
+      if (ev && evTime(ev) > newest) newest = evTime(ev);
+    });
+    if (!newest) return;
+    state.readBefore = Math.max(state.readBefore, newest);
+    ui.seen.set(seenScope(), "live-read-before", new Date(state.readBefore).toISOString());
+    var ids = Object.keys(state.inboxEls);
+    ids.forEach(function (id) { removeFromInbox(id, ""); });
+    recountBar();
+    ui.liveRegion.announce("已把 " + ids.length + " 条标为已读");
+    els.inboxH.focus();
+  });
+
+  // ---------- Swimlanes ----------
+  function buildLanes() {
+    LANE_ORDER.forEach(function (name) {
+      var cat = ui.category(name);
+      var row = h("div", "lane");
+      var head = h("div", "lane-head");
+      var label = ui.categoryPill(name);
+      label.id = "lane-label-" + name;
+      head.appendChild(label);
+      var n = h("span", "lane-n", "0");
+      n.setAttribute("aria-label", cat.label + "事件数");
+      head.appendChild(n);
+      var track = h("ol", "lane-track");
+      track.setAttribute("aria-labelledby", label.id);
+      track.style.setProperty("--uu-cat", cat.color);
+      row.appendChild(head);
+      row.appendChild(track);
+      els.lanes.appendChild(row);
+      state.lanes[name] = { track: track, count: n, items: [], total: 0 };
+    });
+  }
+
+  function laneFor(ev) {
+    return state.lanes[ev.category] || null;
+  }
+
+  function evNode(ev) {
+    var id = eventKey(ev);
+    var cat = ui.category(ev.category);
+    var li = h("li", "ev");
+    li.dataset.id = id;
+    li.style.setProperty("--uu-cat", cat.color);
+    var btn = h("button", "ev-btn");
+    btn.type = "button";
+    var reason = ev.reason ? ui.reasonLabel(ev.reason) : "";
+    if (reason) btn.title = "原因：" + reason;
+    var top = h("span", "ev-top");
+    top.appendChild(ui.icon(ev.category));
+    if (ev.severity === "urgent" || ev.severity === "attention") {
+      top.appendChild(h("span", "ev-sev " + ev.severity, ui.severities[ev.severity].label));
+    }
+    var t = h("time", null, shortTime(evTime(ev)));
+    t.dateTime = ev.at || "";
+    top.appendChild(t);
+    btn.appendChild(top);
+    btn.appendChild(h("span", "ev-title", ev.title || cat.label));
+    btn.setAttribute("aria-label", cat.label + "，" + (ev.title || "") + (reason ? "，原因：" + reason : "") +
+      "，" + fullTime(evTime(ev)) + "，查看详情");
+    btn.addEventListener("click", function () { openDetail(ev, btn); });
+    li.appendChild(btn);
+    if (state.resolved[id]) markResolvedNode(li);
+    return li;
+  }
+
+  function markResolvedNode(li) {
+    if (li.classList.contains("is-resolved")) return;
+    li.classList.add("is-resolved");
+    var btn = li.querySelector(".ev-btn");
+    if (btn) {
+      btn.appendChild(h("span", "ev-done", "已处理"));
+      btn.setAttribute("aria-label", btn.getAttribute("aria-label") + "（已处理）");
+    }
+  }
+
+  function atRightEdge(track) {
+    return track.scrollLeft + track.clientWidth >= track.scrollWidth - 24;
+  }
+
+  function addToLane(ev, live) {
+    var lane = laneFor(ev);
+    if (!lane) return;
+    var pinned = atRightEdge(lane.track);
+    var node = evNode(ev);
+    var t = evTime(ev);
+    // Usually an append; an event that arrives out of order (the shared feed
+    // replaying its backlog after this page's own first read) slots in by time.
+    var pos = lane.items.length;
+    while (pos > 0 && evTime(lane.items[pos - 1].ev) > t) pos--;
+    var ref = pos < lane.items.length ? lane.items[pos].el : null;
+    lane.track.insertBefore(node, ref);
+    lane.items.splice(pos, 0, { ev: ev, el: node });
+    while (lane.items.length > LANE_MAX) {
+      var old = lane.items.shift();
+      if (old.el.parentNode) old.el.parentNode.removeChild(old.el);
+    }
+    lane.total++;
+    ui.countTo(lane.count, lane.total, { instant: !live });
+    if (live && pos === lane.items.length - 1 && !ui.reducedMotion()) {
+      node.classList.add("arriving");
+      node.addEventListener("animationend", function done() {
+        node.classList.remove("arriving");
+        node.removeEventListener("animationend", done);
+      });
+    }
+    // Follow the newest end unless the reader has scrolled back to look at
+    // something older.
+    if (pinned || !live) lane.track.scrollLeft = lane.track.scrollWidth;
+  }
+
+  function markResolved(id) {
+    Object.keys(state.lanes).forEach(function (name) {
+      state.lanes[name].items.forEach(function (it) {
+        if (eventKey(it.ev) === id) markResolvedNode(it.el);
+      });
+    });
+  }
+
+  // ---------- Intake ----------
+  // Every event, however it arrived (first read, the shared feed's backlog,
+  // the live stream), passes here once.
+  function take(ev, live) {
+    if (!ev || typeof ev !== "object") return;
+    var id = eventKey(ev);
+    if (state.byId[id]) return;
+    state.byId[id] = ev;
+    state.total++;
+
+    if (ev.resolves) {
+      var target = String(ev.resolves);
+      state.resolved[target] = id;
+      markResolved(target);
+      removeFromInbox(target, live ? "已处理，移出待办" : "");
+    }
+    addToLane(ev, live);
+    addToInbox(ev, live);
+    renderEmpty();
+
+    if (live && (ev.category === "config" || ev.category === "ontology")) scheduleRail();
+    if (ev.resolves && state.detailId === String(ev.resolves) && state.byId[ev.resolves]) openDetail(state.byId[ev.resolves]);
+  }
+
+  function renderEmpty() {
+    var none = state.total === 0;
+    els.tlEmpty.hidden = !state.loaded || !none;
+    els.lanes.hidden = state.loaded && none;
+  }
+
+  // ---------- Detail ----------
+  // Before/after snapshots are flattened to dotted paths and only the paths
+  // whose value changed are listed: a settings snapshot is mostly unchanged
+  // fields, and the one that moved is what the reader came for.
+  function flatten(obj, prefix, out, depth) {
+    out = out || {};
+    if (obj === null || typeof obj !== "object" || Array.isArray(obj) || depth > 6) {
+      if (prefix) out[prefix] = obj;
+      return out;
+    }
+    var keys = Object.keys(obj);
+    if (!keys.length && prefix) out[prefix] = obj;
+    keys.forEach(function (k) { flatten(obj[k], prefix ? prefix + "." + k : k, out, (depth || 0) + 1); });
+    return out;
+  }
+
+  function valueText(v) {
+    if (typeof v === "string") return v;
+    try { return JSON.stringify(v); } catch (e) { return String(v); }
+  }
+
+  function diffTable(before, after) {
+    var a = flatten(before || {}, "", {}, 0);
+    var b = flatten(after || {}, "", {}, 0);
+    var keys = {};
+    Object.keys(a).forEach(function (k) { keys[k] = true; });
+    Object.keys(b).forEach(function (k) { keys[k] = true; });
+    var changed = Object.keys(keys).sort().filter(function (k) {
+      return valueText(a[k]) !== valueText(b[k]) || (k in a) !== (k in b);
+    });
+    var wrap = h("div");
+    wrap.appendChild(h("p", "dt-section", "改动的字段（" + changed.length + "）"));
+    if (!changed.length) {
+      wrap.appendChild(h("p", "hint", "修改前后的记录没有字段差异。"));
+      return wrap;
+    }
+    var table = h("table", "diff");
+    var thead = h("thead");
+    var hr = h("tr");
+    ["字段", "修改前", "修改后"].forEach(function (t) {
+      var th = h("th", null, t);
+      th.scope = "col";
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+    var tbody = h("tbody");
+    changed.forEach(function (k) {
+      var tr = h("tr");
+      tr.appendChild(h("td", "k", k));
+      var tdA = h("td");
+      if (k in a) {
+        var del = h("del", null, valueText(a[k]));
+        del.setAttribute("aria-label", "原值 " + valueText(a[k]));
+        tdA.appendChild(del);
+      } else tdA.appendChild(h("span", "none", "（无）"));
+      var tdB = h("td");
+      if (k in b) {
+        var ins = h("ins", null, valueText(b[k]));
+        ins.setAttribute("aria-label", "新值 " + valueText(b[k]));
+        tdB.appendChild(ins);
+      } else tdB.appendChild(h("span", "none", "（已删除）"));
+      tr.appendChild(tdA);
+      tr.appendChild(tdB);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function field(dl, label, value) {
+    if (value === undefined || value === null || value === "") return;
+    dl.appendChild(h("dt", null, label));
+    dl.appendChild(h("dd", null, value));
+  }
+
+  function openDetail(ev, trigger) {
+    var id = eventKey(ev);
+    var cat = ui.category(ev.category);
+    els.dtTitle.textContent = ev.title || cat.label;
+    els.dtTags.textContent = "";
+    els.dtTags.appendChild(ui.categoryPill(ev.category));
+    var sev = ui.severities[ev.severity];
+    if (sev) {
+      els.dtTags.appendChild(document.createTextNode(" "));
+      els.dtTags.appendChild(pill(sev.label, sev.pill));
+    }
+    els.dtFields.textContent = "";
+    field(els.dtFields, "时间", fullTime(evTime(ev)));
+    field(els.dtFields, "原因", ev.reason ? ui.reasonLabel(ev.reason) : "");
+    field(els.dtFields, "说明", ev.detail);
+    field(els.dtFields, "会话号", ev.conversation_id);
+    field(els.dtFields, "操作者", actorText(ev.actor));
+    if (ev.resolves) {
+      var target = state.byId[ev.resolves];
+      field(els.dtFields, "处理了", target ? (target.title || ev.resolves) : String(ev.resolves));
+    }
+    var by = state.resolved[id];
+    if (by) {
+      var who = state.byId[by];
+      field(els.dtFields, "处理状态", "已处理" + (who && who.actor ? "（" + actorText(who.actor) + "）" : ""));
+    }
+    els.dtDiff.textContent = "";
+    if (ev.category === "config" || ev.before || ev.after) els.dtDiff.appendChild(diffTable(ev.before, ev.after));
+    var href = safeLink(ev.link);
+    els.dtLink.hidden = !href;
+    if (href) {
+      els.dtLink.href = href;
+      els.dtLink.textContent = linkLabel(href) + " →";
+    }
+    state.detailId = id;
+    if (trigger !== undefined) {
+      ui.modal.open(els.modal, { trigger: trigger, onClose: function () { state.detailId = null; } });
+    }
+  }
+
+  els.dtClose.addEventListener("click", function () { ui.modal.close(els.modal); });
+
+  // ---------- Status rail ----------
+  function setBlock(el, nodes) {
+    el.textContent = "";
+    nodes.forEach(function (n) { if (n) el.appendChild(n); });
+  }
+
+  function line(text, cls) { return h("div", "st-line" + (cls ? " " + cls : ""), text); }
+
+  function errText(err) {
+    if (err && err.status === 403) return "无权查看";
+    return "读取失败" + (err && err.message ? "：" + err.message : "");
+  }
+
+  function loadOntology() {
+    return Promise.all([
+      api(tenantPath("/facts")),
+      api(tenantPath("/quality/versions?window_days=" + VERSION_WINDOW_DAYS)).catch(function (err) { return { __err: err }; })
+    ]).then(function (res) {
+      var facts = res[0] || {};
+      var quality = res[1] || {};
+      var active = typeof facts.active_version === "number" ? facts.active_version : 0;
+      var nodes = [];
+      if (!active) {
+        nodes.push(line("尚未发布任何版本"));
+        setBlock(els.stOnto, nodes);
+        return;
+      }
+      var head = line("");
+      head.appendChild(pill("当前生效 v" + active, "info"));
+      nodes.push(head);
+      if (quality.__err) {
+        nodes.push(line("版本质量" + errText(quality.__err), "hint"));
+        setBlock(els.stOnto, nodes);
+        return;
+      }
+      var q = null;
+      (quality.versions || []).forEach(function (v) { if (v.version === active) q = v; });
+      if (!q) {
+        nodes.push(line("这个版本还没有发布后的观察数据。", "hint"));
+        setBlock(els.stOnto, nodes);
+        return;
+      }
+      // Counts only, never a rate: the interface's own verdict (suspect /
+      // insufficient) is what is shown, in its own terms.
+      nodes.push(line("发布后首 " + (q.window_days || VERSION_WINDOW_DAYS) + " 天：" + (q.conversations || 0) + " 个会话" +
+        (q.previous_version ? "，对比 v" + q.previous_version : ""), "hint"));
+      if (q.previous_version) {
+        if (q.suspect) {
+          var box = h("div", "st-suspect");
+          box.appendChild(line("可疑版本", "warn"));
+          box.appendChild(line(q.advisory || "较 v" + q.previous_version + " 可削减类转人工显著上升，建议人工确认是否回滚到 v" + q.previous_version));
+          var go = h("a", "uu-btn sm", "去本体页处理 →");
+          go.href = ui.withTenant("./ontology.html");
+          go.style.marginTop = "6px";
+          box.appendChild(go);
+          nodes.push(box);
+        } else if (q.insufficient) {
+          nodes.push(line("样本不足（两侧均需 ≥30 会话），暂不比较。", "warn"));
+        } else {
+          nodes.push(line("与 v" + q.previous_version + " 相比未见显著变化。"));
+        }
+      } else {
+        nodes.push(line("这是第一个被观察的版本，没有可对比的上一版。", "hint"));
+      }
+      setBlock(els.stOnto, nodes);
+    }).catch(function (err) {
+      if (err && err.message === "unauthorized") return;
+      setBlock(els.stOnto, [line(errText(err), "bad")]);
+    });
+  }
+
+  var COMMITMENT_TEXT = { off: ["关闭", "muted"], shadow: ["只记录", "warn"], enforce: ["扣下交人工确认", "ok"] };
+  var SUBJECT_TEXT = { off: ["关闭", "muted"], shadow: ["只观察", "warn"], on: ["已开启", "ok"] };
+
+  var SWITCHES = [
+    {
+      key: "commitment", label: "承诺与金额防火墙", page: "ontology.html",
+      load: function () {
+        return api(tenantPath("/facts/config")).then(function (cfg) {
+          var m = (cfg && cfg.commitment) || "off";
+          return COMMITMENT_TEXT[m] || [m, "muted"];
+        });
+      }
+    },
+    {
+      key: "subject", label: "主语延续（追问补全）", page: "ai-settings.html",
+      load: function () {
+        return api(tenantPath("/ai-settings/subject-carry")).then(function (cfg) {
+          var m = (cfg && cfg.subject_carry) || "off";
+          return SUBJECT_TEXT[m] || [m, "muted"];
+        });
+      }
+    },
+    {
+      key: "evidence", label: "判定证据链", page: "evidence.html",
+      load: function () {
+        return api(tenantPath("/evidence/config")).then(function (cfg) {
+          return cfg && cfg.enabled ? ["已开启", "ok"] : ["未开启", "muted"];
+        });
+      }
+    },
+    {
+      // A platform-wide switch. Only an administrator may read the platform
+      // settings, so anyone else is told so instead of being sent a 403.
+      key: "capture", label: "本体演化采集（平台级）", page: "",
+      load: function () {
+        if (!isAdmin()) return Promise.resolve(["无权查看", "muted"]);
+        return api("/api/v1/platform/settings").then(function (data) {
+          var rt = data && data.runtime;
+          var v = rt && rt.switches ? rt.switches.evolve_capture : "";
+          if (v === "on") return ["采集", "warn"];
+          if (v === "off") return ["不采集", "muted"];
+          return ["读不到", "muted", rt && rt.reason ? rt.reason : "路由服务没有报告这个开关"];
+        });
+      }
+    }
+  ];
+
+  function loadSwitches() {
+    els.stSwitches.textContent = "";
+    return Promise.all(SWITCHES.map(function (sw) {
+      var dt = h("dt");
+      if (sw.page) {
+        var a = h("a", null, sw.label);
+        a.href = ui.withTenant("./" + sw.page);
+        a.title = "去设置页";
+        dt.appendChild(a);
+      } else dt.textContent = sw.label;
+      var dd = h("dd");
+      dd.appendChild(pill("读取中…", "muted"));
+      els.stSwitches.appendChild(dt);
+      els.stSwitches.appendChild(dd);
+      return sw.load().then(function (r) {
+        dd.textContent = "";
+        var p = pill(r[0], r[1]);
+        if (r[2]) p.title = r[2];
+        dd.appendChild(p);
+      }, function (err) {
+        if (err && err.message === "unauthorized") return;
+        dd.textContent = "";
+        var p = pill(err && err.status === 403 ? "无权查看" : "读取失败", err && err.status === 403 ? "muted" : "bad");
+        if (err && err.message) p.title = err.message;
+        dd.appendChild(p);
+      });
+    }));
+  }
+
+  // The chain head is a single cheap read; the page never asks for a whole
+  // stretch verification, which is the evidence page's to run on request.
+  function loadChain() {
+    return api(tenantPath("/evidence/head")).then(function (head) {
+      head = head || {};
+      var nodes = [];
+      if (!head.seq) {
+        nodes.push(line(head.note || "尚无记录"));
+      } else {
+        var top = line("");
+        top.appendChild(head.consistent === false ? pill("链头不一致", "bad") : pill("链头与最后一条记录一致", "ok"));
+        nodes.push(top);
+        nodes.push(line("第 " + head.seq + " 条" + (head.updated_at ? " · 更新于 " + fullTime(Date.parse(head.updated_at)) : ""), "hint"));
+        if (head.consistent === false && head.note) nodes.push(line(head.note, "bad"));
+      }
+      nodes.push(line("这里只读链头；整段验链请到判定证据页。", "hint"));
+      setBlock(els.stChain, nodes);
+    }).catch(function (err) {
+      if (err && err.message === "unauthorized") return;
+      setBlock(els.stChain, [line(errText(err), "bad")]);
+    });
+  }
+
+  function loadRail() {
+    els.railRefresh.disabled = true;
+    return Promise.all([loadOntology(), loadSwitches(), loadChain()]).then(function () {
+      els.railAt.textContent = "读取于 " + shortTime(Date.now());
+    }).finally(function () { els.railRefresh.disabled = false; });
+  }
+
+  // A publish or a settings save often comes as a short burst of events.
+  function scheduleRail() {
+    clearTimeout(state.railTimer);
+    state.railTimer = setTimeout(loadRail, 800);
+  }
+
+  els.railRefresh.addEventListener("click", function () {
+    loadRail().then(function () { ui.liveRegion.announce("状态已刷新"); });
+  });
+
+  // ---------- Connection note ----------
+  var CONN_NOTE = {
+    polling: "实时连接不可用，每 15 秒刷新一次",
+    reconnecting: "连接中断，正在重连；下面是中断前收到的事件",
+    disconnected: "连接中断，正在重连；下面是中断前收到的事件"
+  };
+
+  function onStatus(s) {
+    els.tlNote.textContent = CONN_NOTE[s] || "";
+  }
+
+  // ---------- Init ----------
+  state.claims = UnicaAuth.bootstrapTab();
+  if (!state.claims) {
+    UnicaAuth.dropTab();
+    window.location.replace(LOGIN_PAGE);
+    return;
+  }
+  if (!isAdmin() && !state.claims.tenant_id) {
+    UnicaAuth.dropTab();
+    window.location.replace(LOGIN_PAGE);
+    return;
+  }
+  els.userEmail.textContent = state.claims.email || "";
+  state.tenant = ui.tenant();
+  state.me = ui.currentUserId();
+  if (state.tenant) loadReadMarks();
+  ui.topbar.mount({
+    title: "实时运营台",
+    tail: FIRST_TAIL,
+    pendingFilter: function (ev) { return !isRead(ev); }
+  });
+  if (!state.tenant) {
+    els.banner.className = "banner bad";
+    els.banner.textContent = "管理员账号不属于任何租户。请在平台管理中选择一个租户后再进入本页。";
+    var back = h("a", null, "前往平台管理 →");
+    back.href = ADMIN_PAGE;
+    els.banner.appendChild(back);
+    els.banner.hidden = false;
+    els.layout.hidden = true;
+    return;
+  }
+
+  buildLanes();
+  loadRail();
+
+  ui.events.list(state.tenant, { tail: FIRST_TAIL })
+    .then(function (data) {
+      var list = data && Array.isArray(data.events) ? data.events : [];
+      list.forEach(function (ev) { take(ev, false); });
+    }, function (err) {
+      if (err && err.message === "unauthorized") return;
+      els.banner.className = "banner bad";
+      els.banner.textContent = "读取最近的事件失败：" + (err && err.message ? err.message : "未知错误") + "。实时连接恢复后新事件仍会显示。";
+      els.banner.hidden = false;
+      ui.liveRegion.announce("读取最近的事件失败", "assertive");
+    })
+    .then(function () {
+      state.loaded = true;
+      els.inboxLoading.hidden = true;
+      renderInboxCount();
+      renderEmpty();
+      if (els.banner.hidden) {
+        var n = Object.keys(state.inboxEls).length;
+        ui.liveRegion.announce(state.total
+          ? "已载入最近 " + state.total + " 条事件，其中需要处理 " + n + " 条"
+          : "还没有事件");
+      }
+      // The next visit marks what arrives after this one.
+      ui.seen.set(seenScope(), "live-visit", new Date().toISOString());
+      ui.events.subscribe(state.tenant, function (ev, meta) { take(ev, !meta.initial); }, { onStatus: onStatus });
+    });
+})();
+</script>

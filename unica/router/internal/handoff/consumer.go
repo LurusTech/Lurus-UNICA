@@ -3,6 +3,8 @@ package handoff
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/kefu/unica/router/internal/metrics"
+	"github.com/kefu/unica/router/internal/state"
 )
 
 const (
@@ -21,13 +24,39 @@ const (
 
 	// maxBatchSize is the maximum number of stream entries to read at once.
 	maxBatchSize = 10
+
+	// EventConversationResolved is the event type the gateway publishes on
+	// this stream when an agent resolves the conversation in Chatwoot (D2).
+	// It is mirrored as conversationClosedType in gateway/internal/webhook;
+	// the two modules share no package for it, so a test on each side pins
+	// the string.
+	EventConversationResolved = "event.conversation_closed"
+
+	// resolvedActor is recorded as the actor of the state transition, so the
+	// log line says who closed the conversation.
+	resolvedActor = "chatwoot_resolved"
+
+	// deadLetterStream is the dead-letter stream the gateway already keeps
+	// (gateway/internal/dedup, DefaultDeadLetterStream) and lists through its
+	// admin endpoint. Entries written here use the same field names, so that
+	// listing shows them without change; original_message carries the raw
+	// handoff payload rather than a StandardMessage, and source says which
+	// consumer gave up on it.
+	deadLetterStream = "unica:dead-letter"
 )
+
+// conversationCloser is the part of state.Manager the resolve path needs. It
+// is an interface so the consumer can be tested without a database.
+type conversationCloser interface {
+	TransitionState(ctx context.Context, convID string, newState state.ConversationState, actor string) error
+}
 
 // HandoffConsumer reads handoff events from the unica:handoff Redis stream
 // and dispatches them to the HandoffHandler.
 type HandoffConsumer struct {
 	rdb           *redis.Client
 	handler       *HandoffHandler
+	closer        conversationCloser
 	consumerGroup string
 	consumerName  string
 	stopCh        chan struct{}
@@ -36,13 +65,19 @@ type HandoffConsumer struct {
 
 // NewHandoffConsumer creates a new HandoffConsumer.
 func NewHandoffConsumer(rdb *redis.Client, handler *HandoffHandler, group, name string) *HandoffConsumer {
-	return &HandoffConsumer{
+	c := &HandoffConsumer{
 		rdb:           rdb,
 		handler:       handler,
 		consumerGroup: group,
 		consumerName:  name,
 		stopCh:        make(chan struct{}),
 	}
+	// Assigned only when present: a nil *state.Manager stored in the interface
+	// would not compare equal to nil and would panic on the first close.
+	if handler != nil && handler.stateManager != nil {
+		c.closer = handler.stateManager
+	}
+	return c
 }
 
 // Start launches the consumer loop in a background goroutine.
@@ -160,14 +195,82 @@ func (c *HandoffConsumer) processEntry(ctx context.Context, entry redis.XMessage
 		return
 	}
 
+	if event.Type == EventConversationResolved {
+		if err := c.closeResolved(ctx, &event); err != nil {
+			log.Printf("[handoff] failed to close resolved conversation %s (entry %s): %v", event.ConversationID, entry.ID, err)
+			metrics.HandoffErrorsTotal.WithLabelValues("resolve_close").Inc()
+			c.deadLetter(ctx, entry.ID, payloadStr, err)
+		}
+		c.ack(ctx, entry.ID)
+		return
+	}
+
 	if err := c.handler.Handle(ctx, &event); err != nil {
 		log.Printf("[handoff] failed to handle event %s (conv=%s): %v", entry.ID, event.ConversationID, err)
 		metrics.HandoffErrorsTotal.WithLabelValues("handle").Inc()
-		// Still acknowledge to avoid infinite reprocessing of broken events.
-		// TODO: Consider dead-letter queue for persistent failures.
+		// Still acknowledge to avoid infinite reprocessing of broken events,
+		// but keep a copy in the dead-letter stream first: an acknowledged
+		// failure used to exist only as a log line, and a handoff that never
+		// reached an agent is the one failure here a person must be able to
+		// find afterwards.
+		c.deadLetter(ctx, entry.ID, payloadStr, err)
 	}
 
 	c.ack(ctx, entry.ID)
+}
+
+// closeResolved closes the UNICA conversation an agent resolved in Chatwoot,
+// through the state manager so the close runs the same path as the idle sweep:
+// database, session cache, and the on-close hooks (the satisfaction survey).
+//
+// A conversation that is already closed is not an error. Chatwoot can resolve,
+// reopen and resolve again, the idle sweep may have got there first, and the
+// event may be redelivered after a restart; none of those is a failure worth a
+// dead-letter entry. Any other refused transition (a conversation still
+// pending, which has never been answered) is reported as an error, because
+// closing it would drop a customer nobody has answered yet.
+func (c *HandoffConsumer) closeResolved(ctx context.Context, event *HandoffEvent) error {
+	if event.ConversationID == "" {
+		return errors.New("resolved event has no conversation_id")
+	}
+	if c.closer == nil {
+		return errors.New("no state manager to close the conversation with")
+	}
+	err := c.closer.TransitionState(ctx, event.ConversationID, state.StateClosed, resolvedActor)
+	var invalid *state.ErrInvalidTransition
+	if errors.As(err, &invalid) && invalid.From == state.StateClosed {
+		log.Printf("[handoff] conversation %s already closed, resolve event ignored", event.ConversationID)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("close conversation %s: %w", event.ConversationID, err)
+	}
+	log.Printf("[handoff] conversation %s closed after being resolved in Chatwoot", event.ConversationID)
+	return nil
+}
+
+// deadLetter copies a failed entry to the dead-letter stream. It never blocks
+// the acknowledgement that follows: if the copy itself fails, the log line is
+// all that is left, which is exactly where things stood before.
+func (c *HandoffConsumer) deadLetter(ctx context.Context, entryID, payload string, cause error) {
+	now := time.Now().Format(time.RFC3339)
+	err := c.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: deadLetterStream,
+		Values: map[string]interface{}{
+			"original_message": payload,
+			"failure_reason":   cause.Error(),
+			"retry_count":      0,
+			"channel_id":       "",
+			"platform_msg_id":  "",
+			"created_at":       now,
+			"last_retry_at":    now,
+			"source":           "router:" + HandoffStream,
+			"source_entry_id":  entryID,
+		},
+	}).Err()
+	if err != nil {
+		log.Printf("[handoff] failed to dead-letter entry %s: %v", entryID, err)
+	}
 }
 
 // ack acknowledges a stream entry so it won't be re-delivered.

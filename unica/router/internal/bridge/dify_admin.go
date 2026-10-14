@@ -4,8 +4,11 @@
 //
 // This client backs cmd/setup_dify_workspaces only, which is a retired one-off
 // script — see that command's doc comment. The production provisioning
-// implementation is the admin service's bridge; this one is not an alternative
-// onboarding path and must not gain new callers.
+// implementation is the admin service's (EnsureDifyLine in
+// admin/internal/identity/dify_line.go, on top of admin/internal/bridge/dify.go,
+// one app + one dataset per line in the default workspace). This client's
+// workspace-per-line topology is not an alternative onboarding path, must not
+// gain new callers, and goes away with the script (D7).
 package bridge
 
 import (

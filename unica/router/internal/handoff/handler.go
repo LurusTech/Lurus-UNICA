@@ -356,36 +356,6 @@ func (h *HandoffHandler) findOrCreateCWConversation(ctx context.Context, cwConfi
 	return conv.ID, nil
 }
 
-// sendMessageHistory sends all conversation messages to Chatwoot with correct direction.
-func (h *HandoffHandler) sendMessageHistory(ctx context.Context, cwConfig *bridge.ChatwootConfig, cwConvID int, messages []state.Message) error {
-	for _, msg := range messages {
-		content := extractTextContent(msg.ContentJSON)
-		if content == "" {
-			continue
-		}
-
-		// Determine message type based on direction/sender
-		messageType := "incoming" // Default: customer message
-		if msg.Direction == "outbound" || msg.SenderType == "ai" || msg.SenderType == "system" {
-			messageType = "outgoing"
-		}
-
-		// Add timestamp prefix for context
-		timeStr := msg.CreatedAt.Format("15:04:05")
-		taggedContent := fmt.Sprintf("[%s] %s", timeStr, content)
-
-		req := bridge.CWSendMessageRequest{
-			Content:     taggedContent,
-			MessageType: messageType,
-		}
-		if _, err := h.chatwootClient.SendMessage(ctx, *cwConfig, cwConvID, req); err != nil {
-			log.Printf("[handoff] warning: failed to send message %s to Chatwoot: %v", msg.ID, err)
-			// Continue sending remaining messages
-		}
-	}
-	return nil
-}
-
 // loadChatwootConfig reads Chatwoot configuration from product_lines.config_json.
 func (h *HandoffHandler) loadChatwootConfig(ctx context.Context, productLineID string) (*bridge.ChatwootConfig, error) {
 	// Try Redis cache first

@@ -337,6 +337,13 @@ func redlineItem(raw json.RawMessage) CheckItem {
 	case !cfg.CommitmentChecks():
 		item.Status = StatusWarn
 		item.Evidence = "已选择 " + strings.Join(chosen, "、") + "，但承诺防火墙未开启，红线包不会生效"
+	case !cfg.CommitmentEnforces():
+		// Shadow scans and records but withholds nothing, so the requirement
+		// above ("命中的答复交人工确认") is not met yet. Calling it a pass would
+		// tell an operator the packs are protecting customers when they are
+		// only being counted — the same reading commitmentItem gives shadow.
+		item.Status = StatusWarn
+		item.Evidence = "已选择 " + strings.Join(chosen, "、") + "，但承诺防火墙处于只记录模式，命中的答复仍会直接发出"
 	default:
 		item.Status = StatusPass
 		item.Evidence = "已选择：" + strings.Join(chosen, "、")

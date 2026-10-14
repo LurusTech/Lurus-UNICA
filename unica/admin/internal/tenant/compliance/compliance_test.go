@@ -233,7 +233,10 @@ func TestChecklist_RedlinePackChoice(t *testing.T) {
 	}{
 		{`{"commitment":"enforce","redline_packs":["common"]}`, StatusWarn, "未选择"},
 		{`{"commitment":"off","redline_packs":["finance"]}`, StatusWarn, "不会生效"},
-		{`{"commitment":"shadow","redline_packs":["common","finance"]}`, StatusPass, "金融"},
+		// Shadow only records: the packs are counted, nothing is held for a
+		// person, so the requirement is not met yet.
+		{`{"commitment":"shadow","redline_packs":["common","finance"]}`, StatusWarn, "只记录"},
+		{`{"commitment":"enforce","redline_packs":["common","finance"]}`, StatusPass, "金融"},
 	}
 	for _, c := range cases {
 		lines.set(lineA, "ontology", c.ontology)

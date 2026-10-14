@@ -99,7 +99,9 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.rollback(w, r, pl)
 		case len(segments) == 3 && segments[2] == "tryrun" && r.Method == http.MethodPost:
 			h.tryRun(w, r, pl)
-		case len(segments) == 2 || (len(segments) == 3 && (segments[2] == "validate" || segments[2] == "publish" || segments[2] == "rollback" || segments[2] == "tryrun")):
+		case len(segments) == 3 && segments[2] == "diff" && r.Method == http.MethodGet:
+			h.diff(w, r, pl)
+		case len(segments) == 2 || (len(segments) == 3 && (segments[2] == "validate" || segments[2] == "publish" || segments[2] == "rollback" || segments[2] == "tryrun" || segments[2] == "diff")):
 			errorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
 		default:
 			errorJSON(w, http.StatusNotFound, "not found")

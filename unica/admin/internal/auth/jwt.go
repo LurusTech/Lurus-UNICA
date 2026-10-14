@@ -21,8 +21,24 @@ type Claims struct {
 	Email    string `json:"email"`
 	Role     string `json:"role"`
 	TenantID string `json:"tenant_id"`
+	// Type says what the token is for: TokenTypeAccess or TokenTypeRefresh
+	// (D23). Both kinds are signed with the same key and once carried the same
+	// claims, so a refresh token passed as a Bearer token authenticated. It
+	// carried no role or tenant and so reached no data, but it is the
+	// longer-lived of the two — kept for days when "remember me" is ticked —
+	// and an ability to authenticate is not something it needs at all.
+	//
+	// Empty on tokens issued before this field existed; see
+	// ValidateAccessToken for how those are read.
+	Type string `json:"typ,omitempty"`
 	jwt.RegisteredClaims
 }
+
+// Token types carried in Claims.Type.
+const (
+	TokenTypeAccess  = "access"
+	TokenTypeRefresh = "refresh"
+)
 
 // TokenPair holds both access and refresh tokens.
 type TokenPair struct {
@@ -77,6 +93,7 @@ func (m *JWTManager) GenerateTokenPair(userID, email, role, tenantID string) (*T
 		Email:    email,
 		Role:     role,
 		TenantID: tenantID,
+		Type:     TokenTypeAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        accessID,
 			ExpiresAt: jwt.NewNumericDate(accessExp),
@@ -102,6 +119,7 @@ func (m *JWTManager) GenerateTokenPair(userID, email, role, tenantID string) (*T
 	refreshClaims := &Claims{
 		UserID: userID,
 		Email:  email,
+		Type:   TokenTypeRefresh,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        refreshID,
 			ExpiresAt: jwt.NewNumericDate(refreshExp),
@@ -125,6 +143,10 @@ func (m *JWTManager) GenerateTokenPair(userID, email, role, tenantID string) (*T
 }
 
 // ValidateToken parses and validates a JWT token string, returning its claims.
+// It checks the signature and expiry only, not the token type: the refresh
+// endpoint calls it, and there the Redis record of issued refresh tokens is
+// what decides (an access token was never stored there, so it is refused).
+// Anything that authenticates a request uses ValidateAccessToken instead.
 func (m *JWTManager) ValidateToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -142,6 +164,36 @@ func (m *JWTManager) ValidateToken(tokenStr string) (*Claims, error) {
 	}
 
 	return claims, nil
+}
+
+// ValidateAccessToken validates a token presented to authenticate a request.
+// On top of ValidateToken it refuses anything that is not an access token.
+//
+// Compatibility with tokens issued before Claims.Type existed:
+//   - An untyped access token is still accepted until it expires, so a deploy
+//     does not sign everyone out. It always carries a role (users.role is NOT
+//     NULL), which is how it is told apart from the case below.
+//   - An untyped refresh token is refused here. It never carried a role, so an
+//     untyped token with an empty role is read as one; there was no other
+//     token without a role. It keeps working at the refresh endpoint, which
+//     does not call this function, and the pair it is exchanged for is typed —
+//     so untyped tokens of both kinds disappear within one refresh TTL.
+func (m *JWTManager) ValidateAccessToken(tokenStr string) (*Claims, error) {
+	claims, err := m.ValidateToken(tokenStr)
+	if err != nil {
+		return nil, err
+	}
+	switch claims.Type {
+	case TokenTypeAccess:
+		return claims, nil
+	case "":
+		if claims.Role == "" {
+			return nil, fmt.Errorf("invalid token: untyped token without a role is a refresh token")
+		}
+		return claims, nil
+	default:
+		return nil, fmt.Errorf("invalid token: type %q cannot authenticate a request", claims.Type)
+	}
 }
 
 // HashToken creates a SHA-256 hash of a token for safe storage.

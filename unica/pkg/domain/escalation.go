@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"regexp"
 	"strings"
 )
 
@@ -45,22 +44,18 @@ const (
 	EscalateOther = "other"
 )
 
-// Both patterns are case-insensitive. The tag name is a protocol the model is
-// asked to reproduce, and a model that writes [handoff:payout] meant the tag —
-// but a case-sensitive pattern neither strips it nor acts on it, so the customer
-// reads internal markup and a payout escalation is swallowed whole. That is
-// strictly worse than the blank answer the emptiness check guards against: the
-// answer looks fine and nobody is ever told a person was needed. The tag value
-// was already lowercased before being looked up, so matching the name the same
-// way is the file doing what its own comment below already claims.
-var escalateTagPattern = regexp.MustCompile(`(?i)\[HANDOFF:([^\]]*)\]`)
-
-// escalateTagStripPattern matches any [HANDOFF...] whatsoever, including the
-// malformed shapes a model improvises — [HANDOFF] with no value, [HANDOFF:] with
-// no reason. ParseEscalation strips by this wider pattern so a tag never reaches
-// a customer just because it was written badly, exactly as the claim protocol
-// does.
-var escalateTagStripPattern = regexp.MustCompile(`(?i)\[HANDOFF[^\]]*\]`)
+// Recognition is ScanTags (tags.go), shared with the other two protocols. The
+// tag name is a protocol the model is asked to reproduce, and a model that
+// writes [handoff:payout], 【HANDOFF:payout】 or [HANDOFF：payout] meant the tag —
+// a pattern that does not recognise one of those neither strips it nor acts on
+// it, so the customer reads internal markup and a payout escalation is swallowed
+// whole. That is strictly worse than the blank answer the emptiness check guards
+// against: the answer looks fine and nobody is ever told a person was needed.
+//
+// Stripping covers every shape with the name in tag position, including the
+// malformed ones a model improvises — [HANDOFF] with no value, [HANDOFF:] with no
+// reason — so a tag never reaches a customer just because it was written badly,
+// exactly as the claim protocol does.
 
 // EscalationResult is what ParseEscalation found.
 type EscalationResult struct {
@@ -90,30 +85,29 @@ var knownEscalations = map[string]string{
 // itself, and picking the first keeps the outcome deterministic rather than
 // dependent on which one happened to be last.
 func ParseEscalation(answer string) EscalationResult {
-	out := EscalationResult{CleanedAnswer: answer}
+	tags, stripped := ScanTags(answer, TagHandoff)
+	out := EscalationResult{CleanedAnswer: strings.TrimSpace(stripped)}
 
-	for _, m := range escalateTagPattern.FindAllStringSubmatch(answer, -1) {
-		value := strings.ToLower(strings.TrimSpace(m[1]))
-		if value == "" {
-			// [HANDOFF:] with no reason still means "get me a human".
-			out.Requested, out.Reason = true, EscalateOther
-			break
+	// The first separated tag wins; a tag with no colon at all ([HANDOFF],
+	// [HANDOFF payout]) carries no readable reason but is still unambiguously a
+	// request, so it escalates as other when nothing better was written.
+	for _, tag := range tags {
+		if !tag.Separated {
+			continue
 		}
+		value := strings.ToLower(tag.Value)
 		reason, known := knownEscalations[value]
 		if !known {
+			// An empty value ([HANDOFF:]) lands here too: it still means
+			// "get me a human".
 			reason = EscalateOther
 		}
 		out.Requested, out.Reason = true, reason
-		break
+		return out
 	}
-
-	// A bare [HANDOFF] carries no colon and so never matches the capture
-	// pattern, but it is still unambiguously a request.
-	if !out.Requested && escalateTagStripPattern.MatchString(answer) {
+	if len(tags) > 0 {
 		out.Requested, out.Reason = true, EscalateOther
 	}
-
-	out.CleanedAnswer = strings.TrimSpace(escalateTagStripPattern.ReplaceAllString(answer, ""))
 	return out
 }
 
