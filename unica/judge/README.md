@@ -14,6 +14,8 @@ curl -s localhost:8787/judge -H 'Content-Type: application/json' \
   -d '{"query":"坏了能赔吗","answer":"可以的，我们赔付200元，全额退款。","speaker":"human"}'
 ```
 
+> Windows 的 cmd、PowerShell、Git Bash 会把命令行里的中文按本地代码页转成 `?` 再交给 curl，闸门收到的是一串问号，自然什么也不拦，也不报错。请把请求体存成 UTF-8 文件再发：`curl -s localhost:8787/judge -H 'Content-Type: application/json' --data-binary @body.json`。
+
 ```json
 {"mode":"shadow","decision":"send","withheld":false,"would_withhold":true,
  "would_reason":"commitment_unbacked",
