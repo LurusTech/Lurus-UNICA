@@ -16,7 +16,7 @@ func TestEvaluate_HarmEscalatesInEveryMode(t *testing.T) {
 		for _, msg := range msgs {
 			// High confidence on purpose: the escalation must not depend on the
 			// answer having scored badly.
-			got := NewEvaluator().EvaluateWithMode(msg, 0.95, DefaultGuardrailConfig(), mode)
+			got := NewEvaluator().EvaluateWithMode(msg, 0.95, Defaults(), mode)
 			if got.Reason != ReasonSafetyIncident {
 				t.Errorf("mode=%s msg=%q: Reason = %q, want %q", mode, msg, got.Reason, ReasonSafetyIncident)
 			}
@@ -40,7 +40,7 @@ func TestEvaluate_HarmDoesNotFireOnConsultation(t *testing.T) {
 		"这个葡萄小孩子能吃吗？",
 		"吃多了会不会不消化",
 	} {
-		got := NewEvaluator().EvaluateWithMode(msg, 0.95, DefaultGuardrailConfig(), TriageOff)
+		got := NewEvaluator().EvaluateWithMode(msg, 0.95, Defaults(), TriageOff)
 		if got.Reason == ReasonSafetyIncident {
 			t.Errorf("msg=%q escalated as a safety incident; it is a consultation", msg)
 		}
@@ -58,7 +58,7 @@ func TestEvaluate_FundsAtRiskEscalatesInEveryMode(t *testing.T) {
 	}
 	for _, mode := range []TriageMode{TriageOff, TriageShadow, TriageOn} {
 		for _, msg := range msgs {
-			got := NewEvaluator().EvaluateWithMode(msg, 0.95, DefaultGuardrailConfig(), mode)
+			got := NewEvaluator().EvaluateWithMode(msg, 0.95, Defaults(), mode)
 			if got.Reason != ReasonFundsAtRisk {
 				t.Errorf("mode=%s msg=%q: Reason = %q, want %q", mode, msg, got.Reason, ReasonFundsAtRisk)
 			}

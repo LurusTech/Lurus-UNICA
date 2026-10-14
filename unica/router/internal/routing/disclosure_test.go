@@ -11,9 +11,9 @@ import (
 
 	"github.com/kefu/unica/pkg/compliance"
 	"github.com/kefu/unica/pkg/guardrail"
+	routerguardrail "github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/pkg/model"
 	"github.com/kefu/unica/router/internal/bridge"
-	routerguardrail "github.com/kefu/unica/router/internal/guardrail"
 )
 
 const discLabel = compliance.DefaultDisclosureLabel

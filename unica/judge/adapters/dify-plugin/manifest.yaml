@@ -1,0 +1,28 @@
+version: 0.1.0
+type: plugin
+author: lurus
+name: unica_judge
+label:
+  zh_Hans: UNICA 确定性闸门
+  en_US: UNICA Deterministic Gate
+description:
+  zh_Hans: 把每一句回复交给 UNICA 闸门校验：用业务写下的事实核对、扣下无依据的承诺、留下可校验的证据。影子模式零风险接入。
+  en_US: Pass every reply through the UNICA gate — checked against the facts the business wrote down, unbacked promises held, every verdict sealed as evidence. Shadow mode is zero-risk.
+icon: icon.svg
+resource:
+  memory: 268435456
+  permission: {}
+plugins:
+  tools:
+    - provider/unica_judge.yaml
+meta:
+  version: 0.0.1
+  arch:
+    - amd64
+    - arm64
+  runner:
+    language: python
+    version: "3.12"
+    entrypoint: main
+created_at: 2026-10-09T00:00:00Z
+privacy: PRIVACY.md

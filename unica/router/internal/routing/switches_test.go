@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/pkg/platformsettings"
-	"github.com/kefu/unica/router/internal/guardrail"
 )
 
 // fakeSettings stands in for the platform_settings table. The rules under test

@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/router/internal/bridge"
-	"github.com/kefu/unica/router/internal/guardrail"
 )
 
 // firewallOntologyYAML marks the refund rate as a commitment property and
@@ -49,7 +49,7 @@ func firewallOntology(t *testing.T) *domain.Ontology {
 func firewallInput(o *domain.Ontology, cfg *domain.Config, answer string, grounding ...string) JudgeInput {
 	in := judgeInput(o, cfg, answer)
 	in.Query = "想了解一下费用"
-	gc := guardrail.DefaultGuardrailConfig()
+	gc := guardrail.Defaults()
 	gc.ConfidenceThreshold = 0
 	in.GuardrailCfg = gc
 	in.GroundingTexts = grounding

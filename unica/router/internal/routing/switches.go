@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/pkg/platformsettings"
-	"github.com/kefu/unica/router/internal/guardrail"
 )
 
 // DefaultSwitchPollInterval is how often the stored switches are re-read.

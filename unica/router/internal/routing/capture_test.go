@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/pkg/model"
-	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/state"
 )
 

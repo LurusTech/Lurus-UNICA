@@ -65,7 +65,7 @@ func TestDefaultTriageModeChangesNothing(t *testing.T) {
 	}
 
 	e := NewEvaluator()
-	cfg := DefaultGuardrailConfig()
+	cfg := Defaults()
 
 	for _, msg := range []string{"退款政策是什么", "我要退款", "你好", "我要投诉"} {
 		legacy := e.EvaluateWithMode(msg, 0.9, cfg, TriageOff)
@@ -82,7 +82,7 @@ func TestDefaultTriageModeChangesNothing(t *testing.T) {
 // consultative questions it was wrongly catching.
 func TestEvaluateWithMode_OnRetiresKeywords(t *testing.T) {
 	e := NewEvaluator()
-	cfg := DefaultGuardrailConfig()
+	cfg := Defaults()
 	// 投诉 rather than 退款: 退款 left the default list when intake made it the
 	// assistant's job to answer payout questions, so it no longer demonstrates
 	// the legacy list over-reaching.
@@ -102,7 +102,7 @@ func TestEvaluateWithMode_OnRetiresKeywords(t *testing.T) {
 // control is not swept away along with the intent heuristic.
 func TestEvaluateWithMode_BlockedTopicsSurviveEveryMode(t *testing.T) {
 	e := NewEvaluator()
-	cfg := DefaultGuardrailConfig()
+	cfg := Defaults()
 	cfg.BlockedTopics = []string{"医疗建议"}
 
 	for _, mode := range []TriageMode{TriageOff, TriageShadow, TriageOn} {
@@ -116,7 +116,7 @@ func TestEvaluateWithMode_BlockedTopicsSurviveEveryMode(t *testing.T) {
 // TestEvaluateWithMode_LowConfidenceSurvivesTriageOn ensures retiring the keyword
 // list does not also retire the confidence gate.
 func TestEvaluateWithMode_LowConfidenceSurvivesTriageOn(t *testing.T) {
-	got := NewEvaluator().EvaluateWithMode("配送要多久", 0.2, DefaultGuardrailConfig(), TriageOn)
+	got := NewEvaluator().EvaluateWithMode("配送要多久", 0.2, Defaults(), TriageOn)
 	if got.Decision != DecisionHandoff || got.Reason != ReasonLowConfidence {
 		t.Errorf("got %s/%s, want handoff/%s", got.Decision, got.Reason, ReasonLowConfidence)
 	}

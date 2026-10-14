@@ -34,10 +34,10 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
+	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/eval"
-	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/intent"
 	"github.com/kefu/unica/router/internal/routing"
 )
@@ -46,7 +46,7 @@ import (
 type lineConfig struct {
 	difyBaseURL string
 	difyAPIKey  string
-	guardrail   *guardrail.GuardrailConfig
+	guardrail   *guardrail.Config
 	// facts is the rendered ontology block, empty when the product line has no
 	// ontology or injection was not requested.
 	facts string
@@ -175,7 +175,7 @@ func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag strin
 			lineFilter: {
 				difyBaseURL: baseURLFlag,
 				difyAPIKey:  apiKeyFlag,
-				guardrail:   guardrail.DefaultGuardrailConfig(),
+				guardrail:   guardrail.Defaults(),
 			},
 		}, nil
 	}
@@ -235,7 +235,7 @@ func resolveConfigs(cases []eval.Case, lineFilter, baseURLFlag, apiKeyFlag strin
 		configs[line] = lineConfig{
 			difyBaseURL: rec.BaseURL,
 			difyAPIKey:  rec.APIKey,
-			guardrail:   guardrail.LoadGuardrailConfig(rec.ConfigJSON),
+			guardrail:   guardrail.Load(rec.ConfigJSON),
 			facts:       facts,
 			ontology:    lineOntology,
 		}

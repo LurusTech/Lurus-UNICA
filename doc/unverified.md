@@ -3,7 +3,7 @@
 已经交付、但**尚未被证据支持**的部分。单独列出来，是为了不被"测试全绿"这句话盖住。
 每条写清楚：现状是什么、要验证需要什么。修掉一条就从这里删掉。
 
-最后更新：2026-08-06（客户自助层四期后）
+最后更新：2026-10-10（J5 部分销账并新增 J6；J3 改为 `judge checkup`，新增 J5 多店事实目录；10-09 新增 J1–J4；10-08：3.7.3 销账、"2026-10-08 收口"一节）
 
 ---
 
@@ -55,9 +55,9 @@ enforce 覆盖里（`grounding.go` / `judge.go` 注释与测试钉住新契约�
 `router_ontology_breaker_bypassed_total` 与客诉/改答率。
 
 ### 2.2（新）已解决：新基线已保存
-2026-08-06 部署演练中黄金集对 deepseek-v4-flash 重跑 60/60（标签率 87%，
+2026-08-06 部署演练中黄金集对平台当时声明的模型重跑 60/60（标签率 87%，
 0 违规，执法器与黄金集 0 分歧），基线存于
-`unica/router/testdata/golden/baseline-deepseek-v4-flash.json`。
+`unica/router/testdata/golden/` 下的基线文件。
 
 ---
 
@@ -98,9 +98,9 @@ dry-run 验证 9 块全捕获。
 
 **要验证需要**：shadow 真实流量标定阈值。
 
-### 3.5.5 deepseek-v4-flash 经 openai_api_compatible 接入
-Dify 0.15.3 原生 deepseek provider 的模型白名单没有 v4-flash，
-演练改走 openai_api_compatible（endpoint https://api.deepseek.com/v1）。
+### 3.5.5 平台模型经 Dify 的通用兼容型供应商接入
+Dify 0.15.3 该模型供应商的原生 provider 白名单里没有平台声明的模型，
+演练改走 Dify 的通用兼容型供应商（供应商自己的兼容端点）。
 行为等价但流式分隔/函数调用参数按保守值配置。
 
 **要验证需要**：Dify 升级后回归原生 provider；或长会话/流式场景实测。
@@ -134,18 +134,18 @@ Dify 0.15.3 原生 deepseek provider 的模型白名单没有 v4-flash，
 分段落盘与最终 configured:true。
 
 ### 3.7.2 high_quality 索引未在配了嵌入模型的工作区验过
-演练工作区（DeepSeek 经 openai_api_compatible，无嵌入模型）实测
+演练工作区（平台模型经 Dify 的通用兼容型供应商接入，无嵌入模型）实测
 high_quality 被 Dify 以 provider_not_initialize 拒绝，economy 全通——
 因此新增 DIFY_INDEXING_TECHNIQUE（默认 high_quality）。economy 的检索
 质量对比、以及配了嵌入模型后 high_quality 的回归，都没跑过。
 
 **要验证需要**：接入一个提供嵌入的模型商，同一批文档两种模式对比检索命中。
 
-### 3.7.3 router 知识管道修复后仍是未接线的死代码
-`internal/knowledge`（batch 修复、数据集密钥）有单测且与 admin 共用同一
-个实测过的客户端，但 cmd/router 没有挂载它，无真实调用方。
-
-**要验证需要**：接线或删除，二选一；接线后按 admin 同款清单实测。
+### 3.7.3（已销账，2026-10-08 核对）router 知识管道未接线
+原文：`router/internal/knowledge` 有单测但 cmd/router 没有挂载，无真实调用方，需接线或删除。
+**结论：已删除，删于 `d264528`**（提交说明："router/internal/knowledge deleted: no importers"）。
+2026-10-08 核对：该目录已不存在，全仓 Go 代码无任何对它的引用；仍提到它的只有
+`doc/plan-creator-ontology.md` 与 `docs/stories/STORY-020.md` 两份历史文档。
 
 ---
 
@@ -221,3 +221,73 @@ A/B 只确认了 mega-17/19 的变化由规则 8/9 引起、与规则 6/7 无关
 真的"信息已齐、不必重复询问"——采集这套改造的全部意义所在——没有人看过。
 2026-08-22 另查明坐席回复回传链路本身是断的（网关 webhook 端点未注册），
 这条验证在链路修好之前做不了。
+
+---
+
+## 2026-10-08 收口：本轮改动中未经实机验证的部分
+
+以下改动只有单测与 `go vet`/`go test` 支撑（详见 `doc/known-defects.md` 对应条目），
+演练环境已拆，没有一条在真实部署或真实流量上跑过。
+
+### D1 调研超时扫描
+真实 PostgreSQL 上的两条 SQL（按 `survey_sent_at` 取 `sent` 行、带 `survey_status='sent'`
+守卫的翻转）只对打桩存储测过；多副本同时扫描的去重靠 UPDATE 守卫，未实测。
+**要验证需要**：开一条产线的调研，发出后不回复，等过 `timeout_hours`，
+看该会话变为 `no_response`、`survey_timeout_total` 加一且只加一。
+
+### D2 坐席"解决"关闭会话
+真实 Chatwoot 的 `conversation_status_changed` 回调形状只按现有结构体与旧测试推断；
+关闭后 `OnClose` 触发调研、客户再发消息回到 AI 这两段行为未在实机走过。
+**要验证需要**：真实 Chatwoot 里点一次"解决"，对照 router 日志的关闭记录、
+`unica:dead-letter` 无新增、会话状态为 closed。
+
+### D20 全角标签
+解析器覆盖了构造出的半角/全角/混合/空白写法；模型在真实答复里实际会写出哪些变体
+没有采样过，不认识的写法（如尖括号）仍会原样到达客户。
+**要验证需要**：有真实答复轨迹后，按标签名搜一遍残留在已投递答复里的标记。
+
+### D23 token 类型
+新旧 token 并存期（部署后一个 refresh 有效期内）的行为只由单测钉住：
+旧 access 继续可用、旧 refresh 仍能换新。未在真实门户上走过一次"部署后不重新登录"的流程。
+**要验证需要**：部署前登录并勾选"记住我"，部署后不登出，确认页面可用且续期成功。
+
+---
+
+## 2026-10-09 闸门形态：未经实机验证的部分
+
+本轮把判定内核抽成 `pkg/judge`、新建独立二进制 `unica/judge`（含 `judge checkup`）、行业包升级；10-10 按 owner 授权定了开源边界与首个对象，体检搬进开放模块，事实支持按店分文件。
+全部只有单测、`go vet`、本机冒烟（起二进制调全部接口；对 8 行 CSV 出报告）支撑。详见 `doc/judge-gate.md`。
+
+### J1 Dify 插件骨架没有打包安装过
+`unica/judge/adapters/dify-plugin/` 的 manifest、provider、tool 三件按官方插件结构手写，
+没有在任何 Dify 实例上打包、安装、在工作流里跑过一次。HTTP 请求节点接法只写了步骤，同样未在实例上点过。
+**要验证需要**：一台 Dify ≥ 1.0（插件机制）实例，按 `adapters/dify-plugin/README.md` 两种接法各走一遍，
+看 `withheld=true` 时是否进入转人工分支、闸门关机时是否按"失败即转人工"处理。
+
+### J2 Chatwoot webhook 载荷形状只按现有结构体推断
+适配器读 `event`、`message_type`、`private`、`conversation.id`、`sender.type`；
+`sender.type == "agent_bot"` 判为 AI 的依据是 Chatwoot 文档，未对真实回调抓包。
+`conversation.messages` 回退路径对真实载荷是否存在不确定，所以主路径是适配器自己记住的上一条客户消息。
+**要验证需要**：真实 Chatwoot 配一个 webhook 指向 `/adapters/chatwoot`，坐席与 agent bot 各发一条，
+核对证据行的 `customer_message`、`speaker`，以及私信备注是否出现且客户侧不可见。
+
+### J3 体检的 Chatwoot JSON 与 CSV 格式是约定，不是实测格式
+Chatwoot 导入接受"对话数组 / `payload` / `data.payload`"三种包法，是按 API 文档写的；
+CSV 要求带表头并由 `-csv-cols` 映射四列，千牛、抖店等卖家工具的真实导出一份都没拿到过。
+**要验证需要**：各拿一份真实导出跑 `judge checkup`，看是否能在不改代码、只改 `-csv-cols` 的前提下读入。
+
+### J4 没有任何外部影子部署
+"若开启将扣下 N 条"这个数在真实流量上一次都没产生过；`judge.MinShadowSamples = 30` 是拍的下限，不是统计论证。
+**要验证需要**：一家代运营机构的一条产线接影子两周，看 `GET /shadow/<line>` 的 `would_withhold` 与人工抽检的一致性。
+
+### J5 多店事实目录：50 店加载与并发 PUT 已固化为测试，`-race` 未跑
+10-10 补了两条测试：50 个 `<line>.yaml` 的目录加载；两店各 20 次并发 PUT 与判定交错后事实互不串线、两条证据链各自连续。
+第二条在修复前失败（同一店并发 PUT 的临时文件改名互相冲突，且盘上与内存可能落在不同版本），已在 `FactsStore.Replace` 加写锁串行化。
+隔离检查已做：`GOWORK=off go build ./...` 通过，`go list -deps` 只拉到 `pkg` 与本模块自身。
+**仍未验证**：本机无 C 编译器，`go test -race` 跑不起来，并发测试只用 `-count=20` 重复过；磁盘满、只读目录下的行为仍没有测。
+**要验证需要**：在带 C 工具链的环境对 `unica/judge` 跑一次 `go test -race ./...`。
+
+### J6 Chatwoot webhook 顶层 `message_type` 的字符串形态按文档记忆实现，未对真实事件验过
+闸门适配器 10-10 改为同时接受整数与 `incoming`/`outgoing` 字符串，依据是 Chatwoot 文档与社区集成的通行写法，本仓库没有一份真实抓包。
+保留模块 `gateway/internal/webhook/chatwoot.go` 的同名字段仍是整数，若字符串形态属实，那条采集路径会把事件静默丢弃。
+**要验证需要**：接一个真实 Chatwoot 实例，抓一条 `message_created` 事件原文，对照两处解码。

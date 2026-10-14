@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kefu/unica/pkg/domain"
-	"github.com/kefu/unica/router/internal/guardrail"
+	"github.com/kefu/unica/pkg/guardrail"
 )
 
 // These tests pin D18: the model spends its budget on reasoning, never writes
@@ -159,7 +159,7 @@ func TestJudgeAnswer_EnforcementOutranksEmptyAnswer(t *testing.T) {
 	o := judgeTestOntology(t)
 	cfg := &domain.Config{InjectFacts: true, Validation: domain.ValidationEnforce}
 	in := judgeInput(o, cfg, violatingAnswer)
-	in.GuardrailCfg = guardrail.DefaultGuardrailConfig()
+	in.GuardrailCfg = guardrail.Defaults()
 	in.GuardrailCfg.ConfidenceThreshold = 0
 
 	j := JudgeAnswer(in, guardrail.NewEvaluator(), domain.NewBreaker())

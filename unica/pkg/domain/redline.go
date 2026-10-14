@@ -24,12 +24,71 @@ const (
 // RedlinePack is one embedded phrase list. Basis records why a phrase was
 // listed when it was drafted; it is not a legal finding and the system makes
 // none — a hit only means a person looks before the customer does.
+//
+// A pack is the unit the gate's industry knowledge ships in, and the only
+// place industry ever appears: the code knows retail from finance by nothing
+// but which pack a line selected. Beyond the phrase list it carries the
+// commitment types the industry is held to (extra cue words for the
+// firewall), adversarial cases that pin what the pack must and must not
+// catch, and the words a checkup report uses to frame its findings. Every
+// field past Terms is optional so an existing phrase-only pack still loads.
 type RedlinePack struct {
 	ID     string        `yaml:"id" json:"id"`
 	Label  string        `yaml:"label" json:"label"`
 	Basis  string        `yaml:"basis" json:"basis,omitempty"`
 	Action string        `yaml:"action" json:"action"`
 	Terms  []RedlineTerm `yaml:"terms" json:"-"`
+
+	// Commitments are the promise types of this industry. Their cues join the
+	// firewall's built-in cue list while the pack is selected, so "假一赔十"
+	// becomes a commitment sentence for a shop even though no generic cue
+	// word appears in it. A cue only ever widens what is held; it never
+	// backs a figure.
+	Commitments []PackCommitment `yaml:"commitments,omitempty" json:"commitments,omitempty"`
+	// Cases are adversarial examples: the sentence, what the gate must
+	// conclude about it, and why. They are evaluated in this package's tests
+	// and again by the checkup, where they are reported apart from real
+	// samples — they prove the pack works, not that the business has a
+	// problem.
+	Cases []PackCase `yaml:"cases,omitempty" json:"-"`
+	// Report is how a checkup frames this industry's findings.
+	Report PackReport `yaml:"report,omitempty" json:"report,omitempty"`
+}
+
+// PackCommitment is one promise type an industry is held to, with the cue
+// words that mark a sentence as making it.
+type PackCommitment struct {
+	Type string   `yaml:"type" json:"type"`
+	Cues []string `yaml:"cues" json:"cues"`
+}
+
+// Expected outcomes of a pack case.
+const (
+	// PackExpectWithhold: the sentence must produce a blocking finding.
+	PackExpectWithhold = "withhold"
+	// PackExpectFlag: the sentence must produce a finding, none of them
+	// blocking.
+	PackExpectFlag = "flag"
+	// PackExpectClean: the sentence must produce no finding at all.
+	PackExpectClean = "clean"
+)
+
+// PackCase is one adversarial example shipped with a pack. Text is judged
+// with no ontology and no grounding, exactly as a checkup judges a reply it
+// knows nothing about, so the expectation is about the pack and the firewall
+// alone.
+type PackCase struct {
+	Text   string `yaml:"text" json:"text"`
+	Expect string `yaml:"expect" json:"expect"`
+	Note   string `yaml:"note,omitempty" json:"note,omitempty"`
+}
+
+// PackReport is the wording a checkup report borrows from the pack: a
+// headline for the industry section and notes a reader of the report should
+// have in front of them, such as what the pack cannot see.
+type PackReport struct {
+	Headline string   `yaml:"headline,omitempty" json:"headline,omitempty"`
+	Notes    []string `yaml:"notes,omitempty" json:"notes,omitempty"`
 }
 
 // RedlineTerm is a literal phrase or, when Pattern is set, a regular
@@ -150,7 +209,103 @@ func (p *RedlinePack) compile() error {
 			return fmt.Errorf("pack %s term %d: action %q (want withhold or flag)", p.ID, i+1, t.Action)
 		}
 	}
+	for i, c := range p.Commitments {
+		if strings.TrimSpace(c.Type) == "" {
+			return fmt.Errorf("pack %s commitment %d has no type", p.ID, i+1)
+		}
+		if len(c.Cues) == 0 {
+			return fmt.Errorf("pack %s commitment %q has no cues", p.ID, c.Type)
+		}
+		for _, cue := range c.Cues {
+			if strings.TrimSpace(cue) == "" {
+				return fmt.Errorf("pack %s commitment %q has an empty cue", p.ID, c.Type)
+			}
+		}
+	}
+	for i, c := range p.Cases {
+		if strings.TrimSpace(c.Text) == "" {
+			return fmt.Errorf("pack %s case %d has no text", p.ID, i+1)
+		}
+		switch c.Expect {
+		case PackExpectWithhold, PackExpectFlag, PackExpectClean:
+		default:
+			return fmt.Errorf("pack %s case %d: expect %q (want withhold, flag or clean)", p.ID, i+1, c.Expect)
+		}
+	}
 	return nil
+}
+
+// CommitmentCuesFor returns, sorted and deduplicated, the commitment cue
+// words of the named packs. Unknown ids are skipped, as ScanRedlines skips
+// them: the setting was validated when it was written.
+func CommitmentCuesFor(packIDs []string) []string {
+	set := map[string]bool{}
+	for _, id := range packIDs {
+		p, ok := builtinRedlines[id]
+		if !ok {
+			continue
+		}
+		for _, c := range p.Commitments {
+			for _, cue := range c.Cues {
+				if cue = strings.TrimSpace(cue); cue != "" {
+					set[cue] = true
+				}
+			}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return sortedSet(set)
+}
+
+// RedlinePackByID returns an embedded pack.
+func RedlinePackByID(id string) (RedlinePack, bool) {
+	p, ok := builtinRedlines[id]
+	return p, ok
+}
+
+// PackCaseResult is one adversarial case judged.
+type PackCaseResult struct {
+	Pack     string      `json:"pack"`
+	Case     PackCase    `json:"case"`
+	Got      string      `json:"got"`
+	Pass     bool        `json:"pass"`
+	Findings []Violation `json:"findings,omitempty"`
+}
+
+// EvaluatePackCases judges every adversarial case of the named packs the way
+// a checkup judges a reply with no facts behind it: the pack's own phrases
+// plus the commitment firewall with the pack's cues, no ontology, no
+// grounding, commitment scope. It is what the pack tests run and what the
+// checkup reports under its own heading.
+func EvaluatePackCases(packIDs []string) []PackCaseResult {
+	var out []PackCaseResult
+	seen := map[string]bool{}
+	for _, id := range packIDs {
+		p, ok := builtinRedlines[id]
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		cues := CommitmentCuesFor([]string{id})
+		for _, c := range p.Cases {
+			findings := CheckCommitmentsWithCues(c.Text, nil, GroundingSources{}, CommitmentScopeCommitment, cues)
+			findings = append(findings, ScanRedlines(c.Text, []string{id})...)
+			got := PackExpectClean
+			for _, f := range findings {
+				if IsBlockingFinding(f.Kind) {
+					got = PackExpectWithhold
+					break
+				}
+				if f.Kind != ViolationUngroundedFigure {
+					got = PackExpectFlag
+				}
+			}
+			out = append(out, PackCaseResult{Pack: id, Case: c, Got: got, Pass: got == c.Expect, Findings: findings})
+		}
+	}
+	return out
 }
 
 // mixed reports whether some terms of a withhold pack only record.
@@ -182,6 +337,10 @@ type RedlinePackInfo struct {
 	// Mixed marks a withhold pack some of whose terms only record, so the
 	// screen does not promise that every phrase in it holds an answer.
 	Mixed bool `json:"mixed,omitempty"`
+	// CommitmentTypes names the promise types the pack adds to the firewall.
+	CommitmentTypes []string `json:"commitment_types,omitempty"`
+	// Cases is how many adversarial examples the pack ships with.
+	Cases int `json:"cases,omitempty"`
 }
 
 // RedlinePacks lists the embedded packs for display, sorted by id.
@@ -190,7 +349,11 @@ func RedlinePacks() []RedlinePackInfo {
 	out := make([]RedlinePackInfo, 0, len(ids))
 	for _, id := range ids {
 		p := builtinRedlines[id]
-		out = append(out, RedlinePackInfo{ID: p.ID, Label: p.Label, Action: p.Action, Basis: p.Basis, Mixed: p.mixed()})
+		info := RedlinePackInfo{ID: p.ID, Label: p.Label, Action: p.Action, Basis: p.Basis, Mixed: p.mixed(), Cases: len(p.Cases)}
+		for _, c := range p.Commitments {
+			info.CommitmentTypes = append(info.CommitmentTypes, c.Type)
+		}
+		out = append(out, info)
 	}
 	return out
 }

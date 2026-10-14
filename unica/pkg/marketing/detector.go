@@ -6,23 +6,28 @@ package marketing
 import (
 	"regexp"
 	"strings"
+
+	"github.com/kefu/unica/pkg/domain"
 )
 
-// intentTagPattern matches [INTENT:signal_name] tags in Dify responses.
+// intentNamePattern is what a recognised intent value looks like once the tag
+// itself has been found. Tag recognition is domain.ScanTags, shared with the
+// [FACT:] and [HANDOFF:] protocols, so case, full-width brackets, a full-width
+// colon and stray spaces are tolerated here exactly as they are there (D20).
 //
-// Case-insensitive, and the captured name is lowercased before it is looked up.
-// A case-sensitive pattern left [INTENT:PRICE_INQUIRY] in the customer-facing
-// text — the tag protocols exist so customers never see internal markup, and
-// case is not something a model reproduces reliably.
-var intentTagPattern = regexp.MustCompile(`(?i)\[INTENT:([a-z_]+)\]`)
+// The value is lowercased before it is looked up. A case-sensitive match left
+// [INTENT:PRICE_INQUIRY] in the customer-facing text — the tag protocols exist
+// so customers never see internal markup, and case is not something a model
+// reproduces reliably.
+var intentNamePattern = regexp.MustCompile(`^[a-z_]+$`)
 
 // ValidIntents defines the set of recognised intent signal names.
 var ValidIntents = map[string]bool{
-	"price_inquiry":   true,
-	"comparison":      true,
+	"price_inquiry":    true,
+	"comparison":       true,
 	"feature_question": true,
-	"purchase_intent": true,
-	"complaint":       true,
+	"purchase_intent":  true,
+	"complaint":        true,
 }
 
 // DetectResult holds the output of intent detection on an AI response.
@@ -37,15 +42,15 @@ type DetectResult struct {
 // from the customer-facing message, and returns the cleaned answer along with
 // any valid intents detected. Unknown intent names are silently ignored.
 func DetectIntents(answer string) DetectResult {
-	matches := intentTagPattern.FindAllStringSubmatch(answer, -1)
+	tags, cleaned := domain.ScanTags(answer, domain.TagIntent)
 
 	seen := make(map[string]bool)
 	var intents []string
-	for _, match := range matches {
-		if len(match) < 2 {
+	for _, tag := range tags {
+		signal := strings.ToLower(tag.Value)
+		if !tag.Separated || !intentNamePattern.MatchString(signal) {
 			continue
 		}
-		signal := strings.ToLower(match[1])
 		if !ValidIntents[signal] {
 			continue
 		}
@@ -56,8 +61,8 @@ func DetectIntents(answer string) DetectResult {
 		intents = append(intents, signal)
 	}
 
-	// Strip all intent tags from the answer (including invalid ones)
-	cleaned := intentTagPattern.ReplaceAllString(answer, "")
+	// Every intent tag is stripped, including invalid and malformed ones: a
+	// tag that names nothing we track is still markup the customer must not see.
 	// Collapse extra whitespace left after tag removal
 	cleaned = strings.TrimSpace(cleaned)
 	// Remove double spaces

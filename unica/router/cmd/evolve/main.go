@@ -40,10 +40,10 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/pkg/platformsettings"
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/eval"
-	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/replay"
 )
 
@@ -317,7 +317,7 @@ func warnOntologyVersionSpread(cases []replay.Case, evaluated int) {
 // explicit Dify flags and defaults are used, and the report says which.
 func resolveLine(ctx context.Context, line, baseURL, apiKey, ontologyArg string) (replay.LineConfig, bridge.DifyConfig, *domain.Ontology, error) {
 	lc := replay.LineConfig{
-		Guardrail:  guardrail.DefaultGuardrailConfig(),
+		Guardrail:  guardrail.Defaults(),
 		Validation: domain.ValidationShadow,
 		Triage:     guardrail.DefaultTriageMode,
 	}
@@ -355,7 +355,7 @@ func resolveLine(ctx context.Context, line, baseURL, apiKey, ontologyArg string)
 	if err != nil {
 		return lc, bridge.DifyConfig{}, nil, err
 	}
-	lc.Guardrail = guardrail.LoadGuardrailConfig(rec.ConfigJSON)
+	lc.Guardrail = guardrail.Load(rec.ConfigJSON)
 	lc.Validation = domain.LoadConfig(rec.ConfigJSON).Validation
 
 	if rows, err := platformsettings.NewStore(db).Load(cctx, platformsettings.KeyIntentTriage); err == nil {

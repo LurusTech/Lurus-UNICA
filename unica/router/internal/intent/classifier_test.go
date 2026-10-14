@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/router/internal/eval"
-	"github.com/kefu/unica/router/internal/guardrail"
 )
 
 // TestClassify_GoldenCorpus holds the classifier to the committed golden set.
@@ -149,7 +149,7 @@ func TestResult_NeedsHuman(t *testing.T) {
 // can do anything useful. So the assertion is now the stronger one. Neither
 // path may intercept these: not the keyword list, and not the classifier.
 func TestClassify_PayoutQuestionsReachTheAI(t *testing.T) {
-	cfg := guardrail.DefaultGuardrailConfig()
+	cfg := guardrail.Defaults()
 
 	consultative := []string{
 		"退款政策是什么",

@@ -19,10 +19,10 @@ import (
 
 	"github.com/kefu/unica/pkg/compliance"
 	"github.com/kefu/unica/pkg/domain"
+	"github.com/kefu/unica/pkg/guardrail"
 	"github.com/kefu/unica/pkg/platformsettings"
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/experience"
-	"github.com/kefu/unica/router/internal/guardrail"
 	"github.com/kefu/unica/router/internal/handoff"
 	"github.com/kefu/unica/router/internal/routing"
 	"github.com/kefu/unica/router/internal/state"

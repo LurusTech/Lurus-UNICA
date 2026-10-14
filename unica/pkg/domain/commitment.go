@@ -44,9 +44,16 @@ var commitmentCues = []string{
 	"包退", "包换", "保证", "承诺", "免费", "减免", "返现", "已含", "包含",
 }
 
+// CommitmentCues returns a copy of the built-in cue words, for reports that
+// group findings by the promise they were made under.
+func CommitmentCues() []string { return append([]string(nil), commitmentCues...) }
+
 // absoluteWords promise without a number. Each must appear verbatim
 // somewhere in the grounding before an answer may say it.
 var absoluteWords = []string{"全额", "免费", "包邮", "无条件", "百分之百"}
+
+// AbsoluteWords returns a copy of the absolute words, for reports.
+func AbsoluteWords() []string { return append([]string(nil), absoluteWords...) }
 
 // refusalForms turn a cue into its denial when they sit just before it.
 // Bare "不" is not one of them: "不满意可全额退款" is a promise, and treating
@@ -84,6 +91,15 @@ var moneyUnits = map[string]bool{"元": true, "%": true, "折": true, "万": tru
 // claims must already have passed validation; a claim is credited only when
 // the ontology itself asserts its value.
 func CheckCommitments(answer string, claims []Claim, src GroundingSources, scope CommitmentScope) []Violation {
+	return CheckCommitmentsWithCues(answer, claims, src, scope, nil)
+}
+
+// CheckCommitmentsWithCues is CheckCommitments with extra cue words — the
+// commitment types an industry pack declares (see RedlinePack.Commitments) —
+// added to the built-in list for this call. A cue only ever widens what
+// counts as a commitment sentence; it never backs a figure, so a pack can make
+// the firewall stricter and cannot make it credulous.
+func CheckCommitmentsWithCues(answer string, claims []Claim, src GroundingSources, scope CommitmentScope, extraCues []string) []Violation {
 	if strings.TrimSpace(answer) == "" {
 		return nil
 	}
@@ -118,15 +134,19 @@ func CheckCommitments(answer string, claims []Claim, src GroundingSources, scope
 		text := strings.TrimSpace(answer[sent.start:sent.end])
 
 		if !sent.question {
-			markers := findMarkers(answer, sent)
+			markers := findMarkers(answer, sent, extraCues)
 			if commitmentSentence(markers, figuresIn(figures, sent)) {
 				var items []string
 				for _, f := range unbacked {
 					items = append(items, f.Raw)
 				}
 				for _, m := range markers {
-					if m.absolute && !m.exempt && !strings.Contains(corpus, m.word) {
-						items = appendUnique(items, m.word)
+					chk := m.word
+					if m.absWord != "" {
+						chk = m.absWord
+					}
+					if m.absolute && !m.exempt && !strings.Contains(corpus, chk) {
+						items = appendUnique(items, chk)
 					}
 				}
 				if len(items) > 0 {
@@ -408,14 +428,22 @@ type marker struct {
 	cue        bool
 	absolute   bool
 	exempt     bool
+	// absWord 是被长词（如行业包 cue）盖住的内置绝对词；
+	// 语料校验用它，保证口径与不加 cue 时一致。
+	absWord string
 }
 
 // findMarkers locates cue and absolute words in one sentence and decides,
 // chain by chain, whether a refusal form denies them.
-func findMarkers(answer string, sent sentence) []marker {
+func findMarkers(answer string, sent sentence, extraCues []string) []marker {
 	words := map[string]*marker{}
 	for _, w := range commitmentCues {
 		words[w] = &marker{word: w, cue: true}
+	}
+	for _, w := range extraCues {
+		if w = strings.TrimSpace(w); w != "" {
+			words[w] = &marker{word: w, cue: true}
+		}
 	}
 	for _, w := range absoluteWords {
 		if m, ok := words[w]; ok {
@@ -438,13 +466,14 @@ func findMarkers(answer string, sent sentence) []marker {
 
 	text := answer[sent.start:sent.end]
 	var found []marker
-	taken := func(a, b int) bool {
-		for _, m := range found {
+	// overlap 返回与区间重叠的已登记 marker 下标，没有则 -1。
+	overlap := func(a, b int) int {
+		for i, m := range found {
 			if a < m.end && m.start < b {
-				return true
+				return i
 			}
 		}
-		return false
+		return -1
 	}
 	for _, w := range ordered {
 		from := 0
@@ -455,10 +484,14 @@ func findMarkers(answer string, sent sentence) []marker {
 			}
 			a := sent.start + from + idx
 			b := a + len(w)
-			if !taken(a, b) {
+			if k := overlap(a, b); k < 0 {
 				m := *words[w]
 				m.start, m.end = a, b
 				found = append(found, m)
+			} else if words[w].absolute && !found[k].absolute {
+				// 被长词占位的内置绝对词不能丢：包只能更严不能更松。
+				found[k].absolute = true
+				found[k].absWord = w
 			}
 			from += idx + len(w)
 		}

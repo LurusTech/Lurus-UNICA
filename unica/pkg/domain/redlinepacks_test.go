@@ -307,7 +307,7 @@ func TestRedlinePacks_CarryNoOntologyKeys(t *testing.T) {
 		}
 		for key := range top {
 			switch key {
-			case "id", "label", "action", "basis", "terms":
+			case "id", "label", "action", "basis", "terms", "commitments", "cases", "report":
 			default:
 				t.Errorf("%s has unexpected top-level key %q", name, key)
 			}
@@ -367,6 +367,56 @@ func TestRedlinePacks_UnchosenPacksScanNothing(t *testing.T) {
 	for _, ids := range [][]string{nil, {}, DefaultConfig().RedlinePacks, {"common"}} {
 		if got := ScanRedlines(answer, ids); len(got) != 0 {
 			t.Errorf("packs %v: industry phrases must not be scanned: %+v", ids, got)
+		}
+	}
+}
+
+// TestRedlinePacks_CasesPass runs every adversarial case a pack ships with
+// through the firewall and the pack's own phrases. A pack whose cases do not
+// hold is a broken pack, caught here before it ships in a binary.
+func TestRedlinePacks_CasesPass(t *testing.T) {
+	for _, r := range EvaluatePackCases(RedlinePackIDs()) {
+		if !r.Pass {
+			t.Errorf("%s: %q expected %s, got %s (%s): %+v", r.Pack, r.Case.Text, r.Case.Expect, r.Got, r.Case.Note, r.Findings)
+		}
+	}
+}
+
+// TestRedlinePacks_EcommerceIsAFullPack pins the sample pack: the one every
+// other industry pack is written after must carry every section.
+func TestRedlinePacks_EcommerceIsAFullPack(t *testing.T) {
+	p, ok := RedlinePackByID("ecommerce")
+	if !ok {
+		t.Fatal("ecommerce pack missing")
+	}
+	if len(p.Commitments) == 0 || len(p.Cases) < 8 || p.Report.Headline == "" {
+		t.Errorf("ecommerce pack must carry commitments, cases and a report: %d/%d/%q", len(p.Commitments), len(p.Cases), p.Report.Headline)
+	}
+	withhold, clean := 0, 0
+	for _, c := range p.Cases {
+		switch c.Expect {
+		case PackExpectWithhold:
+			withhold++
+		case PackExpectClean:
+			clean++
+		}
+	}
+	if withhold == 0 || clean == 0 {
+		t.Error("cases must include both something to hold and something to let through")
+	}
+	cues := CommitmentCuesFor([]string{"ecommerce"})
+	if len(cues) == 0 || sort.SearchStrings(cues, "包赔") == len(cues) {
+		t.Errorf("commitment cues must be exposed sorted: %v", cues)
+	}
+	if got := CommitmentCuesFor([]string{"no-such-pack"}); got != nil {
+		t.Errorf("unknown pack yields nil, got %v", got)
+	}
+}
+
+func TestRedlinePacks_InfoCarriesCommitmentTypes(t *testing.T) {
+	for _, info := range RedlinePacks() {
+		if info.ID == "ecommerce" && (len(info.CommitmentTypes) == 0 || info.Cases == 0) {
+			t.Errorf("ecommerce info: %+v", info)
 		}
 	}
 }

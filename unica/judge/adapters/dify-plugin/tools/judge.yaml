@@ -1,0 +1,91 @@
+identity:
+  name: judge
+  author: lurus
+  label:
+    zh_Hans: 过闸
+    en_US: Judge
+description:
+  human:
+    zh_Hans: 把一条待发回复交给 UNICA 闸门。返回 decision / withheld / would_withhold 与明细，供后续 IF/ELSE 节点决定直接发送还是转人工。
+    en_US: Pass one reply through the UNICA gate. Returns decision / withheld / would_withhold and details for a following IF/ELSE node to send or hand off.
+  llm: Checks a customer-service reply against the business's written facts and holds unbacked promises. Call it with the customer's message and the drafted reply before sending.
+parameters:
+  - name: query
+    type: string
+    required: false
+    label:
+      zh_Hans: 客户消息
+      en_US: Customer message
+    human_description:
+      zh_Hans: 客户的原话，用于关键词规则与承诺出处判断。
+      en_US: The customer's message, for keyword rules and figure provenance.
+    llm_description: The customer's original message this reply answers.
+    form: llm
+  - name: answer
+    type: string
+    required: true
+    label:
+      zh_Hans: 待发回复
+      en_US: Drafted reply
+    human_description:
+      zh_Hans: 模型生成、尚未发送的回复。
+      en_US: The model's reply, not yet sent.
+    llm_description: The drafted reply to judge.
+    form: llm
+  - name: grounding
+    type: string
+    required: false
+    label:
+      zh_Hans: 检索原文
+      en_US: Retrieved passages
+    human_description:
+      zh_Hans: 知识检索节点返回的段落原文，多段用换行分隔。出现在这里的数字视为有出处。
+      en_US: Passages the knowledge retrieval node returned, newline-separated. A figure that appears here counts as backed.
+    llm_description: Retrieved knowledge passages, newline-separated.
+    form: llm
+  - name: product_line
+    type: string
+    required: false
+    label:
+      zh_Hans: 产品线 / 证据链
+      en_US: Product line / evidence chain
+    human_description:
+      zh_Hans: 证据链与影子统计的键；留空用 default。
+      en_US: Keys the evidence chain and shadow summary; empty means default.
+    llm_description: Optional product line id.
+    form: form
+  - name: conversation_id
+    type: string
+    required: false
+    label:
+      zh_Hans: 会话 ID
+      en_US: Conversation id
+    human_description:
+      zh_Hans: 写入证据行，便于回查。
+      en_US: Recorded on the evidence row.
+    llm_description: Optional conversation id.
+    form: llm
+output_schema:
+  type: object
+  properties:
+    decision:
+      type: string
+      description: send | handoff | send_and_handoff
+    withheld:
+      type: boolean
+      description: enforce mode held the reply
+    would_withhold:
+      type: boolean
+      description: shadow mode — enforce would have held it
+    reason:
+      type: string
+    detail:
+      type: string
+    answer:
+      type: string
+      description: customer-facing text with tag protocols stripped
+    evidence_id:
+      type: string
+extra:
+  python:
+    source: tools/judge.py
