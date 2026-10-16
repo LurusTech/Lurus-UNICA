@@ -399,3 +399,38 @@ func TestParseCSV_TrailingBlankRowsSkipped(t *testing.T) {
 		t.Errorf("empty id with text must still error: %v", err)
 	}
 }
+
+// A promise left unbacked beside a backed one clusters under the cue nearest
+// the unbacked word, and never names a property that already has a value:
+// the report must not send the reader to fill in what is already written.
+func TestRun_MissingFactsSkipBackedNeighbour(t *testing.T) {
+	o, err := domain.ParseYAML([]byte(ontologyYAML + "      warranty_months: 12\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	convs := []Conversation{conv("c1",
+		msg(1, SenderCustomer, "保修多久？"),
+		msg(2, SenderHuman, "质保12个月，期间非人为损坏免费换新。"))}
+	c := Run(convs, Options{Ontology: o, Packs: []string{"ecommerce"}})
+	if len(c.Unbacked) != 1 || c.Unbacked[0].Got != "免费" {
+		t.Fatalf("want only 免费 unbacked: %+v", c.Unbacked)
+	}
+	if len(c.MissingFacts) != 1 || c.MissingFacts[0].Cue != "换新" || c.MissingFacts[0].Property != "" {
+		t.Errorf("want one 换新 cluster with no property: %+v", c.MissingFacts)
+	}
+}
+
+func TestCueIn_NearestToUnbackedWord(t *testing.T) {
+	groups := [][]string{{"质保", "换新"}, {"赔付", "退款"}, {"全额", "免费"}}
+	for _, tc := range []struct{ sentence, got, want string }{
+		{"质保12个月，期间非人为损坏免费换新", "免费", "换新"},
+		{"质保12个月，期间非人为损坏免费换新", "12个月", "质保"},
+		{"可以的，我们赔付200元，全额退款", "200元", "赔付"},
+		{"可以的，我们赔付200元，全额退款", "", "赔付"},
+		{"全额返还", "全额", "全额"},
+	} {
+		if got := cueIn(tc.sentence, tc.got, groups); got != tc.want {
+			t.Errorf("cueIn(%q, %q) = %q, want %q", tc.sentence, tc.got, got, tc.want)
+		}
+	}
+}

@@ -24,6 +24,9 @@ type Options struct {
 	Scope domain.CommitmentScope
 	// Now stamps the report; nil means time.Now.
 	Now func() time.Time
+	// Version is the binary that wrote the report, so a forwarded report
+	// says which rules produced it.
+	Version string
 }
 
 // Finding is one thing the gate found in one reply.
@@ -76,6 +79,7 @@ type SelfServe struct {
 type Report struct {
 	Line        string    `json:"line"`
 	GeneratedAt time.Time `json:"generated_at"`
+	Version     string    `json:"version,omitempty"`
 	Packs       []string  `json:"packs"`
 	HasOntology bool      `json:"has_ontology"`
 
@@ -143,7 +147,7 @@ func Run(convs []Conversation, o Options) Report {
 		o.Scope = domain.CommitmentScopeCommitment
 	}
 	c := Report{
-		Line: o.Line, GeneratedAt: now(), Packs: append([]string(nil), o.Packs...),
+		Line: o.Line, GeneratedAt: now(), Version: o.Version, Packs: append([]string(nil), o.Packs...),
 		HasOntology: o.Ontology != nil, MinSamples: judge.MinShadowSamples,
 		Unbacked: []Finding{}, Redlines: []Finding{}, Violations: []Finding{},
 		MissingFacts: []MissingFactCluster{}, PackCases: []domain.PackCaseResult{},
@@ -226,7 +230,7 @@ func Run(convs []Conversation, o Options) Report {
 				switch v.Kind {
 				case domain.ViolationUnbackedCommitment, domain.ViolationDeferredFigure:
 					c.Unbacked = append(c.Unbacked, f)
-					if cue := cueIn(v.Evidence, cues); cue != "" {
+					if cue := cueIn(v.Evidence, v.Got, cues); cue != "" {
 						acc := clusters[cue]
 						if acc == nil {
 							acc = &clusterAcc{convs: map[string]bool{}}
@@ -304,8 +308,9 @@ func Run(convs []Conversation, o Options) Report {
 // the industry's own names for its promises), then the built-in cues that
 // name a promise (退款, 赔付, 质保...), and last the absolute words (全额,
 // 免费) that mark a promise without naming one. Within a group the cue that
-// occurs earliest in the sentence wins, so "赔付200元，全额退款" clusters under
-// 赔付 — the thing promised — not under 全额.
+// sits nearest the unbacked word wins, so "赔付200元，全额退款" clusters its 200元
+// under 赔付 — the thing promised — not under 全额, and "质保12个月，免费换新"
+// clusters its 免费 under 换新 rather than under the 质保 that was backed.
 func cueGroups(packs []string) [][]string {
 	absolute := map[string]bool{}
 	for _, w := range domain.AbsoluteWords() {
@@ -322,13 +327,27 @@ func cueGroups(packs []string) [][]string {
 	return [][]string{domain.CommitmentCuesFor(packs), named, abs}
 }
 
-// cueIn picks the cluster cue for a sentence; empty when none applies.
-func cueIn(sentence string, groups [][]string) string {
+// cueIn picks the cluster cue for a sentence: within the first group that
+// has any, the cue nearest got (the unbacked word); when got is not in the
+// sentence, the earliest cue. Empty when none applies.
+func cueIn(sentence, got string, groups [][]string) string {
+	anchor := -1
+	if got != "" {
+		anchor = strings.Index(sentence, got)
+	}
 	for _, group := range groups {
-		best, at := "", -1
+		best, bestDist, bestAt := "", -1, -1
 		for _, cue := range group {
-			if i := strings.Index(sentence, cue); i >= 0 && (at < 0 || i < at || (i == at && len(cue) > len(best))) {
-				best, at = cue, i
+			i := strings.Index(sentence, cue)
+			if i < 0 {
+				continue
+			}
+			d := i
+			if anchor >= 0 {
+				d = distance(i, i+len(cue), anchor, anchor+len(got))
+			}
+			if best == "" || d < bestDist || (d == bestDist && (i < bestAt || (i == bestAt && len(cue) > len(best)))) {
+				best, bestDist, bestAt = cue, d, i
 			}
 		}
 		if best != "" {
@@ -338,16 +357,31 @@ func cueIn(sentence string, groups [][]string) string {
 	return ""
 }
 
+// distance is the gap in bytes between spans [a0,a1) and [b0,b1); zero when
+// they touch or overlap.
+func distance(a0, a1, b0, b1 int) int {
+	switch {
+	case a1 <= b0:
+		return b0 - a1
+	case b1 <= a0:
+		return a0 - b1
+	}
+	return 0
+}
+
 // propertyForCue names the declared property a clustered promise is about:
 // one the sentence mentions outright, or failing that one whose label
-// contains the cue (质保 → 质保期). Empty when the ontology declares nothing
-// of the kind, which is itself the finding.
+// contains the cue (质保 → 质保期). Only properties still without a value
+// count: a promise left unbacked next to an asserted property is missing
+// something else, and naming the asserted one would send the reader to fill
+// in what is already there. Empty when nothing declared fits, which is
+// itself the finding.
 func propertyForCue(o *domain.Ontology, cue, sentence string) string {
-	if props := o.MentionedProperties(sentence); len(props) > 0 {
+	if props := o.MentionedUnassertedProperties(sentence); len(props) > 0 {
 		return props[0]
 	}
 	for _, name := range o.PropertyNames() {
-		if p := o.Properties[name]; p.Label != "" && strings.Contains(p.Label, cue) {
+		if p := o.Properties[name]; p.Label != "" && strings.Contains(p.Label, cue) && !o.HasAssertion(name) {
 			return name
 		}
 	}
