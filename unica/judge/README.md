@@ -3,9 +3,14 @@
 它只做三件事：用业务自己写下的事实校验每一句回复、把没有依据的承诺扣下、把每次判定留成可校验的证据。不接渠道、不调模型、不带工单台。一个二进制：先体检，再接闸门。
 
 ```
-go build -o judge ./cmd/judge
+go build -o judge ./cmd/judge        # 或解压发布包（make judge-dist），里面已带 examples/
 
-# L0 体检：喂历史对话，本机出一页报告，数据不出门
+# 先用自带示例试一下：6 段虚构对话 + 一家只写了两条事实的店
+./judge checkup -in examples/chats.csv -format csv -csv-cols 会话,时间,发送方,内容 \
+  -facts examples/facts/demo-shop.yaml -packs common,ecommerce -out report.html
+# → 无依据承诺 3 条（50元、48小时、免费换新），红线 4 条，缺失事实 3 类，手机号已脱敏
+
+# L0 体检：喂自己的历史对话，本机出一页报告，数据不出门
 ./judge checkup -in chatwoot.json -format chatwoot -packs common,ecommerce -out report.html
 
 # L1 闸门：影子模式起服务，一个 HTTP 调用接入任何已有机器人或坐席工具
@@ -96,6 +101,12 @@ assertions:
 ## 行业包
 
 `pkg/domain/redlinepacks/<id>.yaml`，一包 = 红线词表 + 承诺类型（追加到防火墙线索词）+ 对抗用例（包自己的测试，体检里单列）+ 报告措辞。`ecommerce` 是样板。新增一个行业零代码改动；`-packs` 选用。
+
+## 发布与容器
+
+- `make judge-dist`（或直接 `bash judge/scripts/dist.sh`）：脱离 go.work 交叉编译 Windows、Linux、macOS 五个包，每包含二进制、README、LICENSE、`examples/`，附 SHA256 校验文件，输出到 `judge/dist/`。`VERSION=v0.1.0` 指定版本，否则取 `git describe`。
+- `judge version` 打印版本；`serve` 启动日志与体检报告页眉都带版本，转出去的报告能看出是哪版规则判的。
+- `docker build -t unica-judge -f judge/Dockerfile .`（在 `unica/` 下）：事实与证据链放在 `/data` 卷上，重启续链。容器监听 `0.0.0.0`，务必设 `JUDGE_TOKEN`。
 
 ## 许可与边界
 

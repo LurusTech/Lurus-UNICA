@@ -109,7 +109,7 @@ td.q,td.r{max-width:320px}.tag{display:inline-block;padding:0 6px;border-radius:
 footer{margin:40px 0 0;font-size:12px;color:#656d76}
 </style></head><body>
 <h1>客服对话体检报告{{if .Line}} · {{.Line}}{{end}}</h1>
-<div class="muted">生成于 {{date .}} · 本机生成，数据未离开本机 · 规则：承诺防火墙{{if .Packs}} + 行业包 {{join .Packs}}{{end}}{{if .HasOntology}} + 业务事实{{else}}（未提供业务事实，未做事实冲突校验）{{end}}</div>
+<div class="muted">生成于 {{date .}}{{if .Version}} · judge {{.Version}}{{end}} · 本机生成，数据未离开本机 · 规则：承诺防火墙{{if .Packs}} + 行业包 {{join .Packs}}{{end}}{{if .HasOntology}} + 业务事实{{else}}（未提供业务事实，未做事实冲突校验）{{end}}</div>
 
 <div class="kpi">
  <div><b>{{.Conversations}}</b><span>对话</span></div>

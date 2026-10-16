@@ -1,0 +1,13 @@
+# 示例店铺的业务事实：只写了两条。体检会指出客服说过、但这里没写的东西。
+product_line: demo-shop
+properties:
+  return_window_days:
+    label: 无理由退货窗口
+    range: {type: integer, unit: day}
+  warranty_months:
+    label: 质保期
+    range: {type: integer, unit: month}
+assertions:
+  - values:
+      return_window_days: 7
+      warranty_months: 12

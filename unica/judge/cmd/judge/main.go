@@ -42,6 +42,10 @@ import (
 	"github.com/kefu/unica/pkg/judge"
 )
 
+// version is stamped at build time (make judge-dist passes
+// -ldflags "-X main.version=..."); a plain go build says dev.
+var version = "dev"
+
 func main() {
 	args := os.Args[1:]
 	cmd := "serve"
@@ -53,6 +57,8 @@ func main() {
 		serve(args)
 	case "checkup":
 		os.Exit(runCheckup(args))
+	case "version", "-version", "--version":
+		fmt.Println("judge", version)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -62,7 +68,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: judge [serve] [flags] | judge checkup [flags]   (judge <cmd> -h for flags)")
+	fmt.Fprintln(os.Stderr, "usage: judge [serve] [flags] | judge checkup [flags] | judge version   (judge <cmd> -h for flags)")
 }
 
 // parsePacks splits and validates a comma-separated pack list.
@@ -155,6 +161,7 @@ func serve(args []string) {
 	}
 	srv.Handle("POST /adapters/chatwoot", chatwoot.New(g, notes, hookToken, *cwLine))
 
+	log.Printf("[judge] version=%s", version)
 	log.Printf("[judge] mode=%s packs=%v scope=%s facts=%s evidence=%s",
 		mode, packIDs, cscope, describeFacts(factsStore), describeDir(*evidence))
 	if *token == "" && !loopback(*addr) {

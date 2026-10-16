@@ -88,7 +88,7 @@ func runCheckup(args []string) int {
 		fmt.Fprintf(os.Stderr, "WARNING: writing despite %d residual finding(s); do not forward this report unread\n", len(residual))
 	}
 
-	c := checkup.Run(convs, checkup.Options{Line: *line, Ontology: ont, Packs: packIDs, Scope: cscope})
+	c := checkup.Run(convs, checkup.Options{Line: *line, Ontology: ont, Packs: packIDs, Scope: cscope, Version: version})
 	html, err := c.HTML()
 	if err != nil {
 		return fail(err)
