@@ -1,0 +1,23 @@
+{
+    "zones":  {
+                  "contracts":  [
+
+                                ],
+                  "infra":  [
+
+                            ],
+                  "features":  [
+                                   "unica",
+                                   "portal"
+                               ],
+                  "bootstrap":  [
+                                    "scripts"
+                                ]
+              },
+    "max_test_lines":  500,
+    "fix_paths":  [
+                      "unica",
+                      "portal"
+                  ],
+    "max_lines":  300
+}
