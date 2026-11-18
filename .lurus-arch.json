@@ -1,23 +1,33 @@
 {
-    "zones":  {
-                  "contracts":  [
-
-                                ],
-                  "infra":  [
-
-                            ],
-                  "features":  [
-                                   "unica",
-                                   "portal"
-                               ],
-                  "bootstrap":  [
-                                    "scripts"
-                                ]
-              },
-    "max_test_lines":  500,
-    "fix_paths":  [
-                      "unica",
-                      "portal"
-                  ],
-    "max_lines":  300
+  "zones": {
+    "contracts": [],
+    "infra": [
+      "unica/admin/internal/audit",
+      "unica/admin/internal/bridge",
+      "unica/admin/internal/repository",
+      "unica/admin/internal/routecache",
+      "unica/reporter/internal/repository",
+      "unica/router/internal/bridge",
+      "unica/router/internal/state"
+    ],
+    "features": [
+      "unica",
+      "portal"
+    ],
+    "bootstrap": [
+      "scripts",
+      "unica/scripts",
+      "unica/admin/cmd",
+      "unica/gateway/cmd",
+      "unica/judge/cmd",
+      "unica/reporter/cmd",
+      "unica/router/cmd"
+    ]
+  },
+  "max_test_lines": 500,
+  "fix_paths": [
+    "unica",
+    "portal"
+  ],
+  "max_lines": 300
 }
