@@ -158,11 +158,9 @@ func TestForwardToChatwoot_ExistingConversation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Contact search (returns existing)
-		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contacts/search") {
-			json.NewEncoder(w).Encode(bridge.CWContactSearchResult{
-				Payload: []bridge.CWContact{{ID: 10, Identifier: "wx-user-001"}},
-			})
+		// A mapped conversation's contact is already settled.
+		if strings.Contains(r.URL.Path, "/contacts") {
+			t.Errorf("contacts API called for a mapped conversation: %s %s", r.Method, r.URL.Path)
 			return
 		}
 		// Conversation create - should NOT be called

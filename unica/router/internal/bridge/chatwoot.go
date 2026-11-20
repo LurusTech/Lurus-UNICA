@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -26,16 +27,24 @@ type ChatwootConfig struct {
 // --- Request/Response Types ---
 
 // CWContact represents a Chatwoot contact.
+//
+// CustomAttr holds any JSON value: an agent can give a contact number or
+// checkbox attributes, and one such value used to fail the whole search
+// decode, so an existing contact was not found and creating it again was
+// refused as a duplicate identifier.
 type CWContact struct {
-	ID         int               `json:"id"`
-	Name       string            `json:"name,omitempty"`
-	Email      string            `json:"email,omitempty"`
-	Phone      string            `json:"phone_number,omitempty"`
-	Identifier string            `json:"identifier,omitempty"`
-	CustomAttr map[string]string `json:"custom_attributes,omitempty"`
+	ID         int            `json:"id"`
+	Name       string         `json:"name,omitempty"`
+	Email      string         `json:"email,omitempty"`
+	Phone      string         `json:"phone_number,omitempty"`
+	Identifier string         `json:"identifier,omitempty"`
+	CustomAttr map[string]any `json:"custom_attributes,omitempty"`
 }
 
-// CWContactPayload wraps the contact in the API response envelope.
+// CWContactPayload is a contact in the {"payload": {...}} envelope with the
+// contact's fields directly inside. Chatwoot v3 answers a create with the
+// contact one level deeper (payload.contact, beside payload.contact_inbox);
+// CreateContact reads that and falls back to this shape.
 type CWContactPayload struct {
 	Payload CWContact `json:"payload"`
 }
@@ -57,14 +66,14 @@ type CWCreateContactRequest struct {
 
 // CWConversation represents a Chatwoot conversation.
 type CWConversation struct {
-	ID         int               `json:"id"`
-	AccountID  int               `json:"account_id"`
-	InboxID    int               `json:"inbox_id"`
-	Status     string            `json:"status"`
-	ContactID  int               `json:"contact_id,omitempty"`
-	AssigneeID int               `json:"assignee_id,omitempty"`
-	DisplayID  int               `json:"display_id,omitempty"`
-	CustomAttr map[string]string `json:"custom_attributes,omitempty"`
+	ID         int            `json:"id"`
+	AccountID  int            `json:"account_id"`
+	InboxID    int            `json:"inbox_id"`
+	Status     string         `json:"status"`
+	ContactID  int            `json:"contact_id,omitempty"`
+	AssigneeID int            `json:"assignee_id,omitempty"`
+	DisplayID  int            `json:"display_id,omitempty"`
+	CustomAttr map[string]any `json:"custom_attributes,omitempty"`
 }
 
 // CWCreateConversationRequest is the request body for creating a conversation.
@@ -76,13 +85,44 @@ type CWCreateConversationRequest struct {
 	CustomAttr map[string]string `json:"custom_attributes,omitempty"`
 }
 
+// CWMessageType is a message's direction by name. Chatwoot's API answers with
+// the enum's integer (0 incoming, 1 outgoing, 2 activity, 3 template) where
+// requests and webhooks use the name; both decode to the name. A string-typed
+// field made every created message decode as an error, so each note, history
+// line and forwarded customer message was logged as failed although Chatwoot
+// had stored it, and the history watermark never advanced.
+type CWMessageType string
+
+var cwMessageTypeNames = []CWMessageType{"incoming", "outgoing", "activity", "template"}
+
+// UnmarshalJSON accepts the integer and the name. An integer this client does
+// not know is kept as its digits rather than refused: refusing it would turn
+// a stored message back into a reported failure.
+func (t *CWMessageType) UnmarshalJSON(b []byte) error {
+	var n int
+	if err := json.Unmarshal(b, &n); err == nil {
+		if n >= 0 && n < len(cwMessageTypeNames) {
+			*t = cwMessageTypeNames[n]
+		} else {
+			*t = CWMessageType(strconv.Itoa(n))
+		}
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("chatwoot message_type: %w", err)
+	}
+	*t = CWMessageType(s)
+	return nil
+}
+
 // CWMessage represents a Chatwoot message.
 type CWMessage struct {
-	ID          int    `json:"id"`
-	Content     string `json:"content"`
-	MessageType string `json:"message_type"` // "incoming" or "outgoing"
-	ContentType string `json:"content_type,omitempty"`
-	Private     bool   `json:"private"`
+	ID          int           `json:"id"`
+	Content     string        `json:"content"`
+	MessageType CWMessageType `json:"message_type"`
+	ContentType string        `json:"content_type,omitempty"`
+	Private     bool          `json:"private"`
 }
 
 // CWSendMessageRequest is the request body for sending a message.
@@ -128,19 +168,40 @@ func NewChatwootClientWithHTTP(hc *http.Client) *ChatwootClient {
 // FindOrCreateContact searches for an existing contact by identifier, or creates one.
 // Returns the contact ID.
 func (c *ChatwootClient) FindOrCreateContact(ctx context.Context, cfg ChatwootConfig, identifier, name string, customAttr map[string]string) (int, error) {
+	contact, err := c.FindOrCreateContactRecord(ctx, cfg, identifier, name, customAttr)
+	if err != nil {
+		return 0, err
+	}
+	return contact.ID, nil
+}
+
+// ContactRecord is a contact as FindOrCreateContactRecord left it: the name it
+// carries now, and whether this call created it.
+type ContactRecord struct {
+	ID         int
+	Name       string
+	Identifier string
+	Created    bool
+}
+
+// FindOrCreateContactRecord is FindOrCreateContact returning the contact's
+// current name as well, so a caller can tell a name somebody chose from the
+// identifier earlier versions wrote there. A created contact carries the name
+// it was created with.
+func (c *ChatwootClient) FindOrCreateContactRecord(ctx context.Context, cfg ChatwootConfig, identifier, name string, customAttr map[string]string) (ContactRecord, error) {
 	// Search for existing contact by identifier
 	// Escape the identifier: unescaped '&', '#', '%' or spaces would corrupt the
 	// query string and cause a mismatched search, creating a duplicate contact.
 	searchURL := fmt.Sprintf("%s/api/v1/accounts/%d/contacts/search?q=%s&include_contacts=true", cfg.BaseURL, cfg.AccountID, url.QueryEscape(identifier))
 	searchReq, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
-		return 0, fmt.Errorf("create search request: %w", err)
+		return ContactRecord{}, fmt.Errorf("create search request: %w", err)
 	}
 	c.setAuth(searchReq, cfg.APIToken)
 
 	searchResp, err := c.httpClient.Do(searchReq)
 	if err != nil {
-		return 0, fmt.Errorf("search contact: %w", err)
+		return ContactRecord{}, fmt.Errorf("search contact: %w", err)
 	}
 	defer searchResp.Body.Close()
 
@@ -150,7 +211,7 @@ func (c *ChatwootClient) FindOrCreateContact(ctx context.Context, cfg ChatwootCo
 			for _, contact := range result.Payload {
 				if contact.Identifier == identifier {
 					log.Printf("[chatwoot] found existing contact %d for identifier %s", contact.ID, identifier)
-					return contact.ID, nil
+					return ContactRecord{ID: contact.ID, Name: contact.Name, Identifier: contact.Identifier}, nil
 				}
 			}
 		}
@@ -165,11 +226,11 @@ func (c *ChatwootClient) FindOrCreateContact(ctx context.Context, cfg ChatwootCo
 	}
 	contactID, err := c.CreateContact(ctx, cfg, createReq)
 	if err != nil {
-		return 0, fmt.Errorf("create contact: %w", err)
+		return ContactRecord{}, fmt.Errorf("create contact: %w", err)
 	}
 
 	log.Printf("[chatwoot] created new contact %d for identifier %s", contactID, identifier)
-	return contactID, nil
+	return ContactRecord{ID: contactID, Name: name, Identifier: identifier, Created: true}, nil
 }
 
 // CreateContact creates a new contact in Chatwoot.
@@ -202,12 +263,23 @@ func (c *ChatwootClient) CreateContact(ctx context.Context, cfg ChatwootConfig, 
 		return 0, fmt.Errorf("create contact returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result CWContactPayload
+	var result struct {
+		Payload struct {
+			ID      int        `json:"id"`
+			Contact *CWContact `json:"contact"`
+		} `json:"payload"`
+	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return 0, fmt.Errorf("unmarshal contact response: %w", err)
 	}
-
-	return result.Payload.ID, nil
+	id := result.Payload.ID
+	if result.Payload.Contact != nil && result.Payload.Contact.ID != 0 {
+		id = result.Payload.Contact.ID
+	}
+	if id == 0 {
+		return 0, fmt.Errorf("create contact response carries no contact id: %.200s", respBody)
+	}
+	return id, nil
 }
 
 // CreateConversation creates a new conversation in Chatwoot.

@@ -1,0 +1,59 @@
+{
+  "additional_attributes": {},
+  "can_reply": true,
+  "channel": "Channel::Api",
+  "contact_inbox": {
+    "id": 41,
+    "contact_id": 17,
+    "inbox_id": 5,
+    "source_id": "6f6a1c9e-3d0b-4a57-9c1e-2b7f0d1a9e10",
+    "created_at": "2026-10-12T08:00:00.000Z",
+    "updated_at": "2026-10-12T08:00:00.000Z",
+    "hmac_verified": false,
+    "pubsub_token": "pubsub-example"
+  },
+  "id": 7,
+  "inbox_id": 5,
+  "messages": [
+    {
+      "id": 903,
+      "content": "Conversation was marked resolved by 坐席小王",
+      "account_id": 3,
+      "inbox_id": 5,
+      "conversation_id": 7,
+      "message_type": 2,
+      "created_at": 1760256120,
+      "private": false,
+      "status": "sent",
+      "content_type": "text",
+      "sender_type": null,
+      "sender_id": null
+    }
+  ],
+  "labels": [],
+  "meta": {
+    "sender": {"additional_attributes": {}, "custom_attributes": {}, "email": null, "id": 17, "identifier": null, "name": "顾客", "phone_number": null, "thumbnail": "", "type": "contact"},
+    "assignee": {"id": 2, "name": "坐席小王", "available_name": "坐席小王", "avatar_url": "", "type": "user", "availability_status": "online", "thumbnail": ""},
+    "team": null,
+    "hmac_verified": false
+  },
+  "status": "resolved",
+  "custom_attributes": {
+    "unica_conversation_id": "unica-conv-002",
+    "channel_id": "ch-wechat"
+  },
+  "snoozed_until": null,
+  "unread_count": 0,
+  "first_reply_created_at": "2026-10-12T08:01:00.000Z",
+  "priority": null,
+  "waiting_since": 0,
+  "agent_last_seen_at": 1760256100,
+  "contact_last_seen_at": 0,
+  "last_activity_at": 1760256120,
+  "timestamp": 1760256120,
+  "created_at": 1760256000,
+  "event": "conversation_status_changed",
+  "changed_attributes": [
+    {"status": {"previous_value": "open", "current_value": "resolved"}}
+  ]
+}

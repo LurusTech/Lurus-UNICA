@@ -18,7 +18,16 @@ import (
 // --- fakes ---
 
 type fakeTenants struct {
-	byID map[string]*repository.ProductLine
+	byID      map[string]*repository.ProductLine
+	config    map[string]json.RawMessage
+	configErr error
+}
+
+func (f *fakeTenants) GetConfigJSON(ctx context.Context, id string) (json.RawMessage, error) {
+	if f.configErr != nil {
+		return nil, f.configErr
+	}
+	return f.config[id], nil
 }
 
 func (f *fakeTenants) GetByID(ctx context.Context, id string) (*repository.ProductLine, error) {
@@ -63,6 +72,17 @@ type fakeChatwoot struct {
 	loginCalls int
 	loginUser  int
 	failUsers  bool
+
+	// inboxCalls records each inbox membership request; inboxStatus, when
+	// set, is the error status Chatwoot answers it with.
+	inboxCalls  []inboxCall
+	inboxStatus int
+}
+
+type inboxCall struct {
+	path, token string
+	inboxID     int
+	userIDs     []int
 }
 
 func newFakeChatwoot(t *testing.T) *fakeChatwoot {
@@ -102,6 +122,34 @@ func newFakeChatwoot(t *testing.T) *fakeChatwoot {
 		fmt.Fprintf(w, `{"url":"https://chat.test/app/login?sso_auth_token=tok-%d"}`, f.loginUser)
 	})
 
+	// The application API, authenticated by the account administrator's token.
+	// The answer has the shape a Chatwoot v3.15.0 instance gave: the inbox's
+	// full member list after the call.
+	mux.HandleFunc("/api/v1/accounts/", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/inbox_members") || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body struct {
+			InboxID int   `json:"inbox_id"`
+			UserIDs []int `json:"user_ids"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		f.inboxCalls = append(f.inboxCalls, inboxCall{
+			path: r.URL.Path, token: r.Header.Get("api_access_token"), inboxID: body.InboxID, userIDs: body.UserIDs,
+		})
+		if f.inboxStatus != 0 {
+			w.WriteHeader(f.inboxStatus)
+			w.Write([]byte(`{"error":"You are not authorized to do this action"}`))
+			return
+		}
+		members := make([]map[string]interface{}, 0, len(body.UserIDs))
+		for _, id := range body.UserIDs {
+			members = append(members, map[string]interface{}{"id": id, "account_id": 42, "role": "agent"})
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"payload": members})
+	})
+
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)
 	return f
@@ -132,9 +180,16 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	accountID := 42
-	tenants := &fakeTenants{byID: map[string]*repository.ProductLine{
-		testTenantID: {ID: testTenantID, Name: "Acme", DisplayName: "Acme Corp", ChatwootAccountID: &accountID},
-	}}
+	tenants := &fakeTenants{
+		byID: map[string]*repository.ProductLine{
+			testTenantID: {ID: testTenantID, Name: "Acme", DisplayName: "Acme Corp", ChatwootAccountID: &accountID},
+		},
+		// The block tenant onboarding writes: the UNICA inbox, and the account
+		// administrator's token that may change its members.
+		config: map[string]json.RawMessage{
+			testTenantID: json.RawMessage(`{"chatwoot":{"base_url":"http://cw","account_id":42,"inbox_id":9,"api_token":"acct-admin-token"}}`),
+		},
+	}
 	accounts := &fakeAccounts{
 		byID: map[string]*repository.User{
 			testAccountID: {ID: testAccountID, Email: "ada@acme.test", DisplayName: "Ada",
@@ -388,5 +443,72 @@ func TestSSO_UnconfiguredChatwootIsUnavailable(t *testing.T) {
 	w := get(t, fx.handler, testTenantID, userClaims(testTenantID))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 (body %s)", w.Code, w.Body.String())
+	}
+}
+
+// assertJoined checks that exactly one membership request put agent into the
+// tenant's inbox with the account administrator's token.
+func assertJoined(t *testing.T, fx *fixture, agent int) {
+	t.Helper()
+	calls := fx.chatwoot.inboxCalls
+	if len(calls) != 1 {
+		t.Fatalf("inbox membership requests = %d, want 1", len(calls))
+	}
+	c := calls[0]
+	if c.path != "/api/v1/accounts/42/inbox_members" || c.token != "acct-admin-token" || c.inboxID != 9 ||
+		len(c.userIDs) != 1 || c.userIDs[0] != agent {
+		t.Errorf("membership request = %+v, want agent %d into inbox 9 of account 42 with the administrator token", c, agent)
+	}
+}
+
+// Chatwoot shows an agent only the conversations of inboxes it belongs to, and
+// nothing ever made a provisioned agent a member: a colleague signed in to an
+// empty workbench. A new agent joins the tenant's inbox before the link.
+func TestSSO_NewAgentJoinsTheInbox(t *testing.T) {
+	fx := newFixture(t)
+
+	w := get(t, fx.handler, testTenantID, userClaims(testTenantID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	assertJoined(t, fx, 21)
+}
+
+// Agents provisioned before this existed were never added. The request is
+// additive and repeatable, so a recorded agent is added on every sign-in too.
+func TestSSO_RecordedAgentJoinsTheInbox(t *testing.T) {
+	fx := newFixture(t)
+	fx.accounts.byID[testAccountID].ChatwootUserID = intPtr(7)
+
+	w := get(t, fx.handler, testTenantID, userClaims(testTenantID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	assertJoined(t, fx, 7)
+}
+
+// Membership is repaired best-effort: refusing the sign-in would help nobody,
+// and an administrator can still add the agent by hand.
+func TestSSO_InboxJoinFailureStillSignsIn(t *testing.T) {
+	for name, setup := range map[string]func(fx *fixture){
+		"chatwoot refuses":     func(fx *fixture) { fx.chatwoot.inboxStatus = http.StatusUnauthorized },
+		"config unreadable":    func(fx *fixture) { fx.tenants.configErr = fmt.Errorf("db down") },
+		"no inbox recorded":    func(fx *fixture) { fx.tenants.config[testTenantID] = json.RawMessage(`{"chatwoot":{"account_id":42}}`) },
+		"no chatwoot block":    func(fx *fixture) { fx.tenants.config[testTenantID] = json.RawMessage(`{}`) },
+		"config not an object": func(fx *fixture) { fx.tenants.config[testTenantID] = json.RawMessage(`[]`) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fx := newFixture(t)
+			fx.accounts.byID[testAccountID].ChatwootUserID = intPtr(7)
+			setup(fx)
+
+			w := get(t, fx.handler, testTenantID, userClaims(testTenantID))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			if body := decodeBody(t, w); body["url"] == "" {
+				t.Error("no link issued")
+			}
+		})
 	}
 }

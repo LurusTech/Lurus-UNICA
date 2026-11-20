@@ -1,0 +1,40 @@
+{
+  "event": "message",
+  "task_id": "3aaeafec-0c90-48ca-97df-1a7faa7ff9a3",
+  "id": "e1629c80-d523-418c-8ea3-e1139d16eca1",
+  "message_id": "e1629c80-d523-418c-8ea3-e1139d16eca1",
+  "conversation_id": "0f858f98-bb68-4d48-bb10-738fa9bfe2da",
+  "mode": "chat",
+  "answer": "好的，退款需要人工为您核实。请提供订单号和收货照片，我已为您登记。[HANDOFF:payout]",
+  "metadata": {
+    "retriever_resources": [
+      {
+        "dataset_id": "d291a945-b37c-4d36-a249-1ad2af1cd6a6",
+        "dataset_name": "UNICA-e2e_fresh",
+        "document_id": "d724ec25-9fb4-4724-84c2-b5e0356f2ba7",
+        "document_name": "退款政策",
+        "data_source_type": "upload_file",
+        "segment_id": "79edb879-bc8c-4275-99be-8c8a3061ddc7",
+        "retriever_from": "api",
+        "score": 1.0,
+        "content": "退款政策：订单签收后如有生鲜质量问题可申请退款，需提供订单号与照片，由人工审核。",
+        "position": 1
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 10,
+      "prompt_unit_price": "0",
+      "prompt_price_unit": "0",
+      "prompt_price": "0E-7",
+      "completion_tokens": 49,
+      "completion_unit_price": "0",
+      "completion_price_unit": "0",
+      "completion_price": "0E-7",
+      "total_tokens": 59,
+      "total_price": "0E-7",
+      "currency": "USD",
+      "latency": 0.002757899000243924
+    }
+  },
+  "created_at": 1791859811
+}

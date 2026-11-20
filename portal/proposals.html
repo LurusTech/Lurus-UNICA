@@ -430,7 +430,7 @@
 
   function queryParam(name) {
     var m = new RegExp("[?&]" + name + "=([^&]*)").exec(window.location.search);
-    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+    try { return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : ""; } catch (e) { return ""; }
   }
 
   // ---------- Auth / API ----------
@@ -454,7 +454,7 @@
   function requestedTenant() {
     if (!isAdmin()) return "";
     var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
-    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+    try { return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : ""; } catch (e) { return ""; }
   }
 
   function tenantSegment() {

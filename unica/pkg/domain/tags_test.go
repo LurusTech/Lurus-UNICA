@@ -70,7 +70,7 @@ func TestScanTags_LeavesNonTagsAlone(t *testing.T) {
 		"【温馨提示：请保留小票】",
 		"[FACTORY] 出厂设置",
 		"【FACTS】",
-		"[HANDOFF_X:payout]",
+		"[HANDOFFS]",
 		"[INTENTIONAL]",
 		"请看第【3】条",
 	} {
@@ -80,6 +80,66 @@ func TestScanTags_LeavesNonTagsAlone(t *testing.T) {
 				t.Errorf("ScanTags(%q, %s) = %+v, %q; want untouched", answer, name, tags, cleaned)
 			}
 		}
+	}
+	// [HANDOFF_X:...] is not a FACT or INTENT tag; for the escalation
+	// protocol it is one (TestScanTags_HandoffNameSuffix).
+	for _, name := range []string{TagFact, TagIntent} {
+		if tags, cleaned := ScanTags("[HANDOFF_X:payout]", name); len(tags) != 0 || cleaned != "[HANDOFF_X:payout]" {
+			t.Errorf("ScanTags([HANDOFF_X:payout], %s) = %+v, %q; want untouched", name, tags, cleaned)
+		}
+	}
+}
+
+// A model improvising the escalation tag with an underscore or a digit after
+// the name still asked for a person. The pattern before the shared scanner
+// (\[HANDOFF[^\]]*\]) stripped these and escalated them as other; leaving
+// them would show the customer the markup and drop the escalation.
+func TestScanTags_HandoffNameSuffix(t *testing.T) {
+	for _, answer := range []string{
+		"好的[HANDOFF_PAYOUT]",
+		"好的【HANDOFF_REQUEST】",
+		"好的[HANDOFF_X:payout]",
+		"好的[HANDOFF1]",
+	} {
+		got := ParseEscalation(answer)
+		if !got.Requested || got.Reason != EscalateOther || got.CleanedAnswer != "好的" {
+			t.Errorf("ParseEscalation(%q) = %+v, want an other escalation and the tag stripped", answer, got)
+		}
+	}
+}
+
+// A value may carry brackets of its own, full-width ones included now that
+// they close a tag too. The span runs to the closer that balances its opener,
+// so the value is whole and nothing is left for the customer to read.
+func TestScanTags_BracketsInsideAValue(t *testing.T) {
+	tags, cleaned := ScanTags("[FACT:Phone.name=【旗舰】X1]这是旗舰", TagFact)
+	if len(tags) != 1 || tags[0].Value != "Phone.name=【旗舰】X1" {
+		t.Errorf("tags = %+v", tags)
+	}
+	if cleaned != "这是旗舰" {
+		t.Errorf("cleaned = %q", cleaned)
+	}
+	// Unbalanced on the line: the first closer ends the span, as before.
+	tags, cleaned = ScanTags("[FACT:note=[a]，后面没有了", TagFact)
+	if len(tags) != 1 || tags[0].Value != "note=[a" || cleaned != "，后面没有了" {
+		t.Errorf("tags = %+v, cleaned = %q", tags, cleaned)
+	}
+	// An inner bracket closed by the wrong kind is stray, not part of a
+	// balanced value: the tag ends at its first closer and the text after it
+	// stays visible.
+	tags, cleaned = ScanTags("[FACT:Phone.name=【旗舰 X1] 价格 3999 元】，欢迎选购", TagFact)
+	if len(tags) != 1 || tags[0].Value != "Phone.name=【旗舰 X1" || cleaned != " 价格 3999 元】，欢迎选购" {
+		t.Errorf("tags = %+v, cleaned = %q", tags, cleaned)
+	}
+	// The tag's own opener still takes any closer: 【FACT:a=[1]】.
+	tags, cleaned = ScanTags("【FACT:a=[1]】好的", TagFact)
+	if len(tags) != 1 || tags[0].Value != "a=[1]" || cleaned != "好的" {
+		t.Errorf("tags = %+v, cleaned = %q", tags, cleaned)
+	}
+	// Balancing never runs into the next line.
+	tags, cleaned = ScanTags("[FACT:a=[1]\n下一行]", TagFact)
+	if len(tags) != 1 || tags[0].Value != "a=[1" || cleaned != "\n下一行]" {
+		t.Errorf("tags = %+v, cleaned = %q", tags, cleaned)
 	}
 }
 
@@ -234,10 +294,11 @@ func TestScanTags_UnclosedTagDoesNotStripFollower(t *testing.T) {
 		t.Errorf("cleaned = %q", cleaned)
 	}
 
-	// A bracket in a value that is not a tag keeps the old behaviour.
-	tags, _ = ScanTags("[FACT:note=[a]]", TagFact)
-	if len(tags) != 1 || tags[0].Value != "note=[a" {
-		t.Errorf("tags = %+v", tags)
+	// A bracket in a value that is not a tag is part of the value, up to the
+	// closer that balances the tag's opener (TestScanTags_BracketsInsideAValue).
+	tags, cleaned = ScanTags("[FACT:note=[a]]", TagFact)
+	if len(tags) != 1 || tags[0].Value != "note=[a]" || cleaned != "" {
+		t.Errorf("tags = %+v, cleaned = %q", tags, cleaned)
 	}
 }
 

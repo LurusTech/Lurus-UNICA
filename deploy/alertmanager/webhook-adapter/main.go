@@ -72,8 +72,24 @@ func loadConfig(path string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	// config.yaml ships ${VAR} placeholders for webhook URLs and secrets; fill
+	// them from the environment before parsing.
+	if err := yaml.Unmarshal([]byte(os.ExpandEnv(string(data))), &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	// A target whose URL is empty after expansion has its variable unset:
+	// skip it rather than post every alert to an empty URL.
+	for level, targets := range cfg.Targets {
+		kept := targets[:0]
+		for _, t := range targets {
+			if t.URL == "" {
+				log.Printf("config: skipping %s target in %q: url is empty (environment variable unset?)", t.Platform, level)
+				continue
+			}
+			kept = append(kept, t)
+		}
+		cfg.Targets[level] = kept
 	}
 
 	if cfg.Server.Port == 0 {
