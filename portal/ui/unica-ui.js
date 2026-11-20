@@ -44,10 +44,18 @@
 
   function queryParam(name) {
     var m = new RegExp("[?&]" + name + "=([^&]*)").exec(window.location.search);
-    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+    try { return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : ""; } catch (e) { return ""; }
   }
 
   function auth() { return window.UnicaAuth || null; }
+
+  // Event links come from the server and end up in location.href, so only a
+  // plain relative portal page is followed: no scheme, no other host. Same
+  // rule as live.html's safeLink.
+  function portalLink(link) {
+    var s = String(link || "").replace(/^\.\//, "");
+    return /^[A-Za-z0-9_\-]+\.html(?:[?#][^\s]*)?$/.test(s) ? "./" + s : "";
+  }
 
   function claims() {
     var a = auth();
@@ -770,7 +778,8 @@
         });
         n.onclick = function () {
           window.focus();
-          if (ev.link) window.location.href = ev.link;
+          var link = portalLink(ev.link);
+          if (link) window.location.href = link;
           n.close();
         };
         return true;
@@ -989,7 +998,9 @@
   // priming list, the stream, or a poll that overlapped the stream.
   Hub.prototype.accept = function (ev, initial) {
     if (!ev || typeof ev !== "object") return;
-    var key = ev.id || "";
+    // An id names a row, and a row can change twice — a proposal approved,
+    // then published — so it is the id with its time that is seen once.
+    var key = ev.id ? ev.id + "@" + (ev.at || "") : "";
     if (key) {
       if (this.seenIds[key]) return;
       this.seenIds[key] = true;
@@ -1029,6 +1040,17 @@
   Hub.prototype.openStream = function () {
     var self = this;
     if (this.stopped || this.suspended) return;
+    // A stream still open (a renewal or a page restore racing a first read)
+    // is closed first; two would deliver everything twice and hold two of the
+    // browser's few connections to this host.
+    if (this.ctrl) { var prev = this.ctrl; this.ctrl = null; prev.abort(); }
+    if (document.hidden) {
+      // A tab nobody is looking at polls instead of holding a stream (see
+      // background below); it switches back when shown.
+      this.backgrounded = true;
+      this.startPolling();
+      return;
+    }
     if (!window.fetch || typeof window.AbortController === "undefined" || typeof window.TextDecoder === "undefined" ||
         typeof window.ReadableStream === "undefined") {
       this.startPolling();
@@ -1156,10 +1178,13 @@
       var list = data && Array.isArray(data.events) ? data.events : [];
       for (var i = 0; i < list.length; i++) self.accept(list[i], false);
       if (data && typeof data.cursor === "string" && data.cursor) self.cursor = data.cursor;
+      // A stream took over while this poll was in flight (the tab came back
+      // to the front): keep what it brought, leave the stream alone.
+      if (!self.pollingSince) return;
       self.setState("polling");
       // Catch up a backlog straight away, but within reason.
       if (data && data.has_more && round < 10) { self.poll(round + 1); return; }
-      if (Date.now() - self.pollingSince >= STREAM_RETRY_MS) {
+      if (!self.backgrounded && Date.now() - self.pollingSince >= STREAM_RETRY_MS) {
         // Give the stream one more chance; a single failure returns here.
         self.pollingSince = Date.now();
         self.failures = MAX_STREAM_FAILURES - 1;
@@ -1168,7 +1193,7 @@
       }
       self.later(function () { self.poll(0); }, POLL_MS);
     }, function (err) {
-      if (self.stopped) return;
+      if (self.stopped || !self.pollingSince) return;
       if (err && err.message === "unauthorized") { self.setState("disconnected"); return; }
       self.setState("disconnected");
       self.later(function () { self.poll(0); }, POLL_MS);
@@ -1199,7 +1224,46 @@
     for (var k in hubs) if (Object.prototype.hasOwnProperty.call(hubs, k)) hubs[k].nudge();
   }
   window.addEventListener("online", nudgeAll);
-  document.addEventListener("visibilitychange", function () { if (!document.hidden) nudgeAll(); });
+
+  // A browser opens at most six connections to one host over HTTP/1.1, and a
+  // stream holds one for as long as the page is open: with every portal page
+  // keeping its own, the seventh tab's requests queue behind them and the
+  // portal hangs. A tab hidden for a while therefore gives its stream up and
+  // polls the list every 15 seconds, and takes a stream again when shown.
+  var BACKGROUND_AFTER_MS = 30000;
+  var backgroundTimer = null;
+
+  Hub.prototype.background = function () {
+    if (this.stopped || this.suspended || this.backgrounded || this.pollingSince || !this.primed) return;
+    this.backgrounded = true;
+    this.startPolling();
+  };
+
+  Hub.prototype.foreground = function () {
+    if (this.stopped || this.suspended || !this.backgrounded) return;
+    this.backgrounded = false;
+    this.pollingSince = 0;
+    this.failures = 0;
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.openStream();
+  };
+
+  function eachHub(fn) {
+    for (var k in hubs) if (Object.prototype.hasOwnProperty.call(hubs, k)) fn(hubs[k]);
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    clearTimeout(backgroundTimer);
+    if (document.hidden) {
+      backgroundTimer = setTimeout(function () {
+        if (document.hidden) eachHub(function (hub) { hub.background(); });
+      }, BACKGROUND_AFTER_MS);
+      return;
+    }
+    eachHub(function (hub) { hub.foreground(); });
+    nudgeAll();
+  });
 
   // Leaving the page aborts every open stream at once rather than leaving it
   // to the browser: an open fetch keeps the page out of the back/forward
@@ -1348,6 +1412,25 @@
   // opts: { title, tail, pendingFilter }. pendingFilter(ev) → false keeps an
   // open event out of the pending count (the live page's "mark as read"); call
   // recount() on the returned handle when the answer for an event changes.
+  // liveReadFilter reads the marks live.html keeps — the ids marked read and
+  // the "mark all read" time — under the keys it writes them to, and returns
+  // a filter that leaves those events out.
+  function liveReadFilter(t) {
+    var me = currentUserId() || "anon";
+    var marks = {};
+    try {
+      var list = JSON.parse(window.localStorage.getItem("unica_live_read:" + me + ":" + t) || "[]");
+      if (Array.isArray(list)) list.forEach(function (id) { marks[String(id)] = true; });
+    } catch (e) { /* no marks: everything counts */ }
+    var before = Date.parse(seen.get(t + ":" + me, "live-read-before"));
+    if (!isFinite(before)) before = 0;
+    return function (ev) {
+      if (ev.id && marks[String(ev.id)]) return false;
+      var at = Date.parse(ev && ev.at);
+      return !(before && isFinite(at) && at <= before);
+    };
+  }
+
   function mountTopbar(opts) {
     if (topbarState.el) return topbarState.api;
     opts = opts || {};
@@ -1511,11 +1594,21 @@
     var renderQueued = false;
     var firstRender = true;
 
+    // The live page's inbox lets an operator mark events read; the count on
+    // every other page reads the same marks, or it would count — forever, on
+    // every page — events that can only be settled there.
+    var readFilter = t ? liveReadFilter(t) : null;
+    window.addEventListener("storage", function (e) {
+      if (!t || !e.key || (e.key.indexOf("unica_live_read:") !== 0 && e.key.indexOf("live-read-before") < 0)) return;
+      readFilter = liveReadFilter(t);
+      queueRender();
+    });
+
     function renderPending() {
       renderQueued = false;
       var total = 0;
       var urgent = 0;
-      var keep = typeof opts.pendingFilter === "function" ? opts.pendingFilter : null;
+      var keep = typeof opts.pendingFilter === "function" ? opts.pendingFilter : readFilter;
       for (var id in open) {
         if (!Object.prototype.hasOwnProperty.call(open, id)) continue;
         if (keep) {

@@ -100,6 +100,13 @@ func (h *HandoffHandler) SyncConversationHistory(ctx context.Context, conv *stat
 
 // buildChatwootMessage creates a CWSendMessageRequest from a state.Message,
 // applying sender-type-specific formatting rules.
+//
+// Everything but the customer's own words goes in as a private note. Chatwoot
+// reports every public outgoing message to its webhooks as message_created,
+// and the gateway forwards those to the customer as an agent's reply — so a
+// history line posted as a public outgoing message would be sent back to the
+// customer, timestamp and [AI] tag included, at every handoff. The agent reads
+// a note the same way; only the customer can tell the difference.
 func buildChatwootMessage(msg state.Message, content string) bridge.CWSendMessageRequest {
 	timeStr := msg.CreatedAt.Format("15:04:05")
 
@@ -113,6 +120,7 @@ func buildChatwootMessage(msg state.Message, content string) bridge.CWSendMessag
 		return bridge.CWSendMessageRequest{
 			Content:     fmt.Sprintf("[%s] [AI] %s", timeStr, content),
 			MessageType: "outgoing",
+			Private:     true,
 		}
 	case "system":
 		return bridge.CWSendMessageRequest{
@@ -125,6 +133,7 @@ func buildChatwootMessage(msg state.Message, content string) bridge.CWSendMessag
 		return bridge.CWSendMessageRequest{
 			Content:     fmt.Sprintf("[%s] %s", timeStr, content),
 			MessageType: "outgoing",
+			Private:     true,
 		}
 	}
 }

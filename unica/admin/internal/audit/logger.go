@@ -35,6 +35,11 @@ func (l *Logger) Log(entry *AuditEntry) {
 	if entry.CreatedAt.IsZero() {
 		entry.CreatedAt = time.Now()
 	}
+	// created_at is TIMESTAMP without time zone and keeps the wall clock it is
+	// given; the readers (the audit repository, the event feed) take it as
+	// UTC, which holds only while the process runs in UTC. Mounting the host's
+	// /etc/localtime into the container would otherwise shift every entry.
+	entry.CreatedAt = entry.CreatedAt.UTC()
 	select {
 	case l.entries <- entry:
 		// enqueued

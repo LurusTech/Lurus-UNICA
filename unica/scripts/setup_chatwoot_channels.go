@@ -25,6 +25,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -133,7 +134,7 @@ func main() {
 
 		// Create API Channel inbox in Chatwoot
 		inboxName := fmt.Sprintf("UNICA - %s", pl.Name)
-		inboxID, err := createAPIChannelInbox(httpClient, *chatwootURL, *chatwootToken, *chatwootAccountID, inboxName, *webhookURL)
+		inboxID, err := createAPIChannelInbox(httpClient, *chatwootURL, *chatwootToken, *chatwootAccountID, inboxName, callbackURL(*webhookURL, *webhookToken))
 		if err != nil {
 			log.Printf("  ERROR: Failed to create inbox for %s: %v", pl.Name, err)
 			continue
@@ -159,7 +160,7 @@ func main() {
 
 	// Configure account-level webhook
 	log.Println("Configuring account-level webhook...")
-	if err := configureWebhook(httpClient, *chatwootURL, *chatwootToken, *chatwootAccountID, *webhookURL, *webhookToken); err != nil {
+	if err := configureWebhook(httpClient, *chatwootURL, *chatwootToken, *chatwootAccountID, callbackURL(*webhookURL, *webhookToken), *webhookToken); err != nil {
 		log.Printf("WARNING: Failed to configure webhook: %v (you may need to configure it manually in Chatwoot)", err)
 	} else {
 		log.Println("Webhook configured successfully")
@@ -268,7 +269,31 @@ func updateProductLineConfig(ctx context.Context, db *sql.DB, plID string, exist
 	return nil
 }
 
-// configureWebhook sets up the account-level webhook in Chatwoot.
+// callbackURL is the webhook URL Chatwoot is given, carrying the gateway's
+// token. Chatwoot sends no header of its own on a webhook call, so a token the
+// gateway checks has to travel in the URL (?token=); without it every
+// callback is refused with 401.
+//
+// The token parameter is set, not appended: a URL that already carries one
+// (an earlier token, before a rotation) gets the current value, and other
+// parameters whose names end in "token" are left alone.
+func callbackURL(webhookURL, webhookToken string) string {
+	if webhookToken == "" {
+		return webhookURL
+	}
+	u, err := neturl.Parse(webhookURL)
+	if err != nil {
+		log.Fatalf("invalid -webhook-url %q: %v", webhookURL, err)
+	}
+	q := u.Query()
+	q.Set("token", webhookToken)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// configureWebhook sets up the account-level webhook in Chatwoot. Together
+// with the API inbox's own callback this delivers each event twice; the
+// gateway drops the second delivery.
 func configureWebhook(client *http.Client, baseURL, token string, accountID int, webhookURL, webhookToken string) error {
 	reqBody := map[string]interface{}{
 		"url": webhookURL,

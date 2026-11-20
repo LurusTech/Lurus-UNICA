@@ -48,9 +48,11 @@ const platformAccountMessage = "管理员账号不属于任何租户，没有对
 const unconfiguredMessage = "本服务未配置 Chatwoot 接入（CHATWOOT_BASE_URL / CHATWOOT_PLATFORM_TOKEN），无法签发免密登录链接"
 
 // tenants is the tenant record access this module needs: the record carries the
-// Chatwoot account the tenant's conversations live in.
+// Chatwoot account the tenant's conversations live in, and its config_json the
+// inbox they arrive in.
 type tenants interface {
 	GetByID(ctx context.Context, id string) (*repository.ProductLine, error)
+	GetConfigJSON(ctx context.Context, id string) (json.RawMessage, error)
 }
 
 // accounts is the portal account access this module needs: the caller's own
@@ -169,6 +171,7 @@ func (h *Handler) sso(w http.ResponseWriter, r *http.Request, tenantID string) {
 	if !ok {
 		return
 	}
+	h.joinInbox(r.Context(), pl, agentID)
 
 	url, err := h.chatwoot.LoginURL(r.Context(), agentID)
 	if err != nil {
@@ -226,6 +229,49 @@ func (h *Handler) ensureAgent(w http.ResponseWriter, r *http.Request, pl *reposi
 			"客服坐席已创建但未能写回账号，请联系管理员处理后重试")
 	}
 	return agent.ID, true
+}
+
+// inboxBlock is the part of the "chatwoot" key of product_lines.config_json
+// this module reads. Tenant onboarding writes it: the UNICA inbox, and the
+// access token of the account administrator it provisioned.
+type inboxBlock struct {
+	Chatwoot struct {
+		InboxID  int    `json:"inbox_id"`
+		APIToken string `json:"api_token"`
+	} `json:"chatwoot"`
+}
+
+// joinInbox makes the agent a member of the tenant's UNICA inbox. Chatwoot
+// shows an agent only the conversations of inboxes it belongs to, so without it
+// a colleague signs in to an empty workbench and is never auto-assigned.
+//
+// Every sign-in asks, not only the one that created the agent: agents
+// provisioned before this existed were never added, and the request is
+// additive and repeatable. A failure is logged and the link still issued — an
+// administrator can add the agent by hand, and refusing the sign-in would help
+// nobody.
+func (h *Handler) joinInbox(ctx context.Context, pl *repository.ProductLine, agentID int) {
+	raw, err := h.tenants.GetConfigJSON(ctx, pl.ID)
+	if err != nil {
+		log.Printf("[workbench] WARN: agent %d not added to the inbox of tenant %s: read config: %v", agentID, pl.ID, err)
+		return
+	}
+	var block inboxBlock
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &block); err != nil {
+			log.Printf("[workbench] WARN: agent %d not added to the inbox of tenant %s: parse config: %v", agentID, pl.ID, err)
+			return
+		}
+	}
+	if block.Chatwoot.InboxID == 0 || block.Chatwoot.APIToken == "" {
+		log.Printf("[workbench] WARN: agent %d not added to an inbox: tenant %s has no inbox or administrator token recorded; add the agent to the inbox in chatwoot",
+			agentID, pl.ID)
+		return
+	}
+	if err := h.chatwoot.AddInboxMembers(ctx, *pl.ChatwootAccountID, block.Chatwoot.APIToken, block.Chatwoot.InboxID, []int{agentID}); err != nil {
+		log.Printf("[workbench] WARN: agent %d not added to inbox %d of tenant %s; add it in chatwoot: %v",
+			agentID, block.Chatwoot.InboxID, pl.ID, err)
+	}
 }
 
 // fail writes an error response and reports the failure to the caller of

@@ -197,6 +197,35 @@ func (r *Repository) UpdateConversationState(ctx context.Context, id string, new
 	return nil
 }
 
+// CloseConversation closes a conversation only if it is still in the state
+// the caller read. Of two closers racing — an agent's resolve and the idle
+// sweep, two router replicas — exactly one changes the row and goes on to run
+// the on-close hooks (the survey); and a conversation that moved on between
+// the read and the write (closed by the sweep, reopened by the customer's next
+// message) is not closed under the AI conversation it has become. Either way
+// the loser gets ErrStateChanged and changes nothing.
+func (r *Repository) CloseConversation(ctx context.Context, id string, from ConversationState) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE conversations SET state = 'closed', updated_at = NOW(), closed_at = NOW() WHERE id = $1 AND state = $2`,
+		id, string(from))
+	if err != nil {
+		return fmt.Errorf("close conversation: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("close conversation (rows affected): %w", err)
+	}
+	if rows == 0 {
+		return ErrStateChanged
+	}
+	return nil
+}
+
+// ErrStateChanged is CloseConversation's answer to a close that changed
+// nothing: the conversation is no longer in the state the caller read (or no
+// longer exists), so there is nothing to close and no on-close hook to run.
+var ErrStateChanged = errors.New("conversation state changed since it was read")
+
 // CreateMessage inserts a new message record and returns its generated ID.
 //
 // The second return value reports whether a row was actually written. A message

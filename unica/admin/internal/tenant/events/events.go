@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kefu/unica/admin/internal/auth"
@@ -45,6 +46,12 @@ const (
 	// the list instead of holding a connection that delivers nothing.
 	maxStreamFailures = 5
 
+	// defaultMaxStreamsPerUser caps the streams one account holds open at
+	// once. Every stream reads the database each poll interval; without a cap
+	// one account (a script, or a browser with many tabs) could hold any
+	// number. A refused stream gets 429 and the portal polls the list instead.
+	defaultMaxStreamsPerUser = 8
+
 	defaultListLimit = 50
 )
 
@@ -58,12 +65,57 @@ type Handler struct {
 	// poll and heartbeat are the stream's intervals; tests shorten them.
 	poll      time.Duration
 	heartbeat time.Duration
+
+	maxStreamsPerUser int
+	mu                sync.Mutex
+	streams           map[string]int // open streams per user id
+
+	// done closes when the server starts shutting down (Close).
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // NewHandler builds the feed handler over the domain store and the product
 // line lookup used for the tenant gate.
 func NewHandler(store feedStore, pls productLineByID) *Handler {
-	return &Handler{store: store, pls: pls, poll: defaultPollInterval, heartbeat: defaultHeartbeatInterval}
+	return &Handler{
+		store: store, pls: pls,
+		poll: defaultPollInterval, heartbeat: defaultHeartbeatInterval,
+		maxStreamsPerUser: defaultMaxStreamsPerUser,
+		streams:           map[string]int{},
+		done:              make(chan struct{}),
+	}
+}
+
+// Close ends every open stream and refuses new ones. main registers it with
+// http.Server.RegisterOnShutdown: Shutdown waits for active requests without
+// cancelling their contexts, so a stream would otherwise hold it until its
+// deadline.
+func (h *Handler) Close() { h.closeOnce.Do(func() { close(h.done) }) }
+
+// acquireStream counts one more open stream for the caller and returns the
+// matching release, or false past the cap. A request without claims (a
+// package test) is not counted.
+func (h *Handler) acquireStream(r *http.Request) (func(), bool) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		return func() {}, true
+	}
+	key := claims.UserID
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.streams[key] >= h.maxStreamsPerUser {
+		return nil, false
+	}
+	h.streams[key]++
+	return func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.streams[key]--
+		if h.streams[key] <= 0 {
+			delete(h.streams, key)
+		}
+	}, true
 }
 
 type listResponse struct {
@@ -187,8 +239,29 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, plID strin
 		errorJSON(w, http.StatusBadRequest, "invalid cursor")
 		return
 	}
+	select {
+	case <-h.done:
+		errorJSON(w, http.StatusServiceUnavailable, "server is shutting down")
+		return
+	default:
+	}
+	release, ok := h.acquireStream(r)
+	if !ok {
+		errorJSON(w, http.StatusTooManyRequests, "too many open event streams for this account")
+		return
+	}
+	defer release()
 
 	rc := http.NewResponseController(w)
+	// A writer that cannot move its deadline would have the stream cut by the
+	// server's WriteTimeout; that means a wrapper in front of this handler
+	// hides the connection, and an error says so where a stream that drops
+	// every ten seconds would not.
+	if err := rc.SetWriteDeadline(time.Now().Add(streamWriteWindow)); err != nil {
+		log.Printf("[events] stream for %s: %v", plID, err)
+		errorJSON(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/event-stream")
 	hdr.Set("Cache-Control", "no-cache")
@@ -198,7 +271,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, plID strin
 	w.WriteHeader(http.StatusOK)
 
 	write := func(s string) error {
-		if err := rc.SetWriteDeadline(time.Now().Add(streamWriteWindow)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		if err := rc.SetWriteDeadline(time.Now().Add(streamWriteWindow)); err != nil {
 			return err
 		}
 		if _, err := w.Write([]byte(s)); err != nil {
@@ -206,14 +279,23 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, plID strin
 		}
 		return nil
 	}
-	flush := func() error {
-		if err := rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			return err
-		}
-		return nil
-	}
+	flush := func() error { return rc.Flush() }
 	if err := flush(); err != nil {
+		if errors.Is(err, http.ErrNotSupported) {
+			log.Printf("[events] stream for %s: %v", plID, err)
+		}
 		return
+	}
+
+	// The token was checked once, when the stream opened. A stream that
+	// outlived it would keep delivering to a session that has expired, so it
+	// ends with the token; the portal reconnects with a renewed one, or finds
+	// the session gone.
+	var expired <-chan time.Time
+	if claims := auth.GetClaims(r.Context()); claims != nil && claims.ExpiresAt != nil {
+		timer := time.NewTimer(time.Until(claims.ExpiresAt.Time))
+		defer timer.Stop()
+		expired = timer.C
 	}
 
 	ctx := r.Context()
@@ -269,6 +351,10 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, plID strin
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-h.done:
+			return
+		case <-expired:
 			return
 		case <-poll.C:
 			if !push() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -162,9 +163,31 @@ func (m *Manager) TransitionState(ctx context.Context, convID string, newState C
 		return err
 	}
 
-	// Update database
-	if err := m.repo.UpdateConversationState(ctx, convID, newState); err != nil {
-		return fmt.Errorf("update db state: %w", err)
+	// Update database. A close is conditional on the state read above (see
+	// Repository.CloseConversation); other transitions are written as before.
+	var err2 error
+	if newState == StateClosed {
+		err2 = m.repo.CloseConversation(ctx, convID, currentState)
+	} else {
+		err2 = m.repo.UpdateConversationState(ctx, convID, newState)
+	}
+	if err2 != nil {
+		if errors.Is(err2, ErrStateChanged) {
+			// The conversation moved on between the read and the write: the
+			// state read was stale. Report the refused transition from where it
+			// actually is now, and do not fire the on-close hooks.
+			if m.cache != nil {
+				if cerr := m.cache.InvalidateSession(ctx, convID); cerr != nil {
+					log.Printf("[state] warning: failed to invalidate session cache for %s: %v", convID, cerr)
+				}
+			}
+			actual, _, _, gerr := m.getConversationState(ctx, convID)
+			if gerr != nil {
+				return fmt.Errorf("close conversation %s: state changed, then unreadable: %w", convID, gerr)
+			}
+			return &ErrInvalidTransition{From: actual, To: newState}
+		}
+		return fmt.Errorf("update db state: %w", err2)
 	}
 
 	// Update cache
@@ -298,6 +321,13 @@ func (m *Manager) findOrCreateConversation(ctx context.Context, customerID, chan
 	return convID, nil
 }
 
+// CurrentState reports a conversation's state, from the session cache when it
+// holds one and from the database otherwise.
+func (m *Manager) CurrentState(ctx context.Context, convID string) (ConversationState, error) {
+	s, _, _, err := m.getConversationState(ctx, convID)
+	return s, err
+}
+
 // getConversationState retrieves the current state, product line, and agent from cache or DB.
 func (m *Manager) getConversationState(ctx context.Context, convID string) (ConversationState, string, string, error) {
 	// Try cache first
@@ -375,8 +405,10 @@ func (m *Manager) closeIdleConversations(ctx context.Context) {
 			continue
 		}
 
-		if err := m.repo.UpdateConversationState(ctx, id, StateClosed); err != nil {
-			log.Printf("[state] error closing idle conversation %s: %v", id, err)
+		if err := m.repo.CloseConversation(ctx, id, currentState); err != nil {
+			if !errors.Is(err, ErrStateChanged) {
+				log.Printf("[state] error closing idle conversation %s: %v", id, err)
+			}
 			continue
 		}
 		if m.cache != nil {

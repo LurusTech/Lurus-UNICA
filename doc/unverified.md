@@ -3,7 +3,7 @@
 已经交付、但**尚未被证据支持**的部分。单独列出来，是为了不被"测试全绿"这句话盖住。
 每条写清楚：现状是什么、要验证需要什么。修掉一条就从这里删掉。
 
-最后更新：2026-10-16（新增 J7 镜像未构建；10-13 J5 补跑 `-race`，只余磁盘满与只读目录；10-10 J5 部分销账并新增 J6；J3 改为 `judge checkup`，新增 J5 多店事实目录；10-09 新增 J1–J4；10-08：3.7.3 销账、"2026-10-08 收口"一节）
+最后更新：2026-11-20（并入验收候选后修正 J6 的 gateway 一句：该路径已同时接受字符串与整数 `message_type`，testdata 按 v3.15 源码形状整理，仍非生产抓包；10-16 新增 J7 镜像未构建；10-13 J5 补跑 `-race`，只余磁盘满与只读目录；10-10 J5 部分销账并新增 J6；J3 改为 `judge checkup`，新增 J5 多店事实目录；10-09 新增 J1–J4；10-08：3.7.3 销账、"2026-10-08 收口"一节）
 
 ---
 
@@ -288,10 +288,10 @@ CSV 要求带表头并由 `-csv-cols` 映射四列，千牛、抖店等卖家工
 **仍未验证**：磁盘满、只读目录下的行为没有测。
 **要验证需要**：在一个小容量或只读挂载的目录上起 `judge serve -evidence`，确认写失败时返回错误、证据链回滚而不是留下半行。
 
-### J6 Chatwoot webhook 顶层 `message_type` 的字符串形态按文档记忆实现，未对真实事件验过
+### J6 Chatwoot webhook 顶层 `message_type` 的字符串形态，闸门适配器仍未对生产抓包验过
 闸门适配器 10-10 改为同时接受整数与 `incoming`/`outgoing` 字符串，依据是 Chatwoot 文档与社区集成的通行写法，本仓库没有一份真实抓包。
-保留模块 `gateway/internal/webhook/chatwoot.go` 的同名字段仍是整数，若字符串形态属实，那条采集路径会把事件静默丢弃。
-**要验证需要**：接一个真实 Chatwoot 实例，抓一条 `message_created` 事件原文，对照两处解码。
+保留模块 `gateway/internal/webhook/chatwoot.go` 在验收候选里已同时接受字符串与整数（`cwMessageType`）。旁边的 testdata 是按 Chatwoot v3.15 的 `Message#webhook_data` 与 `Conversations::EventDataPresenter#push_data` 整理的形状，不是从生产实例抓下来的原文。
+**要验证需要**：接一个真实 Chatwoot 实例，抓一条 `message_created` 事件原文，对照闸门适配器与 gateway 两处解码。
 
 ### J7 `judge/Dockerfile` 未实际构建过
 10-16 新增。本机 Windows 侧没有 docker，WSL 当时无响应，镜像一次都没建过；Dockerfile 只按其他服务的写法与 `GOWORK=off` 的独立编译推出来。

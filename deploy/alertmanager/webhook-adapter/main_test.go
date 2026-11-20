@@ -341,6 +341,34 @@ func TestLoadConfig_CustomPort(t *testing.T) {
 	assert.Equal(t, 9090, cfg.Server.Port)
 }
 
+// TestLoadConfig_ExpandsEnvPlaceholders verifies that ${VAR} placeholders in
+// the shipped config.yaml are filled from the environment, and that a target
+// whose URL is still empty afterwards (variable unset) is dropped instead of
+// being posted to an empty URL.
+func TestLoadConfig_ExpandsEnvPlaceholders(t *testing.T) {
+	t.Setenv("TEST_DINGTALK_URL", "https://oapi.example.com/robot/send?access_token=abc")
+	t.Setenv("TEST_DINGTALK_SECRET", "SECxyz")
+	t.Setenv("TEST_WECOM_URL", "")
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "config.yaml")
+	content := []byte(`targets:
+  critical:
+    - platform: dingtalk
+      url: "${TEST_DINGTALK_URL}"
+      secret: "${TEST_DINGTALK_SECRET}"
+    - platform: wecom
+      url: "${TEST_WECOM_URL}"
+`)
+	require.NoError(t, os.WriteFile(tmpFile, content, 0644))
+
+	cfg, err := loadConfig(tmpFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.Targets["critical"], 1)
+	assert.Equal(t, "https://oapi.example.com/robot/send?access_token=abc", cfg.Targets["critical"][0].URL)
+	assert.Equal(t, "SECxyz", cfg.Targets["critical"][0].Secret)
+}
+
 // TestLoadConfig_Missing verifies error on missing config file.
 func TestLoadConfig_Missing(t *testing.T) {
 	_, err := loadConfig("/nonexistent/config.yaml")

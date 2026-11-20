@@ -338,7 +338,7 @@
 
   function queryParam(name) {
     var m = new RegExp("[?&]" + name + "=([^&]*)").exec(window.location.search);
-    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+    try { return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : ""; } catch (e) { return ""; }
   }
 
   function requestedTenant() { return isAdmin() ? queryParam("tenant") : ""; }

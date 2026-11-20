@@ -26,6 +26,9 @@ spec:
             - /bin/sh
             - -c
             - |
+              # Fail the job when the runner fails: a trailing echo used to report
+              # success after SuperAdmin.create! had raised.
+              set -e
               echo "Creating super admin account..."
               bundle exec rails runner "
                 email = ENV['ADMIN_EMAIL']
@@ -35,7 +38,10 @@ spec:
                 if SuperAdmin.find_by(email: email)
                   puts 'Super admin already exists. Skipping.'
                 else
-                  sup = SuperAdmin.create!(email: email, password: password, password_confirmation: password)
+                  # users.name is NOT NULL, and an unconfirmed user cannot sign in to
+                  # the super admin console where the platform app is created.
+                  sup = SuperAdmin.create!(email: email, password: password, password_confirmation: password,
+                                           name: 'UNICA Admin', confirmed_at: Time.now)
                   puts \"Super admin created: #{sup.email}\"
                 end
 

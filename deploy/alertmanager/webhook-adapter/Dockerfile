@@ -3,6 +3,11 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
+# Default is the public proxy; where it is unreachable pass e.g.
+# --build-arg GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=$GOPROXY
+
 # Copy dependency files first for layer caching
 COPY go.mod go.sum ./
 RUN go mod download

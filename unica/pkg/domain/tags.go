@@ -39,7 +39,25 @@ const (
 const (
 	tagOpeners = `\[［【`
 	tagClosers = `\]］】`
+
+	// The same sets as plain runes, for the bracket balancing in tagEnd.
+	openerRunes = "[［【"
+	closerRunes = "]］】"
 )
+
+// nameEnd is what may not directly follow a protocol name in a tag. For FACT
+// and INTENT that is any word character: [FACTORY] is text that happens to
+// start with FACT, not a malformed tag. HANDOFF is followed by "_" or a digit
+// often enough ([HANDOFF_PAYOUT], [HANDOFF_REQUEST], [HANDOFF1]) that the
+// pattern before this scanner, \[HANDOFF[^\]]*\], took them as escalations;
+// refusing them now would put the markup in front of the customer and drop
+// the escalation. Only a letter ends it ([HANDOFFS] is a word).
+func nameEnd(name string) string {
+	if name == TagHandoff {
+		return `A-Za-z`
+	}
+	return `A-Za-z0-9_`
+}
 
 // tagSpanPattern builds the pattern for one protocol's tags, of any bracket
 // width and spacing. Every protocol's pattern comes from this one template, so a
@@ -63,7 +81,7 @@ const (
 func tagSpanPattern(name string) *regexp.Regexp {
 	return regexp.MustCompile(
 		`(?i)[` + tagOpeners + `][\s\x{3000}]*` + name +
-			`(?:[^A-Za-z0-9_` + tagClosers + `][^` + tagClosers + `]*)?` +
+			`(?:[^` + nameEnd(name) + tagClosers + `][^` + tagClosers + `]*)?` +
 			`[` + tagClosers + `]`)
 }
 
@@ -85,8 +103,8 @@ var tagPatterns = map[string]*regexp.Regexp{
 // matched only a closed [a-z_]+ value and could not do that, so the shared
 // scanner must not be what introduces it.
 var nestedTagStart = regexp.MustCompile(
-	`(?i)[` + tagOpeners + `][\s\x{3000}]*(?:` + TagFact + `|` + TagIntent + `|` + TagHandoff +
-		`)(?:[^A-Za-z0-9_]|$)`)
+	`(?i)[` + tagOpeners + `][\s\x{3000}]*(?:(?:` + TagFact + `|` + TagIntent + `)(?:[^A-Za-z0-9_]|$)|` +
+		TagHandoff + `(?:[^A-Za-z]|$))`)
 
 // ProtocolTag is one tag as written, after normalisation.
 type ProtocolTag struct {
@@ -146,12 +164,67 @@ func ScanTags(answer, name string) ([]ProtocolTag, string) {
 			pos = next
 			continue
 		}
+		end = balancedEnd(answer, start, openerSize, end)
 		out.WriteString(answer[pos:start])
 		tags = append(tags, parseTagSpan(answer[start:end], name))
 		pos = end
 	}
 	out.WriteString(answer[pos:])
 	return tags, out.String()
+}
+
+// balancedEnd extends a span that stopped at its first closer to the closer
+// that balances its opener, when the body opened brackets of its own. A value
+// may carry them — "[FACT:Phone.name=【旗舰】X1]" — and, now that 】 closes a
+// tag too, stopping at the first closer would cut the value to "【旗舰" and
+// leave "X1]" in front of the customer. The extension stays on the line and
+// never swallows the start of another tag; when the brackets do not balance
+// there, the span keeps its first closer, as before.
+//
+// Brackets inside the value pair by kind (square with square, lenticular with
+// lenticular); only the tag's own opener accepts any closer, as the tag does.
+// An inner bracket closed by the wrong kind is not a balanced value but a
+// stray one, and following it would swallow visible text: in
+// "[FACT:x=【旗舰 X1] 价格 3999 元】，欢迎选购" the tag ends at the "]".
+func balancedEnd(s string, start, openerSize, end int) int {
+	var inner []rune // kinds of the inner brackets still open
+	first := true
+	for i, r := range s[start:] {
+		switch {
+		case r == '\n':
+			return end
+		case strings.ContainsRune(openerRunes, r):
+			if first {
+				first = false
+				continue
+			}
+			inner = append(inner, bracketKind(r))
+		case strings.ContainsRune(closerRunes, r):
+			if len(inner) > 0 {
+				if inner[len(inner)-1] != bracketKind(r) {
+					return end
+				}
+				inner = inner[:len(inner)-1]
+				continue
+			}
+			e := start + i + utf8.RuneLen(r)
+			if e > end && nestedTagStart.MatchString(s[start+openerSize:e]) {
+				return end
+			}
+			return e
+		}
+	}
+	return end
+}
+
+// bracketKind folds a bracket to its kind: square ([ ] ［ ］) or lenticular
+// (【 】), the same for an opener and its closer.
+func bracketKind(r rune) rune {
+	switch r {
+	case '【', '】':
+		return '【'
+	}
+	return '['
 }
 
 // parseTagSpan splits a matched span into its separator and value. The span is

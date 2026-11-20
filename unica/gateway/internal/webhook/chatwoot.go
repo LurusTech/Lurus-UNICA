@@ -6,11 +6,13 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,9 +24,9 @@ import (
 )
 
 const (
-	// Redis key prefixes for Chatwoot conversation mapping.
-	cwConvKeyPrefix   = "cw_conv:"       // cw_conv:{chatwoot_conv_id} -> unica_conv_id
-	unicaConvCWPrefix = "unica_conv_cw:" // unica_conv_cw:{unica_conv_id} -> chatwoot_conv_id
+	// The router still keeps cw_conv:/unica_conv_cw: mappings for its own use;
+	// this handler identifies conversations by their attributes instead (see
+	// unicaConversation).
 
 	// OutboundStream is the Redis Stream key for outbound messages.
 	outboundStream = "unica:outbound"
@@ -42,6 +44,14 @@ const (
 	// mirrored in router/internal/handoff (EventConversationResolved); the two
 	// modules share no package for it, so a test on each side pins the string.
 	conversationClosedType = "event.conversation_closed"
+
+	// seenKeyPrefix marks a Chatwoot event already handled. Chatwoot delivers
+	// every event once per configured webhook — the account webhook and the
+	// API inbox's own callback both fire (WebhookListener#deliver_webhook_payloads)
+	// — so a deployment with both pointed here would otherwise send each agent
+	// reply to the customer twice.
+	seenKeyPrefix = "cw_seen:"
+	seenTTL       = 24 * time.Hour
 )
 
 // ChatwootWebhookConfig holds configuration for the Chatwoot webhook handler.
@@ -122,33 +132,100 @@ func (s sqlReplyRecorder) RecordAgentReply(ctx context.Context, reply agentReply
 	return nil
 }
 
-// cwWebhookPayload represents the top-level Chatwoot webhook event payload.
+// cwWebhookPayload is a Chatwoot webhook body. The two events read here have
+// different shapes (Chatwoot v3.15, app/listeners/webhook_listener.rb):
+//
+//   - message_created is Message#webhook_data: the message's own fields at the
+//     top level, the conversation nested under "conversation";
+//   - conversation_status_changed is Conversation#webhook_data itself, so the
+//     conversation's id, status and custom attributes are top-level fields.
+//
+// In both, a conversation's "id" is its display id, which each Chatwoot
+// account numbers from 1.
 type cwWebhookPayload struct {
 	Event string `json:"event"`
 
-	// Fields for message_created events
-	ID          int    `json:"id,omitempty"`
-	Content     string `json:"content,omitempty"`
-	MessageType int    `json:"message_type,omitempty"` // 0=incoming, 1=outgoing, 2=activity
-	Private     bool   `json:"private,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
-	Account     struct {
+	// message_created: ID is the message id, unique across accounts; Account
+	// is the Chatwoot account the message was written in.
+	ID      int `json:"id,omitempty"`
+	Account struct {
 		ID int `json:"id"`
 	} `json:"account,omitempty"`
-	Conversation struct {
-		ID         int               `json:"id"`
-		Status     string            `json:"status,omitempty"`
-		DisplayID  int               `json:"display_id,omitempty"`
-		CustomAttr map[string]string `json:"custom_attributes,omitempty"`
-	} `json:"conversation,omitempty"`
-	Sender struct {
+	Content      string         `json:"content,omitempty"`
+	MessageType  cwMessageType  `json:"message_type,omitempty"`
+	Private      bool           `json:"private,omitempty"`
+	ContentType  string         `json:"content_type,omitempty"`
+	Conversation cwConversation `json:"conversation,omitempty"`
+	Sender       struct {
 		ID   int    `json:"id"`
 		Name string `json:"name,omitempty"`
 		Type string `json:"type,omitempty"` // "user" for agent, "contact" for customer
 	} `json:"sender,omitempty"`
 
-	// Fields for conversation_status_changed events
-	// Re-uses Conversation field above
+	// conversation_status_changed: ID above is the conversation's display id.
+	// Timestamp is its last activity, the same in every delivery of one event.
+	Status           string  `json:"status,omitempty"`
+	CustomAttributes cwAttrs `json:"custom_attributes,omitempty"`
+	Timestamp        int64   `json:"timestamp,omitempty"`
+}
+
+// cwConversation is the conversation nested in a message event.
+type cwConversation struct {
+	ID         int     `json:"id"`
+	Status     string  `json:"status,omitempty"`
+	CustomAttr cwAttrs `json:"custom_attributes,omitempty"`
+}
+
+// cwMessageType is Chatwoot's message_type. Webhooks carry the enum name
+// ("incoming", "outgoing", "activity", "template": Message#webhook_data passes
+// the Rails enum through), while the REST API's own responses carry the
+// number. Both are read, so neither shape fails the whole payload — a strict
+// int used to reject every real message_created with 400.
+type cwMessageType int
+
+const (
+	cwIncoming cwMessageType = 0
+	cwOutgoing cwMessageType = 1
+)
+
+var cwMessageTypeNames = map[string]cwMessageType{
+	"incoming": cwIncoming, "outgoing": cwOutgoing, "activity": 2, "template": 3,
+}
+
+func (m *cwMessageType) UnmarshalJSON(b []byte) error {
+	var name string
+	if err := json.Unmarshal(b, &name); err == nil {
+		v, ok := cwMessageTypeNames[strings.ToLower(strings.TrimSpace(name))]
+		if !ok {
+			v = -1
+		}
+		*m = v
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return fmt.Errorf("message_type: %w", err)
+	}
+	*m = cwMessageType(n)
+	return nil
+}
+
+// cwAttrs is a custom_attributes object. Its values are whatever an operator
+// or an integration stored — strings, numbers, booleans — so it is decoded
+// loosely; a map of strings would reject a payload over one numeric value.
+type cwAttrs map[string]any
+
+// str reads one attribute as a string, "" when absent or not a scalar.
+func (a cwAttrs) str(key string) string {
+	switch v := a[key].(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	}
+	return ""
 }
 
 // ServeHTTP handles incoming Chatwoot webhook HTTP requests.
@@ -158,8 +235,15 @@ func (h *ChatwootWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify webhook token
+	// Verify webhook token. Chatwoot sends no header of its own on a webhook
+	// call (lib/webhooks/trigger.rb posts with content type and accept only),
+	// so the token normally travels in the callback URL Chatwoot is given:
+	// .../api/v1/webhook/chatwoot?token=<CHATWOOT_WEBHOOK_TOKEN>. The header is
+	// still read for a proxy or a sender that sets it.
 	token := r.Header.Get("X-Chatwoot-Webhook-Token")
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
 	if h.config.WebhookToken != "" &&
 		subtle.ConstantTimeCompare([]byte(token), []byte(h.config.WebhookToken)) != 1 {
 		log.Printf("[chatwoot-webhook] invalid webhook token received")
@@ -216,8 +300,8 @@ func (h *ChatwootWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 // handleMessageCreated processes a message_created webhook event.
 // Only outgoing (agent) messages that are not private are forwarded.
 func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, payload *cwWebhookPayload) error {
-	// Filter: only process outgoing messages (message_type=1) from agents
-	if payload.MessageType != 1 {
+	// Filter: only process outgoing messages from agents
+	if payload.MessageType != cwOutgoing {
 		log.Printf("[chatwoot-webhook] skipping non-outgoing message (type=%d)", payload.MessageType)
 		return nil
 	}
@@ -234,15 +318,24 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 		return nil
 	}
 
-	// Look up UNICA conversation from Chatwoot conversation ID
-	cwConvIDStr := strconv.Itoa(payload.Conversation.ID)
-	unicaConvID, err := h.rdb.Get(ctx, cwConvKeyPrefix+cwConvIDStr).Result()
+	unicaConvID, err := h.unicaConversation(payload.Conversation.ID, payload.Conversation.CustomAttr)
 	if err != nil {
-		return fmt.Errorf("lookup unica conversation for cw conv %d: %w", payload.Conversation.ID, err)
+		return err
 	}
 
 	if payload.Content == "" {
 		log.Printf("[chatwoot-webhook] skipping empty content message %d", payload.ID)
+		return nil
+	}
+
+	recipient, err := h.recipientOf(ctx, unicaConvID, payload.Conversation.CustomAttr, payload.Account.ID)
+	if err != nil {
+		return err
+	}
+
+	seenKey := seenKeyPrefix + "msg:" + strconv.Itoa(payload.ID)
+	if !h.firstDelivery(ctx, seenKey) {
+		log.Printf("[chatwoot-webhook] message %d already forwarded, duplicate delivery skipped", payload.ID)
 		return nil
 	}
 
@@ -264,12 +357,8 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 		},
 	}
 
-	// Try to enrich with channel/customer info from custom_attributes
-	if payload.Conversation.CustomAttr != nil {
-		if chID, ok := payload.Conversation.CustomAttr["channel_id"]; ok {
-			outMsg.Data.ChannelID = chID
-		}
-	}
+	outMsg.Data.ChannelID = recipient.channelID
+	outMsg.Data.PlatformMeta.PlatformUserID = recipient.platformUserID
 
 	// Publish to unica:outbound stream
 	outJSON, err := json.Marshal(outMsg)
@@ -287,6 +376,9 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 		},
 	}).Result()
 	if err != nil {
+		// Not sent, so a second delivery of the same message may try again.
+		// The request may already be cancelled; the unmark must not be.
+		h.rdb.Del(context.WithoutCancel(ctx), seenKey)
 		return fmt.Errorf("publish to outbound stream: %w", err)
 	}
 
@@ -316,9 +408,9 @@ func (h *ChatwootWebhookHandler) handleMessageCreated(ctx context.Context, paylo
 // has been forwarded and never fails the webhook: this is observation, and a
 // customer's reply must not wait on it.
 //
-// Replies arriving after the Chatwoot-to-UNICA mapping has expired (72h) never
-// get here — the lookup above fails, is logged, and the reply is dropped, as
-// it always has been.
+// A reply that cannot be attributed to a UNICA conversation (no
+// unica_conversation_id on the Chatwoot conversation) never gets here: the
+// lookup fails, is logged, and the reply is dropped.
 func (h *ChatwootWebhookHandler) captureAgentReply(ctx context.Context, outMsg model.StandardMessage) {
 	if h.replies == nil || h.capture == nil || !h.capture.On(ctx) {
 		return
@@ -345,17 +437,24 @@ func (h *ChatwootWebhookHandler) captureAgentReply(ctx context.Context, outMsg m
 // timestamp) because that consumer decodes every entry into one struct; the
 // type is what tells it this is a close, not a handoff.
 func (h *ChatwootWebhookHandler) handleConversationStatusChanged(ctx context.Context, payload *cwWebhookPayload) error {
-	status := payload.Conversation.Status
+	// The conversation is the payload itself: its display id is ID.
+	cwConvID, status := payload.ID, payload.Status
 	if status != "resolved" {
-		log.Printf("[chatwoot-webhook] ignoring conversation status change to %s (conv=%d)", status, payload.Conversation.ID)
+		log.Printf("[chatwoot-webhook] ignoring conversation status change to %s (conv=%d)", status, cwConvID)
 		return nil
 	}
 
-	// Look up UNICA conversation
-	cwConvIDStr := strconv.Itoa(payload.Conversation.ID)
-	unicaConvID, err := h.rdb.Get(ctx, cwConvKeyPrefix+cwConvIDStr).Result()
+	unicaConvID, err := h.unicaConversation(cwConvID, payload.CustomAttributes)
 	if err != nil {
-		return fmt.Errorf("lookup unica conversation for resolved cw conv %d: %w", payload.Conversation.ID, err)
+		return err
+	}
+	seenKey := ""
+	if payload.Timestamp != 0 {
+		seenKey = fmt.Sprintf("%sresolved:%s:%d", seenKeyPrefix, unicaConvID, payload.Timestamp)
+		if !h.firstDelivery(ctx, seenKey) {
+			log.Printf("[chatwoot-webhook] resolve of cw conv %d already published, duplicate delivery skipped", cwConvID)
+			return nil
+		}
 	}
 
 	closeEvent := resolvedEvent{
@@ -379,13 +478,102 @@ func (h *ChatwootWebhookHandler) handleConversationStatusChanged(ctx context.Con
 		},
 	}).Result()
 	if err != nil {
+		if seenKey != "" {
+			h.rdb.Del(context.WithoutCancel(ctx), seenKey)
+		}
 		return fmt.Errorf("publish close event: %w", err)
 	}
 
 	log.Printf("[chatwoot-webhook] conversation resolved event published to %s (cw_conv=%d, unica_conv=%s)",
-		handoffStream, payload.Conversation.ID, unicaConvID)
+		handoffStream, cwConvID, unicaConvID)
 
 	return nil
+}
+
+// unicaConversation finds the UNICA conversation a Chatwoot conversation
+// mirrors. UNICA has written its own id into the custom attributes of every
+// conversation it creates (router/internal/handoff and
+// routing/chatwoot_forwarder, since the first version), and every webhook
+// carries them back.
+//
+// There is deliberately no fallback to the cw_conv mapping. It is keyed by the
+// display id alone, which every Chatwoot account numbers from 1, so with one
+// account per tenant it names some other tenant's conversation 7 as readily as
+// this one; and the conversations that reach it — no attribute — are exactly
+// the ones UNICA did not create (a website widget, an e-mail inbox, an
+// attribute an agent deleted). Following it could send an agent's words to
+// another tenant's customer.
+func (h *ChatwootWebhookHandler) unicaConversation(cwConvID int, attrs cwAttrs) (string, error) {
+	if id := attrs.str("unica_conversation_id"); id != "" {
+		return id, nil
+	}
+	return "", fmt.Errorf("chatwoot conversation %d carries no unica_conversation_id: not a UNICA conversation", cwConvID)
+}
+
+// replyRecipient is where an agent's reply goes: the channel picks the
+// adapter, the platform user id is who it is addressed to.
+type replyRecipient struct {
+	channelID      string
+	platformUserID string
+}
+
+// recipientOf finds who an agent's reply is addressed to, and refuses one it
+// cannot address. Without a platform user id no adapter can send — each
+// refuses an outbound message that lacks one — so such a reply is reported
+// here rather than published to fail three times and land in the dead-letter
+// stream.
+//
+// With a database the conversation's own rows decide: custom attributes are
+// editable by anyone who can edit the Chatwoot conversation, and the database
+// also tells which Chatwoot account the conversation's product line uses, so
+// a reply written in one account cannot be sent to another tenant's customer.
+// Without one (or when the lookup fails) the attributes UNICA wrote onto the
+// conversation are used; a conversation handed over before platform_user_id
+// was written there cannot be answered that way.
+func (h *ChatwootWebhookHandler) recipientOf(ctx context.Context, unicaConvID string, attrs cwAttrs, accountID int) (replyRecipient, error) {
+	if h.db != nil {
+		if _, err := uuid.Parse(unicaConvID); err != nil {
+			return replyRecipient{}, fmt.Errorf("agent reply names conversation %q, which is not a UNICA conversation id", unicaConvID)
+		}
+		var r replyRecipient
+		var plAccount sql.NullInt64
+		err := h.db.QueryRowContext(ctx,
+			`SELECT cu.platform_identity, cv.channel_id::text, pl.chatwoot_account_id
+			   FROM conversations cv
+			   JOIN customers cu ON cu.id = cv.customer_id
+			   LEFT JOIN product_lines pl ON pl.id = cv.product_line_id
+			  WHERE cv.id = $1`, unicaConvID).Scan(&r.platformUserID, &r.channelID, &plAccount)
+		switch {
+		case err == nil:
+			if accountID != 0 && plAccount.Valid && int(plAccount.Int64) != accountID {
+				return replyRecipient{}, fmt.Errorf("agent reply from chatwoot account %d names conversation %s of account %d: refused",
+					accountID, unicaConvID, plAccount.Int64)
+			}
+			return r, nil
+		case errors.Is(err, sql.ErrNoRows):
+			return replyRecipient{}, fmt.Errorf("agent reply names conversation %s, which does not exist", unicaConvID)
+		default:
+			log.Printf("[chatwoot-webhook] warning: recipient lookup for %s failed, using the conversation's attributes: %v", unicaConvID, err)
+		}
+	}
+	r := replyRecipient{channelID: attrs.str("channel_id"), platformUserID: attrs.str("platform_user_id")}
+	if r.platformUserID == "" || r.channelID == "" {
+		return r, fmt.Errorf("agent reply for conversation %s cannot be addressed (channel_id=%q, platform_user_id set=%t)",
+			unicaConvID, r.channelID, r.platformUserID != "")
+	}
+	return r, nil
+}
+
+// firstDelivery reports whether key is seen for the first time, marking it.
+// A Redis failure answers true: a reply sent twice is a nuisance, a reply
+// never sent is a customer left waiting.
+func (h *ChatwootWebhookHandler) firstDelivery(ctx context.Context, key string) bool {
+	first, err := h.rdb.SetNX(ctx, key, 1, seenTTL).Result()
+	if err != nil {
+		log.Printf("[chatwoot-webhook] warning: duplicate check for %s failed: %v", key, err)
+		return true
+	}
+	return first
 }
 
 // resolvedEvent is the close request as the router's handoff consumer decodes
