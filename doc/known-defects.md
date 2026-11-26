@@ -54,6 +54,13 @@
 > 见 `state/manager.go` 的 `fireOnClose` 与 `GetConversationByCustomer` 注释）。
 > 剩下的是下面这一条，它不影响客户，只影响统计口径。
 
+> **2026-10-12 更正**：上面"实机验收"与代码不符。调研消息与感谢语一直不带客户的平台用户 ID
+> （`router.go` 关闭回调只填了会话、渠道、产品线、客户 UUID；感谢语连 `PlatformMeta` 都没有），
+> 五个渠道适配器对缺平台用户 ID 的出站一律拒发，**调研从未送到过客户**，全部进了死信。
+> 已修：关闭回调按客户 UUID 查出平台用户 ID 再发（查不到照发，由网关进死信可追查）；
+> 待答记录存下平台用户 ID 与产品线，感谢语据此寻址（旧记录回落到库里查）；
+> 评分另认全角数字与尾随"分/星"（「５」「5分」）。
+
 调研发出时写 `survey_status='sent'` 与一个带 TTL 的 Redis 待答记录。
 客户回复则翻成 `completed`；**不回复的那些，Redis 键静默过期，数据库里的 `sent` 永远留着**。
 全仓库没有任何地方写入 `no_response`（只在迁移注释 `005_survey.sql:6` 出现过），
@@ -281,6 +288,8 @@ AJYJ 与 XDYX 有，上传正常。而 `POST .../ai-settings/dataset/bind` 只�
 ---
 
 ## D9 没有嵌入模型时，知识库静默降级为一个查不准的关键词库
+
+> **2026-10-12 补记（本地 Dify 0.15.3 实测）**：economy 下即使关键词检索**命中**，Dify 返回的段落分值也恒为 0.0（`unica/router/internal/bridge/testdata/dify_v0_15_3_chat_blocking_keyword.json`）。router 的置信度取检索分值的平均（`judge.RetrievalConfidence`），默认阈值 0.7，阈值设为 0 视为未设置、回落到 0.7，所以 economy 下**每个回答都按 `low_confidence` 转人工，AI 不会自动答复任何客户**——比下文的"查不准"更彻底，而且同样不报错。置信度规则属判定口径，未改；须配嵌入模型并用 high_quality。
 
 **2026-08-25 现状更新**（缺陷未解，但两种失败模式要分清）：当前部署的嵌入模型
 （本地中文向量模型）已可用，`DIFY_INDEXING_TECHNIQUE=high_quality`，

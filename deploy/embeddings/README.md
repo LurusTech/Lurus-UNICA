@@ -101,7 +101,7 @@ EMBEDDING_PORT=8199 python server.py
    `embedding_model_provider=openai_api_compatible`，
    检索方式改 `semantic_search`
 2. 删除并重新上传该知识库的全部文档（走 UNICA 的
-   `POST /api/v1/ai-config/{id}/knowledge/documents`，让平台当前的分段
+   `POST /api/v1/tenants/{id}/knowledge/documents`，让平台当前的分段
    与索引设置生效）
 3. 确认 `indexing_status` 全部 `completed`
 

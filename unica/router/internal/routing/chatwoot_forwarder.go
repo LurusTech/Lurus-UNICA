@@ -14,13 +14,14 @@ import (
 	"github.com/kefu/unica/pkg/model"
 	"github.com/kefu/unica/router/internal/bridge"
 	"github.com/kefu/unica/router/internal/metrics"
+	"github.com/kefu/unica/router/internal/state"
 )
 
 const (
 	// Redis key prefixes for Chatwoot conversation mapping.
-	cwConvKeyPrefix    = "cw_conv:"       // cw_conv:{chatwoot_conv_id} -> unica_conv_id
-	unicaConvCWPrefix  = "unica_conv_cw:" // unica_conv_cw:{unica_conv_id} -> chatwoot_conv_id
-	cwConvMappingTTL   = 72 * time.Hour   // TTL for conversation mapping keys
+	cwConvKeyPrefix   = "cw_conv:"       // cw_conv:{chatwoot_conv_id} -> unica_conv_id
+	unicaConvCWPrefix = "unica_conv_cw:" // unica_conv_cw:{unica_conv_id} -> chatwoot_conv_id
+	cwConvMappingTTL  = 72 * time.Hour   // TTL for conversation mapping keys
 )
 
 // ChatwootForwarder pushes customer messages to Chatwoot when a conversation
@@ -57,28 +58,22 @@ func (f *ChatwootForwarder) ForwardToChatwoot(ctx context.Context, msg *model.St
 		return fmt.Errorf("load chatwoot config: %w", err)
 	}
 
-	// Find or create contact in Chatwoot
-	identifier := msg.Data.PlatformMeta.PlatformUserID
-	if identifier == "" {
-		identifier = msg.Data.CustomerID
-	}
-	contactName := identifier // Default name to identifier
-	customAttr := map[string]string{
-		"channel_id":      msg.Data.ChannelID,
-		"platform_source": msg.Source,
-	}
-
-	contactID, err := f.cwClient.FindOrCreateContact(ctx, *cwConfig, identifier, contactName, customAttr)
-	if err != nil {
-		metrics.ChatwootPushErrorsTotal.WithLabelValues("contact_create").Inc()
-		return fmt.Errorf("find/create chatwoot contact: %w", err)
-	}
-
-	// Find existing or create new Chatwoot conversation
-	cwConvID, err := f.findOrCreateCWConversation(ctx, cwConfig, convID, contactID)
-	if err != nil {
-		metrics.ChatwootPushErrorsTotal.WithLabelValues("conversation_create").Inc()
-		return fmt.Errorf("find/create chatwoot conversation: %w", err)
+	// A mapped conversation already has its contact: the handoff, or the
+	// message that made the mapping, settled it. Looking one up for every
+	// message — keyed by the OpenID while the handoff keyed it by the customer
+	// UUID — is what gave each customer two contacts.
+	cwConvID, mapped := f.mappedConversation(ctx, convID)
+	if !mapped {
+		contactID, err := f.ensureContact(ctx, cwConfig, msg, convID)
+		if err != nil {
+			metrics.ChatwootPushErrorsTotal.WithLabelValues("contact_create").Inc()
+			return fmt.Errorf("find/create chatwoot contact: %w", err)
+		}
+		cwConvID, err = f.createCWConversation(ctx, cwConfig, convID, contactID, msg.Data.ChannelID, msg.Data.PlatformMeta.PlatformUserID)
+		if err != nil {
+			metrics.ChatwootPushErrorsTotal.WithLabelValues("conversation_create").Inc()
+			return fmt.Errorf("find/create chatwoot conversation: %w", err)
+		}
 	}
 
 	// Build message content
@@ -123,34 +118,79 @@ func (f *ChatwootForwarder) ForwardToChatwoot(ctx context.Context, msg *model.St
 	return nil
 }
 
-// findOrCreateCWConversation checks Redis for an existing mapping, or creates a new Chatwoot conversation.
-func (f *ChatwootForwarder) findOrCreateCWConversation(ctx context.Context, cwConfig *bridge.ChatwootConfig, unicaConvID string, contactID int) (int, error) {
-	// Check Redis for existing mapping
-	key := unicaConvCWPrefix + unicaConvID
-	cwConvIDStr, err := f.rdb.Get(ctx, key).Result()
-	if err == nil && cwConvIDStr != "" {
-		cwConvID, err := strconv.Atoi(cwConvIDStr)
-		if err == nil {
-			return cwConvID, nil
-		}
+// mappedConversation reports the Chatwoot conversation a UNICA conversation is
+// mapped to, if any.
+func (f *ChatwootForwarder) mappedConversation(ctx context.Context, unicaConvID string) (int, bool) {
+	cwConvIDStr, err := f.rdb.Get(ctx, unicaConvCWPrefix+unicaConvID).Result()
+	if err != nil || cwConvIDStr == "" {
+		return 0, false
 	}
+	cwConvID, err := strconv.Atoi(cwConvIDStr)
+	if err != nil {
+		return 0, false
+	}
+	return cwConvID, true
+}
 
-	// Create new conversation in Chatwoot
+// ensureContact finds or creates the customer's contact, keyed by the UNICA
+// customer UUID exactly as the handoff keys it, so one customer is one contact
+// whichever path reached Chatwoot first, and named the same way.
+func (f *ChatwootForwarder) ensureContact(ctx context.Context, cwConfig *bridge.ChatwootConfig, msg *model.StandardMessage, convID string) (int, error) {
+	name := bridge.ContactName(state.ChannelName(ctx, f.db, msg.Data.ChannelID), msg.Data.PlatformMeta.PlatformUserID)
+	return f.cwClient.FindOrCreateContact(ctx, *cwConfig, f.customerID(ctx, convID, msg), name, map[string]string{
+		"channel_id":      msg.Data.ChannelID,
+		"platform_source": msg.Source,
+	})
+}
+
+// customerID is the conversation's UNICA customer. An inbound message arrives
+// without it — the gateway knows only the platform user id — so it is read
+// from the conversation. Without a database the message's own field stands in,
+// and failing that the platform user id, so a contact is still made.
+func (f *ChatwootForwarder) customerID(ctx context.Context, convID string, msg *model.StandardMessage) string {
+	if f.db != nil {
+		var id string
+		err := f.db.QueryRowContext(ctx, `SELECT customer_id FROM conversations WHERE id = $1`, convID).Scan(&id)
+		if err == nil && id != "" {
+			return id
+		}
+		log.Printf("[chatwoot-forwarder] warning: no customer for conversation %s: %v", convID, err)
+	}
+	if msg.Data.CustomerID != "" {
+		return msg.Data.CustomerID
+	}
+	return msg.Data.PlatformMeta.PlatformUserID
+}
+
+// createCWConversation creates the Chatwoot conversation for an unmapped UNICA
+// conversation and records the mapping both ways.
+//
+// The conversation carries what the gateway needs to send an agent's reply
+// back: channel_id picks the adapter, platform_user_id is the recipient. A
+// conversation created here without them could be answered in Chatwoot and
+// never reach the customer.
+func (f *ChatwootForwarder) createCWConversation(ctx context.Context, cwConfig *bridge.ChatwootConfig, unicaConvID string, contactID int, channelID, platformUserID string) (int, error) {
+	key := unicaConvCWPrefix + unicaConvID
+	attrs := map[string]string{"unica_conversation_id": unicaConvID}
+	if channelID != "" {
+		attrs["channel_id"] = channelID
+	}
+	if platformUserID != "" {
+		attrs["platform_user_id"] = platformUserID
+	}
 	conv, err := f.cwClient.CreateConversation(ctx, *cwConfig, bridge.CWCreateConversationRequest{
-		SourceID:  unicaConvID,
-		InboxID:   cwConfig.InboxID,
-		ContactID: contactID,
-		Status:    "open",
-		CustomAttr: map[string]string{
-			"unica_conversation_id": unicaConvID,
-		},
+		SourceID:   unicaConvID,
+		InboxID:    cwConfig.InboxID,
+		ContactID:  contactID,
+		Status:     "open",
+		CustomAttr: attrs,
 	})
 	if err != nil {
 		return 0, err
 	}
 
 	// Store bidirectional mapping in Redis
-	cwConvIDStr = strconv.Itoa(conv.ID)
+	cwConvIDStr := strconv.Itoa(conv.ID)
 	pipe := f.rdb.Pipeline()
 	pipe.Set(ctx, key, cwConvIDStr, cwConvMappingTTL)
 	pipe.Set(ctx, cwConvKeyPrefix+cwConvIDStr, unicaConvID, cwConvMappingTTL)

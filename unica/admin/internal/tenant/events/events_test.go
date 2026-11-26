@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/kefu/unica/admin/internal/auth"
 	"github.com/kefu/unica/admin/internal/rbac"
 	"github.com/kefu/unica/admin/internal/repository"
@@ -252,9 +253,19 @@ type sseClient struct {
 // the handler returns.
 func openStream(t *testing.T, h *Handler, query string, header http.Header) (*sseClient, <-chan struct{}) {
 	t.Helper()
+	return openStreamAs(t, h, nil, query, header)
+}
+
+// openStreamAs is openStream for a signed-in caller: the claims go on the
+// request context the way the auth middleware puts them there.
+func openStreamAs(t *testing.T, h *Handler, claims *auth.Claims, query string, header http.Header) (*sseClient, <-chan struct{}) {
+	t.Helper()
 	done := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
+		if claims != nil {
+			r = r.WithContext(context.WithValue(r.Context(), auth.ClaimsKey, claims))
+		}
 		h.Handle(w, r)
 	}))
 	t.Cleanup(srv.Close)
@@ -480,5 +491,86 @@ func TestStream_OutlivesServerTimeouts(t *testing.T) {
 	feed.add(linePL, ev(2))
 	if e, _ := c.nextEvent(t); e.ID != "handoff:2" {
 		t.Errorf("event after the timeouts = %s, want handoff:2", e.ID)
+	}
+}
+
+func lineUser(id string, expires time.Time) *auth.Claims {
+	c := &auth.Claims{UserID: id, Role: rbac.RoleUser, TenantID: linePL}
+	c.ExpiresAt = jwt.NewNumericDate(expires)
+	return c
+}
+
+func waitDone(t *testing.T, done <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("handler still running 2s after %s", what)
+	}
+}
+
+// A stream must not outlive the token it was opened with.
+func TestStream_EndsWhenTokenExpires(t *testing.T) {
+	h, _ := newFixture(1)
+	c, done := openStreamAs(t, h, lineUser("u1", time.Now().Add(150*time.Millisecond)), "", nil)
+	if c.resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", c.resp.StatusCode)
+	}
+	c.nextEvent(t)
+	waitDone(t, done, "the token expired")
+}
+
+func TestStream_CapPerUser(t *testing.T) {
+	h, _ := newFixture(0)
+	h.maxStreamsPerUser = 2
+	later := time.Now().Add(time.Hour)
+
+	c1, done1 := openStreamAs(t, h, lineUser("u1", later), "", nil)
+	c2, _ := openStreamAs(t, h, lineUser("u1", later), "", nil)
+	for i, c := range []*sseClient{c1, c2} {
+		if c.resp.StatusCode != http.StatusOK {
+			t.Fatalf("stream %d = %d, want 200", i+1, c.resp.StatusCode)
+		}
+	}
+	c3, _ := openStreamAs(t, h, lineUser("u1", later), "", nil)
+	if c3.resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("third stream = %d, want 429", c3.resp.StatusCode)
+	}
+	// The cap is per account.
+	other, _ := openStreamAs(t, h, lineUser("u2", later), "", nil)
+	if other.resp.StatusCode != http.StatusOK {
+		t.Errorf("another account's stream = %d, want 200", other.resp.StatusCode)
+	}
+	// A closed stream frees its slot.
+	c1.cancel()
+	waitDone(t, done1, "the client went away")
+	c4, _ := openStreamAs(t, h, lineUser("u1", later), "", nil)
+	if c4.resp.StatusCode != http.StatusOK {
+		t.Errorf("stream after one closed = %d, want 200", c4.resp.StatusCode)
+	}
+}
+
+func TestStream_CloseEndsStreams(t *testing.T) {
+	h, _ := newFixture(1)
+	c, done := openStream(t, h, "", nil)
+	c.nextEvent(t)
+	h.Close()
+	waitDone(t, done, "Close")
+	h.Close() // idempotent
+
+	c2, _ := openStream(t, h, "", nil)
+	if c2.resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("stream after Close = %d, want 503", c2.resp.StatusCode)
+	}
+}
+
+// A writer that hides the connection cannot hold a stream open past the
+// server's WriteTimeout; the handler refuses rather than drop every ten seconds.
+func TestStream_RefusesWriterWithoutDeadline(t *testing.T) {
+	h, _ := newFixture(1)
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodGet, listPath+"/stream", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
 	}
 }

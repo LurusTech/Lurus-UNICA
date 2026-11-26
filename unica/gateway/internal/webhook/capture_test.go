@@ -28,12 +28,16 @@ func (f *fakeReplies) RecordAgentReply(_ context.Context, r agentReply) error {
 // 100 and returns the HTTP status.
 func postAgentReply(t *testing.T, h *ChatwootWebhookHandler) int {
 	t.Helper()
+	attrs := map[string]any{"channel_id": "ch-wechat", "platform_user_id": "oWx-openid-cap"}
+	if h.rdb.Exists(context.Background(), "test:attributed").Val() == 1 {
+		attrs["unica_conversation_id"] = "unica-conv-cap"
+	}
 	body, _ := json.Marshal(map[string]any{
 		"event":        "message_created",
 		"id":           321,
 		"content":      "您好，这单可以按坏损退款处理，请上传照片。",
 		"message_type": 1,
-		"conversation": map[string]any{"id": 100},
+		"conversation": map[string]any{"id": 100, "custom_attributes": attrs},
 		"sender":       map[string]any{"id": 5, "type": "user"},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhook/chatwoot", strings.NewReader(string(body)))
@@ -48,7 +52,9 @@ func captureHandler(t *testing.T, on bool, replies *fakeReplies, mapped bool) *C
 	rdb, mr := setupTestRedis(t)
 	t.Cleanup(mr.Close)
 	if mapped {
-		rdb.Set(context.Background(), "cw_conv:100", "unica-conv-cap", 0)
+		// The reply's conversation carries unica_conversation_id (see
+		// postAgentReply); without it the reply cannot be attributed.
+		rdb.Set(context.Background(), "test:attributed", 1, 0)
 	}
 	h := NewChatwootWebhookHandler(rdb, ChatwootWebhookConfig{WebhookToken: "secret"})
 	h.capture, h.replies = staticFlag(on), replies
@@ -78,9 +84,9 @@ func TestCaptureAgentReply_OnStoresTheReferenceAnswer(t *testing.T) {
 	}
 }
 
-// A reply whose conversation mapping has expired cannot be attributed and is
-// dropped, exactly as its forwarding is.
-func TestCaptureAgentReply_ExpiredMappingIsDropped(t *testing.T) {
+// A reply whose conversation carries no unica_conversation_id cannot be
+// attributed and is dropped, exactly as its forwarding is.
+func TestCaptureAgentReply_UnattributedIsDropped(t *testing.T) {
 	replies := &fakeReplies{}
 	if code := postAgentReply(t, captureHandler(t, true, replies, false)); code != http.StatusOK {
 		t.Fatalf("status %d", code)

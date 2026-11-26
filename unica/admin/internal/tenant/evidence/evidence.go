@@ -209,7 +209,7 @@ func (h *Handler) conversation(w http.ResponseWriter, r *http.Request, pl *repos
 		return
 	}
 	if len(entries) == 0 {
-		errorJSON(w, http.StatusNotFound, "没有找到这个会话的判定证据：会话不属于本租户，或者记录时证据链尚未开启")
+		errorJSON(w, http.StatusNotFound, "没有找到这个会话的判定证据：会话不属于本租户，或者记录时判定留痕尚未开启")
 		return
 	}
 
@@ -421,7 +421,7 @@ func (h *Handler) head(w http.ResponseWriter, r *http.Request, pl *repository.Pr
 		resp.RowHash = compliance.GenesisHash(pl.ID)
 		resp.Digest = compliance.HeadDigest(pl.ID, 0, resp.RowHash)
 		resp.Consistent = true
-		resp.Note = "尚无记录：证据链开启后的第一条判定会接在这个起点之后"
+		resp.Note = "尚无记录：判定留痕开启后的第一条判定会接在这个起点之后"
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}

@@ -1,0 +1,26 @@
+{
+  "id": 5,
+  "content": "客户: 你好",
+  "inbox_id": 1,
+  "conversation_id": 2,
+  "message_type": 0,
+  "content_type": "text",
+  "status": "sent",
+  "content_attributes": {},
+  "created_at": 1791854272,
+  "private": false,
+  "source_id": null,
+  "sender": {
+    "additional_attributes": {},
+    "custom_attributes": {
+      "channel_id": "fixture-channel"
+    },
+    "email": null,
+    "id": 3,
+    "identifier": "fixture-customer-0001",
+    "name": "fixture-customer",
+    "phone_number": null,
+    "thumbnail": "",
+    "type": "contact"
+  }
+}

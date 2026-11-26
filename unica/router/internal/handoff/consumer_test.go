@@ -13,9 +13,19 @@ import (
 )
 
 // fakeCloser records the transitions it was asked for and answers with err.
+// The conversation is with an agent unless current says otherwise.
 type fakeCloser struct {
-	calls []string
-	err   error
+	calls    []string
+	err      error
+	current  state.ConversationState
+	stateErr error
+}
+
+func (f *fakeCloser) CurrentState(_ context.Context, _ string) (state.ConversationState, error) {
+	if f.current == "" {
+		return state.StateHumanProcessing, f.stateErr
+	}
+	return f.current, f.stateErr
 }
 
 func (f *fakeCloser) TransitionState(_ context.Context, convID string, newState state.ConversationState, actor string) error {
@@ -64,16 +74,21 @@ func TestProcessEntry_ResolvedClosesConversation(t *testing.T) {
 	}
 }
 
-// Already closed — by the idle sweep, or by an earlier delivery of the same
-// event — is the expected race, not a failure.
-func TestProcessEntry_ResolvedAlreadyClosedIsNotAFailure(t *testing.T) {
-	closer := &fakeCloser{err: &state.ErrInvalidTransition{From: state.StateClosed, To: state.StateClosed}}
-	c, rdb := newTestConsumer(t, closer)
+// Moved on between the read and the close — closed by the idle sweep or an
+// earlier delivery of the same event, or reopened by the customer — is the
+// expected race, not a failure.
+func TestProcessEntry_ResolvedRaceIsNotAFailure(t *testing.T) {
+	for _, from := range []state.ConversationState{state.StateClosed, state.StateAIProcessing} {
+		t.Run(string(from), func(t *testing.T) {
+			closer := &fakeCloser{err: &state.ErrInvalidTransition{From: from, To: state.StateClosed}}
+			c, rdb := newTestConsumer(t, closer)
 
-	c.processEntry(context.Background(), resolvedEntry(t, "conv-1"))
+			c.processEntry(context.Background(), resolvedEntry(t, "conv-1"))
 
-	if n, _ := rdb.XLen(context.Background(), deadLetterStream).Result(); n != 0 {
-		t.Errorf("dead-letter stream got %d entries, want none", n)
+			if n, _ := rdb.XLen(context.Background(), deadLetterStream).Result(); n != 0 {
+				t.Errorf("dead-letter stream got %d entries, want none", n)
+			}
+		})
 	}
 }
 
@@ -81,8 +96,8 @@ func TestProcessEntry_ResolvedAlreadyClosedIsNotAFailure(t *testing.T) {
 // layout the gateway's dead-letter listing reads.
 func TestProcessEntry_ResolvedFailureIsDeadLettered(t *testing.T) {
 	for name, closer := range map[string]*fakeCloser{
-		"pending cannot close": {err: &state.ErrInvalidTransition{From: state.StatePending, To: state.StateClosed}},
-		"database down":        {err: errors.New("connection refused")},
+		"state unreadable": {stateErr: errors.New("connection refused")},
+		"database down":    {err: errors.New("connection refused")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, rdb := newTestConsumer(t, closer)
@@ -103,6 +118,28 @@ func TestProcessEntry_ResolvedFailureIsDeadLettered(t *testing.T) {
 			}
 			if v["failure_reason"] == "" || v["source_entry_id"] != "1-0" {
 				t.Errorf("entry = %v", v)
+			}
+		})
+	}
+}
+
+// A resolve ends the agent's session and nothing else. A conversation that is
+// no longer with an agent — closed by the idle sweep and since picked up by
+// the AI again, or never handed over — is left alone: closing it would cut off
+// a live AI conversation and send the survey a second time.
+func TestProcessEntry_ResolvedOnlyClosesAConversationWithAnAgent(t *testing.T) {
+	for _, current := range []state.ConversationState{state.StateAIProcessing, state.StatePending, state.StateClosed} {
+		t.Run(string(current), func(t *testing.T) {
+			closer := &fakeCloser{current: current}
+			c, rdb := newTestConsumer(t, closer)
+
+			c.processEntry(context.Background(), resolvedEntry(t, "conv-4"))
+
+			if len(closer.calls) != 0 {
+				t.Errorf("transitions = %v, want none for a conversation in %s", closer.calls, current)
+			}
+			if n, _ := rdb.XLen(context.Background(), deadLetterStream).Result(); n != 0 {
+				t.Errorf("dead-letter stream got %d entries, want none", n)
 			}
 		})
 	}

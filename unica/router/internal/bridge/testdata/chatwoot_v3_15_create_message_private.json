@@ -1,0 +1,22 @@
+{
+  "id": 4,
+  "content": "交接摘要",
+  "inbox_id": 1,
+  "conversation_id": 2,
+  "message_type": 1,
+  "content_type": "text",
+  "status": "sent",
+  "content_attributes": {},
+  "created_at": 1791854272,
+  "private": true,
+  "source_id": null,
+  "sender": {
+    "id": 3,
+    "name": "E2E 测试店铺",
+    "available_name": "E2E 测试店铺",
+    "avatar_url": "",
+    "type": "user",
+    "availability_status": "offline",
+    "thumbnail": ""
+  }
+}

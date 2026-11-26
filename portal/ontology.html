@@ -593,7 +593,7 @@
   function requestedTenant() {
     if (!isAdmin()) return "";
     var m = /[?&]tenant=([^&]*)/.exec(window.location.search);
-    return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+    try { return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : ""; } catch (e) { return ""; }
   }
 
   // The path segment this page addresses its tenant by.
@@ -828,7 +828,8 @@
     var m = /[?&]property=([^&]*)/.exec(window.location.search);
     if (!m) return;
     propertyFocused = true;
-    var name = decodeURIComponent(m[1].replace(/\+/g, " "));
+    var name = "";
+    try { name = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch (e) { return; }
     if (!name) return;
     var text = els.yamlEditor.value;
     var escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -955,7 +956,7 @@
 
     if (q.previous_version) {
       if (q.insufficient) {
-        lines.push('<span class="hint warn">样本不足（两侧均需 ≥30 会话），暂不可信，仅供参考</span>');
+        lines.push('<span class="hint warn">样本不足（两侧均需 ≥30 会话），结论暂不可靠，仅供参考</span>');
       } else if (q.suspect) {
         lines.push(
           '<div class="quality-suspect">' +
@@ -1445,6 +1446,12 @@
       // A mixed industry pack holds only its face-value phrases; saying just
       // "扣下" would promise more than the pack does.
       if (p.mixed && action) action += "，部分词条仅记录";
+      // A pack's commitment types join the commitment firewall, which holds
+      // an unbacked figure when it is set to enforce — whatever the pack's
+      // own action says about its phrases.
+      if (p.commitment_types && p.commitment_types.length) {
+        action += "；" + p.commitment_types.join("、") + "类承诺并入承诺防火墙，防火墙设为 enforce 时会扣下无出处的数字";
+      }
       return '<div class="switch-row">' +
         '<input type="checkbox" id="' + escapeAttr(id) + '" value="' + escapeAttr(p.id) + '"' + checked + " />" +
         '<label for="' + escapeAttr(id) + '">' + escapeHtml(p.label || p.id) +

@@ -1,0 +1,81 @@
+{
+  "account": {"id": 3, "name": "UNICA - 示例店铺"},
+  "additional_attributes": {},
+  "content_attributes": {},
+  "content_type": "text",
+  "content": "您好，这单可以按坏损退款处理，请上传照片。",
+  "conversation": {
+    "additional_attributes": {},
+    "can_reply": true,
+    "channel": "Channel::Api",
+    "contact_inbox": {
+      "id": 41,
+      "contact_id": 17,
+      "inbox_id": 5,
+      "source_id": "6f6a1c9e-3d0b-4a57-9c1e-2b7f0d1a9e10",
+      "created_at": "2026-10-12T08:00:00.000Z",
+      "updated_at": "2026-10-12T08:00:00.000Z",
+      "hmac_verified": false,
+      "pubsub_token": "pubsub-example"
+    },
+    "id": 7,
+    "inbox_id": 5,
+    "messages": [
+      {
+        "id": 902,
+        "content": "您好，这单可以按坏损退款处理，请上传照片。",
+        "account_id": 3,
+        "inbox_id": 5,
+        "conversation_id": 7,
+        "message_type": 1,
+        "created_at": 1760256060,
+        "updated_at": "2026-10-12T08:01:00.000Z",
+        "private": false,
+        "status": "sent",
+        "source_id": null,
+        "content_type": "text",
+        "content_attributes": {},
+        "sender_type": "User",
+        "sender_id": 2,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "您好，这单可以按坏损退款处理，请上传照片。",
+        "sentiment": {},
+        "conversation": {"assignee_id": 2, "unread_count": 0, "last_activity_at": 1760256060, "contact_inbox": {"source_id": "6f6a1c9e-3d0b-4a57-9c1e-2b7f0d1a9e10"}},
+        "sender": {"id": 2, "name": "坐席小王", "available_name": "坐席小王", "avatar_url": "", "type": "user", "availability_status": "online", "thumbnail": ""}
+      }
+    ],
+    "labels": [],
+    "meta": {
+      "sender": {"additional_attributes": {}, "custom_attributes": {}, "email": null, "id": 17, "identifier": null, "name": "顾客", "phone_number": null, "thumbnail": "", "type": "contact"},
+      "assignee": {"id": 2, "name": "坐席小王", "available_name": "坐席小王", "avatar_url": "", "type": "user", "availability_status": "online", "thumbnail": ""},
+      "team": null,
+      "hmac_verified": false
+    },
+    "status": "open",
+    "custom_attributes": {
+      "unica_conversation_id": "unica-conv-001",
+      "channel_id": "ch-wechat",
+      "platform_user_id": "oWx-openid-001",
+      "priority_score": 3
+    },
+    "snoozed_until": null,
+    "unread_count": 0,
+    "first_reply_created_at": "2026-10-12T08:01:00.000Z",
+    "priority": null,
+    "waiting_since": 0,
+    "agent_last_seen_at": 1760256000,
+    "contact_last_seen_at": 0,
+    "last_activity_at": 1760256060,
+    "timestamp": 1760256060,
+    "created_at": 1760256000
+  },
+  "created_at": "2026-10-12T08:01:00.000Z",
+  "id": 902,
+  "inbox": {"id": 5, "name": "UNICA - 示例店铺"},
+  "message_type": "outgoing",
+  "private": false,
+  "sender": {"id": 2, "name": "坐席小王", "email": "agent@example.com", "type": "user"},
+  "source_id": null,
+  "event": "message_created"
+}

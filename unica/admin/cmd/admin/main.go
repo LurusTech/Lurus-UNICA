@@ -66,6 +66,9 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+	// Shutdown waits for active requests without cancelling them; open event
+	// streams are told to end so it need not wait out its deadline.
+	srv.RegisterOnShutdown(services.eventsHandler.Close)
 
 	go func() {
 		log.Printf("[admin] HTTP server listening on :%s", cfg.Port)

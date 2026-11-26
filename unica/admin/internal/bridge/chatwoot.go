@@ -313,6 +313,53 @@ func (c *ChatwootClient) CreateAPIInbox(ctx context.Context, accountID int, user
 	return &inbox, nil
 }
 
+// AddInboxMembers makes agents members of an inbox. Chatwoot shows an agent
+// only the conversations of inboxes it belongs to and auto-assigns only among
+// members, so an agent outside the inbox opens an empty workbench.
+//
+// The request is additive and repeatable: Chatwoot adds the ids that are not
+// members yet and answers with the inbox's full member list, read from the
+// account's users. It is the application API and takes an account
+// administrator's access token — Chatwoot answers 401 to an agent's token, and
+// the platform token is not accepted there. An agent absent from the answer is
+// an error: the account does not hold it, and it still sees nothing.
+func (c *ChatwootClient) AddInboxMembers(ctx context.Context, accountID int, adminToken string, inboxID int, userIDs []int) error {
+	if adminToken == "" {
+		return fmt.Errorf("chatwoot inbox membership needs an account administrator's access token")
+	}
+	if inboxID == 0 || len(userIDs) == 0 {
+		return fmt.Errorf("chatwoot inbox membership needs an inbox and at least one agent")
+	}
+
+	path := fmt.Sprintf("/api/v1/accounts/%d/inbox_members", accountID)
+	body, err := c.do(ctx, http.MethodPost, path, adminToken, map[string]interface{}{
+		"inbox_id": inboxID,
+		"user_ids": userIDs,
+	})
+	if err != nil {
+		return fmt.Errorf("add agents to chatwoot inbox %d: %w", inboxID, err)
+	}
+
+	var resp struct {
+		Payload []struct {
+			ID int `json:"id"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return fmt.Errorf("unmarshal chatwoot inbox members response: %w", err)
+	}
+	members := make(map[int]bool, len(resp.Payload))
+	for _, m := range resp.Payload {
+		members[m.ID] = true
+	}
+	for _, id := range userIDs {
+		if !members[id] {
+			return fmt.Errorf("chatwoot inbox %d does not list agent %d as a member after adding it", inboxID, id)
+		}
+	}
+	return nil
+}
+
 // do performs one JSON request against Chatwoot with the given access token.
 func (c *ChatwootClient) do(ctx context.Context, method, path, token string, reqBody interface{}) ([]byte, error) {
 	if !c.Configured() {

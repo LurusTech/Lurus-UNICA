@@ -1,0 +1,36 @@
+{
+  "payload": {
+    "contact": {
+      "additional_attributes": {},
+      "availability_status": "offline",
+      "email": null,
+      "id": 3,
+      "name": "fixture-customer",
+      "phone_number": null,
+      "identifier": "fixture-customer-0001",
+      "thumbnail": "",
+      "custom_attributes": {
+        "channel_id": "fixture-channel"
+      },
+      "created_at": 1791854271,
+      "contact_inboxes": [
+        {
+          "source_id": "b9a6bdf3-65c7-4955-a76e-d9c5785e8dd5",
+          "inbox": {
+            "id": 1,
+            "name": "UNICA - e2e_shop",
+            "channel_type": "Channel::Api"
+          }
+        }
+      ]
+    },
+    "contact_inbox": {
+      "inbox": {
+        "id": 1,
+        "name": "UNICA - e2e_shop",
+        "channel_type": "Channel::Api"
+      },
+      "source_id": "b9a6bdf3-65c7-4955-a76e-d9c5785e8dd5"
+    }
+  }
+}

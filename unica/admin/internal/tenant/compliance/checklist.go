@@ -294,10 +294,10 @@ func evidenceItem(raw json.RawMessage) CheckItem {
 	}
 	if shared.LoadAuditConfig(raw).Enabled {
 		item.Status = StatusPass
-		item.Evidence = "证据链已开启：记录写入后若被改动，校验时可以发现"
+		item.Evidence = "判定留痕已开启：记录写入后若被改动，校验时可以发现"
 	} else {
 		item.Status = StatusWarn
-		item.Evidence = "证据链未开启"
+		item.Evidence = "判定留痕未开启"
 	}
 	return item
 }

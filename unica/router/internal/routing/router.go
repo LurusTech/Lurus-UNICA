@@ -144,12 +144,7 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 			if !shouldSend {
 				return
 			}
-			convInfo := &survey.ConversationInfo{
-				ID:            conv.ID,
-				ChannelID:     conv.ChannelID,
-				ProductLineID: conv.ProductLineID,
-				CustomerID:    conv.CustomerID,
-			}
+			convInfo := surveyConversation(ctx, stateManager, conv)
 			if err := surveyH.SendSurvey(ctx, convInfo, surveyCfg); err != nil {
 				log.Printf("[router] failed to send survey for conversation %s: %v", conv.ID, err)
 			}
@@ -194,6 +189,37 @@ func NewRouter(rdb *redis.Client, db *sql.DB, stateManager *state.Manager, difyC
 		r.routeCache = routeCache
 	}
 	return r
+}
+
+// customerDirectory is the one lookup a survey send needs from the state
+// manager.
+type customerDirectory interface {
+	GetCustomer(ctx context.Context, id string) (*state.Customer, error)
+}
+
+// surveyConversation describes a closing conversation to the survey handler,
+// recipient included. The conversation row does not carry the customer's
+// platform user id, and every channel adapter refuses an outbound message
+// without it, so a survey built from the row alone was dead-lettered every
+// time. A failed lookup still sends: the gateway dead-letters that survey where
+// it can be traced, rather than it vanishing here.
+func surveyConversation(ctx context.Context, customers customerDirectory, conv *state.Conversation) *survey.ConversationInfo {
+	info := &survey.ConversationInfo{
+		ID:            conv.ID,
+		ChannelID:     conv.ChannelID,
+		ProductLineID: conv.ProductLineID,
+		CustomerID:    conv.CustomerID,
+	}
+	if customers == nil {
+		return info
+	}
+	customer, err := customers.GetCustomer(ctx, conv.CustomerID)
+	if err != nil || customer == nil {
+		log.Printf("[router] survey for conversation %s has no recipient: %v", conv.ID, err)
+		return info
+	}
+	info.CustomerPlatformUserID = customer.PlatformIdentity
+	return info
 }
 
 // SetOntology wires the domain ontology store. Leaving it unset disables the
